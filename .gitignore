@@ -20,6 +20,7 @@ secrets/
 /coverage/
 /mutants.out/
 /mutants.out.old/
+/metrics/
 
 # Editor and OS files
 .vs/
