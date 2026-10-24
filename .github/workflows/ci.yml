@@ -55,7 +55,6 @@ jobs:
       # cargo-mutants must not see -D warnings: a mutant that trips a warning
       # would be counted as unviable instead of caught.
       RUSTFLAGS: ""
-      TOOLS: ${{ runner.temp }}/tools
     defaults:
       run:
         shell: bash
@@ -81,6 +80,7 @@ jobs:
       - name: Install cargo-llvm-cov 0.9.1 and cargo-mutants 27.1.0
         run: |
           set -euo pipefail
+          TOOLS="$RUNNER_TEMP/tools"
           mkdir -p "$TOOLS"
           fetch() {  # url, sha256
             local file="$TOOLS/$(basename "$1")"
