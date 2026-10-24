@@ -12,7 +12,8 @@ Project: DuckEngine, a game engine written from scratch in Rust. Private, propri
 - Use the `software-team` skill on every engineering task. Follow TDD (test list first, red evidence, smallest step to green, refactor on green) and finish with the review phase R1-R8 described in `wiki/workflow/tdd-workflow.md` and `wiki/workflow/clean-code-and-review.md`.
 - The work queue is the Trello board DuckEngine (https://trello.com/b/ZYrtuCUw/duckengine). Follow `wiki/workflow/board-management.md`: you move and create cards; the repo stays canonical.
 - Do not start phase 0a or any phase until the owner gives an explicit go-ahead. Propose next tasks only when asked, then wait for the owner's pick.
-- Owner approval is given once, in the session, against a diff hash, before you open the PR. Never treat a card move, a comment or silence as approval.
+- Owner approval is given once, in the session, against a diff hash. Before you ask for it, open the PR and give the owner its full link (URL) together with the hash; merge only after the approval. Never treat a card move, a comment or silence as approval.
+- A task is closed when its PR is merged: move the card to Done at once, walking it through the columns in order, without asking.
 
 ## Hard rules (also in the digest, repeated because they matter most)
 

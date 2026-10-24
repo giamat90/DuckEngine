@@ -16,9 +16,9 @@ Git and the wiki are canonical (roadmap, ADRs, reviews, metric reports). The boa
 | Ready (task defined) | goal and acceptance criteria written, owner agreed | the owner assigns it, or accepts the agent's proposal for the next task |
 | In Progress | TDD work running | the agent starts the first failing test |
 | Review (R1-R8) | implementation done, review phase and fix loop | all planned tests are green and the review phase starts |
-| Waiting for owner approval | design note, metric report and product view are ready | the review report has 0 open blocker/major issues |
-| PR / CI | owner approved the diff hash; PR open | the owner approved; the agent opens the PR |
-| Done (released) | merged and the release is published | the release workflow finished; the card gets the version number |
+| Waiting for owner approval | design note, metric report and product view are ready | the review report has 0 open blocker/major issues; the PR is open and its link is given to the owner with the diff hash |
+| PR / CI | owner approved the diff hash; checks running or green | the owner approved; the agent merges after green checks |
+| Done (released) | the PR is merged | the PR is merged (owner decision 2026-10-24); once a release workflow exists, the card also gets the version number |
 
 Backward moves are allowed and need a comment saying why (a failed gate, a changed requirement). A card never skips a column.
 
