@@ -102,20 +102,28 @@ jobs:
       - name: Coverage
         run: |
           mkdir -p metrics
-          cargo llvm-cov --workspace --locked --json --summary-only --output-path metrics/coverage.json
+          cargo llvm-cov --workspace --exclude g1-control --locked --json --summary-only --output-path metrics/coverage.json
       - name: Mutation
         run: |
           start=$SECONDS
           code=0
-          cargo mutants --workspace --jobs 2 --output metrics || code=$?
+          cargo mutants -p skeleton -p skeleton-unsafe --jobs 2 --output metrics || code=$?
           echo "MUTATION_SECONDS=$((SECONDS - start))" >> "$GITHUB_ENV"
           # 0 all caught, 2 some missed, 3 timeouts: reported, not enforced yet.
+          case "$code" in 0|2|3) ;; *) exit "$code" ;; esac
+      - name: Mutation control (gate G1)
+        run: |
+          # g1-control is weakly tested on purpose: a low score proves the
+          # mutation score discriminates. Missed mutants (exit 2) are expected.
+          mkdir -p metrics/control
+          code=0
+          cargo mutants -p g1-control --jobs 2 --output metrics/control || code=$?
           case "$code" in 0|2|3) ;; *) exit "$code" ;; esac
       - name: Benchmark
         run: cargo bench -p skeleton --bench align --locked > metrics/bench.json
       - name: Report
         run: |
-          python tools/metrics/report.py --os "${{ matrix.os }}"             --coverage metrics/coverage.json             --mutants metrics/mutants.out/outcomes.json             --bench metrics/bench.json             --mutation-seconds "$MUTATION_SECONDS"             --out metrics/metrics-report.md
+          python tools/metrics/report.py --os "${{ matrix.os }}"             --coverage metrics/coverage.json             --mutants metrics/mutants.out/outcomes.json             --control-mutants metrics/control/mutants.out/outcomes.json             --bench metrics/bench.json             --mutation-seconds "$MUTATION_SECONDS"             --out metrics/metrics-report.md
           cat metrics/metrics-report.md >> "$GITHUB_STEP_SUMMARY"
       # actions/upload-artifact v7.0.2, pinned by commit
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -123,3 +131,37 @@ jobs:
           name: metrics-report-${{ matrix.os }}
           path: metrics/metrics-report.md
           retention-days: 30
+
+  # Gate G2: dependency policy (licences, bans, sources, advisories).
+  deny:
+    name: cargo-deny (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: cargo-deny-0.20.2-x86_64-pc-windows-msvc
+            sha: 975a22143262fd27476d19ee00c7af67978426e40e1dee94eed6bbade1cf87dc
+          - os: ubuntu-latest
+            asset: cargo-deny-0.20.2-x86_64-unknown-linux-musl
+            sha: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain
+      - name: Install cargo-deny 0.20.2
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl --fail --silent --show-error --location --output deny.tar.gz             "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/${{ matrix.asset }}.tar.gz"
+          echo "${{ matrix.sha }}  deny.tar.gz" | sha256sum --check --status
+          tar -xzf deny.tar.gz
+          echo "$RUNNER_TEMP/${{ matrix.asset }}" >> "$GITHUB_PATH"
+      - name: Check
+        run: cargo deny --locked check
