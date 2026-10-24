@@ -1,0 +1,28 @@
+# Gate configuration: the numbers the quality gates will enforce.
+#
+# Values are hypotheses, ratcheting, calibrated in phase 0c. This file is a
+# protected path (Class 3). wiki/rules-digest.md quotes the same numbers;
+# tools/gate-check fails CI when the two disagree.
+# Nothing enforces these values yet: the gate tools that read them come later.
+
+[coverage]
+line_min = 90      # percent, L0-L2
+new_line_min = 95  # percent, new lines
+branch_min = 80    # percent
+
+[mutation]
+score_min = 80     # percent, changed L0-L2 code
+
+[benchmark]
+warn_percent = 5   # instruction-count regression
+fail_percent = 10
+
+[clean_code]
+function_length_warn = 60
+cyclomatic_warn = 10
+cyclomatic_fail = 15
+cognitive_fail = 20
+nesting_max = 3
+parameters_warn = 3
+parameters_fail = 5
+duplication_max_percent = 3
