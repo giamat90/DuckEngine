@@ -30,6 +30,8 @@ jobs:
     steps:
       # actions/checkout v7.0.1, pinned by commit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       - name: Install the pinned toolchain
         run: rustup show active-toolchain
       - name: Format
@@ -41,7 +43,9 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
       - name: Test the metrics tool
-        run: python -m unittest -q test_report
+        run: |
+          python -m unittest -q test_report
+          python -m unittest -q test_g1_assert
         working-directory: tools/metrics
       - name: Test the gate-check tool
         run: python -m unittest -q test_check_digest
@@ -80,6 +84,8 @@ jobs:
     steps:
       # actions/checkout v7.0.1, pinned by commit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       - name: Install the pinned toolchain
         run: rustup show active-toolchain
       - name: Install cargo-llvm-cov 0.9.1 and cargo-mutants 27.1.0
@@ -121,9 +127,21 @@ jobs:
           case "$code" in 0|2|3) ;; *) exit "$code" ;; esac
       - name: Benchmark
         run: cargo bench -p skeleton --bench align --locked > metrics/bench.json
+      - name: G1 assertion
+        run: |
+          python tools/metrics/g1_assert.py \
+            --well-tested metrics/mutants.out/outcomes.json \
+            --control metrics/control/mutants.out/outcomes.json \
+            --seconds "$MUTATION_SECONDS"
       - name: Report
         run: |
-          python tools/metrics/report.py --os "${{ matrix.os }}"             --coverage metrics/coverage.json             --mutants metrics/mutants.out/outcomes.json             --control-mutants metrics/control/mutants.out/outcomes.json             --bench metrics/bench.json             --mutation-seconds "$MUTATION_SECONDS"             --out metrics/metrics-report.md
+          python tools/metrics/report.py --os "${{ matrix.os }}" \
+            --coverage metrics/coverage.json \
+            --mutants metrics/mutants.out/outcomes.json \
+            --control-mutants metrics/control/mutants.out/outcomes.json \
+            --bench metrics/bench.json \
+            --mutation-seconds "$MUTATION_SECONDS" \
+            --out metrics/metrics-report.md
           cat metrics/metrics-report.md >> "$GITHUB_STEP_SUMMARY"
       # actions/upload-artifact v7.0.2, pinned by commit
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -153,13 +171,16 @@ jobs:
     steps:
       # actions/checkout v7.0.1, pinned by commit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       - name: Install the pinned toolchain
         run: rustup show active-toolchain
       - name: Install cargo-deny 0.20.2
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP"
-          curl --fail --silent --show-error --location --output deny.tar.gz             "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/${{ matrix.asset }}.tar.gz"
+          curl --fail --silent --show-error --location --output deny.tar.gz \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/${{ matrix.asset }}.tar.gz"
           echo "${{ matrix.sha }}  deny.tar.gz" | sha256sum --check --status
           tar -xzf deny.tar.gz
           echo "$RUNNER_TEMP/${{ matrix.asset }}" >> "$GITHUB_PATH"

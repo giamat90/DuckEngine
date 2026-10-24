@@ -28,7 +28,10 @@ This file is a governance file (Class 3): its structure changes only in a task t
 | cargo-llvm-cov | T2 | Apache-2.0 OR MIT | 0.9.1 (release binary, SHA256 pinned in `.github/workflows/ci.yml`) | none | use `llvm-cov` from the `llvm-tools` component directly | in tree |
 | cargo-mutants | T2 | MIT | 27.1.0 (release binary, SHA256 pinned in `.github/workflows/ci.yml`) | none | none yet; gate G1 in phase 0a validates it, ADR-0001 names the fallback | in tree |
 | cargo-deny | T2 | MIT OR Apache-2.0 | 0.20.2 (release binary, SHA256 pinned in `.github/workflows/ci.yml`) | none | run `cargo metadata` licence checks by hand or switch to `cargo-about` | in tree |
-| Python 3 (standard library only) | T2 | PSF-2.0 | the runner's preinstalled 3.x | none | rewrite `tools/metrics` as a Rust tool once the tools crate exists | in tree |
+| Python 3 (standard library only) | T2 | PSF-2.0 | the runner's preinstalled 3.x; 3.11 or newer is required (`tomllib`) | none | rewrite `tools/metrics` as a Rust tool once the tools crate exists | in tree |
+| `llvm-tools` rustup component | T2 | Apache-2.0 WITH LLVM-exception | follows the pinned toolchain 1.94.1 | none | use a system LLVM `llvm-cov` | in tree |
+| GitHub-hosted runner images (`windows-latest`, `ubuntu-latest`) | T2 | n/a (service) | floating labels, not pinned | none | self-hosted or other CI runner | in tree |
+| RustSec advisory database (fetched by cargo-deny at run time) | T2 | CC0-1.0 | unpinned, always current | none | vendor a pinned copy and fetch on a schedule | in tree |
 
 ## Planned (allowed by the owner, not yet added)
 
