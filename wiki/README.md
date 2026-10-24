@@ -39,6 +39,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 9 | [workflow/tdd-workflow](workflow/tdd-workflow.md) | How we develop: TDD loops, contract tests, spikes |
 | 10 | [workflow/quality-metrics](workflow/quality-metrics.md) | Which metrics, why, initial thresholds, quality gates |
 | 11 | [workflow/tooling-and-ci](workflow/tooling-and-ci.md) | Toolchain and pipeline |
+| 11a | [workflow/github-plan-findings](workflow/github-plan-findings.md) | What the GitHub Free plan allows on the private repo (V1) |
 | 12 | [workflow/roadmap](workflow/roadmap.md) | Phases with measurable exit criteria |
 | 12d | [workflow/clean-code-and-review](workflow/clean-code-and-review.md) | Clean-code rules, TDD style, and the mandatory review phase (R1-R8, findings loop, review report) |
 | 12c | [workflow/delivery-pipeline](workflow/delivery-pipeline.md) | Task lifecycle: agent runs per task -> owner acceptance -> PR -> auto-merge -> tag -> deploy via GitHub CI |

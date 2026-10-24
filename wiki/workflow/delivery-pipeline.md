@@ -9,6 +9,8 @@
 
 Everything below only makes those four steps safe and repeatable. Feature names and plan-dependent limits marked **[K]** come from background knowledge; verify during phase 0.
 
+**Plan constraint (verified 2026-10-24, [github-plan-findings](github-plan-findings.md)):** the repository is private on the GitHub **Free** plan, which has no branch protection, rulesets, auto-merge, merge queue or environments. Wherever this page says auto-merge, ruleset, required check enforcement or protected environment, read the fallback in section 5: Claude Code runs `gh pr merge` itself after the owner's approval and a green `gh pr checks --watch`, and merging is policy, not enforcement.
+
 ## 1. Task lifecycle
 
 ```mermaid
@@ -113,7 +115,15 @@ A separate GitHub account or a GitHub App is optional (better attribution and is
 | Serialised releases | `concurrency` group so two merges cannot compute the same version |
 | Notify the PO | Claude Code's report (stage 10) plus GitHub notifications |
 
-Rulesets, merge queue and environment protection on private repos depend on the GitHub plan **[K - verify]**; fallbacks are documented in phase 0 (risk R-20).
+Rulesets, merge queue, auto-merge and environment protection are **not available** on the Free plan (verified 2026-10-24). Fallbacks (risk R-20), as decided by the owner (stay on Free):
+
+| Need | Fallback on Free |
+|---|---|
+| Nobody pushes to `main` | policy only: the agent opens a PR from a branch and never pushes to `main` after the bootstrap commit; git history and PR list are the audit trail |
+| Wait for green CI, then merge | the session stays open: `gh pr checks --watch`, then `gh pr merge` (no `--auto`); a failing or missing check means no merge |
+| Governance guard as a required check | still runs as a check; it cannot be made required, so the agent treats a red `governance-guard` as a stop |
+| Protected environment `release` | repository-level Actions secrets or OIDC; the release workflow is the only consumer and is a Class 3 file |
+| Rulesets that bind admins | none; the fine-grained token (section 4) limits what the agent can do |
 
 ## 6. Release workflow (every merge to `main` -> new version -> SDK artifacts)
 
@@ -132,7 +142,7 @@ Known GitHub behaviour **[K]**: a tag pushed with the default `GITHUB_TOKEN` doe
 |---|---|
 | CI red on the branch | CC fixes and re-runs; the PO is asked only once CI is green |
 | CI red after approval | mechanical fix: continue automatically; behaviour/metric-changing fix: pause and ask again (section 2) |
-| Auto-merge blocked | PR stays open; CC investigates; it never bypasses rules |
+| Merge blocked or checks not green | PR stays open; CC investigates; it never bypasses rules (on Free there is no auto-merge: CC merges by hand after the checks pass) |
 | Release job fails | stops, no retry loops, CC reports; fix is a new task |
 | Bad version shipped | revert through the same pipeline -> new patch version; mark the bad Release as yanked/pre-release |
 | Flaky test | quarantine within one day (quality gate); "re-run until green" is never the policy |
