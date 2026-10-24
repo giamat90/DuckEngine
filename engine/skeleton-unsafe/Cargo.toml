@@ -1,0 +1,20 @@
+[package]
+name = "skeleton-unsafe"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Walking-skeleton crate with one small unsafe function, to validate mutation testing on unsafe code; not engine code."
+
+# Not `workspace = true`: the workspace forbids unsafe code. This crate denies
+# it instead and allows it in exactly one module (`read`), with every block
+# documented. The rest repeats the workspace lints.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+undocumented_unsafe_blocks = "deny"

@@ -40,7 +40,7 @@ def mutation_metrics(doc):
     }
 
 
-def render(os_name, coverage, mutation, mutation_seconds, bench):
+def render(os_name, coverage, mutation, mutation_seconds, bench, control=None):
     lines = [
         f"# Baseline metrics report: {os_name}",
         "",
@@ -54,6 +54,10 @@ def render(os_name, coverage, mutation, mutation_seconds, bench):
         f"| Mutation score | {mutation['score']} |",
         f"| Mutants caught / missed / timeout / unviable | {mutation['caught']} / {mutation['missed']} / {mutation['timeout']} / {mutation['unviable']} |",
         f"| Mutation run time | {mutation_seconds} s |",
+    ]
+    if control is not None:
+        lines.append(f"| G1 control mutation score (weakly tested, must be low) | {control['score']} |")
+    lines += [
         "",
         "| Benchmark | Median ns per call | p95 ns per call |",
         "|---|---|---|",
@@ -72,6 +76,7 @@ def main(argv):
     parser.add_argument("--os", required=True)
     parser.add_argument("--coverage", required=True)
     parser.add_argument("--mutants", required=True)
+    parser.add_argument("--control-mutants")
     parser.add_argument("--bench", required=True)
     parser.add_argument("--mutation-seconds", required=True, type=int)
     parser.add_argument("--out", required=True)
@@ -82,6 +87,7 @@ def main(argv):
         mutation_metrics(_load(args.mutants)),
         args.mutation_seconds,
         _load(args.bench),
+        control=mutation_metrics(_load(args.control_mutants)) if args.control_mutants else None,
     )
     Path(args.out).write_text(text, encoding="utf-8")
     return 0

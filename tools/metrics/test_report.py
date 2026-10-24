@@ -100,11 +100,42 @@ class Rendering(unittest.TestCase):
     def test_report_lists_each_benchmark(self):
         self.assertIn("| align_up | 1.50 | 2.00 |", self.render())
 
+    def test_report_lists_the_control_score_when_given(self):
+        control = report.mutation_metrics(mutants_doc(caught=1, missed=3))
+        text = self.render(control=control)
+        self.assertIn("| G1 control mutation score (weakly tested, must be low) | 25.0% |", text)
+
+    def test_report_omits_the_control_row_when_not_given(self):
+        self.assertNotIn("G1 control", self.render())
+
     def test_report_says_thresholds_are_not_enforced(self):
         self.assertIn("not enforced", self.render())
 
 
 class Cli(unittest.TestCase):
+    def test_main_accepts_a_control_mutants_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "cov.json").write_text(json.dumps(coverage_doc(100.0)))
+            (tmp / "mut.json").write_text(json.dumps(mutants_doc(caught=9)))
+            (tmp / "ctl.json").write_text(json.dumps(mutants_doc(caught=1, missed=1)))
+            (tmp / "bench.json").write_text(
+                json.dumps({"benchmarks": [{"name": "x", "median_ns": 1.0, "p95_ns": 1.0}]})
+            )
+            out = tmp / "report.md"
+            report.main(
+                [
+                    "--os", "x",
+                    "--coverage", str(tmp / "cov.json"),
+                    "--mutants", str(tmp / "mut.json"),
+                    "--control-mutants", str(tmp / "ctl.json"),
+                    "--bench", str(tmp / "bench.json"),
+                    "--mutation-seconds", "5",
+                    "--out", str(out),
+                ]
+            )
+            self.assertIn("50.0%", out.read_text())
+
     def test_main_writes_the_report_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)

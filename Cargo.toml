@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["engine/skeleton"]
+members = ["engine/skeleton", "engine/skeleton-unsafe", "engine/g1-control"]
 
 [workspace.package]
 edition = "2024"
