@@ -1,0 +1,30 @@
+# Secrets and credentials: never tracked
+Api-keys*
+GiaMat90_ssh*
+*.pem
+*.key
+*.pfx
+.env
+.env.*
+secrets/
+
+# Claude Code local state (the shared .claude/settings.json stays tracked)
+.claude/settings.local.json
+
+# Rust build output
+/target/
+
+# Coverage, profiling and mutation output
+*.profraw
+*.profdata
+/coverage/
+/mutants.out/
+/mutants.out.old/
+
+# Editor and OS files
+.vs/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store

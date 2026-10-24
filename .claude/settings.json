@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(//c/Workspace/GiaMat90/Api-keys.txt)",
+      "Read(//c/Workspace/GiaMat90/GiaMat90_ssh.txt)",
+      "Read(//c/Workspace/GiaMat90/GiaMat90_ssh*)",
+      "Read(//c/Workspace/GiaMat90/Api-keys*)",
+      "Read(~/.ssh/**)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Edit(//c/Workspace/GiaMat90/Api-keys*)",
+      "Edit(//c/Workspace/GiaMat90/GiaMat90_ssh*)",
+      "Bash(git commit --no-verify*)",
+      "Bash(git commit * --no-verify*)",
+      "Bash(git push --no-verify*)",
+      "Bash(git push * --no-verify*)",
+      "Bash(git push * main)",
+      "Bash(git push * main *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(cat *Api-keys*)",
+      "Bash(cat *GiaMat90_ssh*)",
+      "Bash(type *Api-keys*)",
+      "Bash(type *GiaMat90_ssh*)",
+      "PowerShell(Get-Content *Api-keys*)",
+      "PowerShell(Get-Content *GiaMat90_ssh*)"
+    ]
+  }
+}
