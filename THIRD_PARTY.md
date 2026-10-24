@@ -22,7 +22,8 @@ This file is a governance file (Class 3): its structure changes only in a task t
 
 | Name | Tier | Licence | Version | Port | Exit plan | Status |
 |---|---|---|---|---|---|---|
-| (none yet) | | | | | | |
+| Rust toolchain (rustc, cargo, rustfmt, Clippy) | T2 | MIT OR Apache-2.0 | 1.94.1 (`rust-toolchain.toml`) | none | none; the language is the project's base | in tree |
+| actions/checkout | T2 | MIT | v7.0.1 (pinned by commit in `.github/workflows/ci.yml`) | none | replace with a plain `git clone` step if the action is withdrawn | in tree |
 
 ## Planned (allowed by the owner, not yet added)
 

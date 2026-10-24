@@ -1,0 +1,11 @@
+[package]
+name = "skeleton"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Walking-skeleton crate that proves the workflow chain end to end; not engine code."
+
+[lints]
+workspace = true
