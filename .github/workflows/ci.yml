@@ -40,3 +40,81 @@ jobs:
         run: cargo build --workspace --locked
       - name: Test
         run: cargo test --workspace --locked
+      - name: Test the tools
+        run: python -m unittest -q test_report
+        working-directory: tools/metrics
+
+  # Baseline metrics: coverage, mutation and benchmark on the skeleton crate.
+  # Report only: no threshold is enforced here (gate values are hypotheses and
+  # are wired in when the gate configuration exists).
+  metrics:
+    name: metrics (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      # cargo-mutants must not see -D warnings: a mutant that trips a warning
+      # would be counted as unviable instead of caught.
+      RUSTFLAGS: ""
+      TOOLS: ${{ runner.temp }}/tools
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            cov_asset: cargo-llvm-cov-x86_64-pc-windows-msvc.zip
+            cov_sha: 656590cfa13bb7478595bbfdd3bc6bc075a4f7f3f0df5a439c1856cb03c5a4d2
+            mut_asset: cargo-mutants-x86_64-pc-windows-msvc.zip
+            mut_sha: 2a2f00e47d4b458262a41501b0820aa26015fd35779903d2c8b30b2993f36791
+          - os: ubuntu-latest
+            cov_asset: cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz
+            cov_sha: b3f68e625481fed9b16444174f3fa5ebcdbde4a1878803a35eabe2dcefcdc41a
+            mut_asset: cargo-mutants-x86_64-unknown-linux-gnu.tar.gz
+            mut_sha: dfe6dc37d0342c891d2829b5a695aa57c2d0edecef7e7d0399a30cc6e206411e
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain
+      - name: Install cargo-llvm-cov 0.9.1 and cargo-mutants 27.1.0
+        run: |
+          set -euo pipefail
+          mkdir -p "$TOOLS"
+          fetch() {  # url, sha256
+            local file="$TOOLS/$(basename "$1")"
+            curl --fail --silent --show-error --location --output "$file" "$1"
+            echo "$2  $file" | sha256sum --check --status
+            case "$file" in
+              *.zip) python -m zipfile -e "$file" "$TOOLS" ;;
+              *) tar -xzf "$file" -C "$TOOLS" ;;
+            esac
+          }
+          fetch "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/${{ matrix.cov_asset }}" "${{ matrix.cov_sha }}"
+          fetch "https://github.com/sourcefrog/cargo-mutants/releases/download/v27.1.0/${{ matrix.mut_asset }}" "${{ matrix.mut_sha }}"
+          echo "$TOOLS" >> "$GITHUB_PATH"
+      - name: Coverage
+        run: |
+          mkdir -p metrics
+          cargo llvm-cov --workspace --locked --json --summary-only --output-path metrics/coverage.json
+      - name: Mutation
+        run: |
+          start=$SECONDS
+          code=0
+          cargo mutants --workspace --jobs 2 --output metrics || code=$?
+          echo "MUTATION_SECONDS=$((SECONDS - start))" >> "$GITHUB_ENV"
+          # 0 all caught, 2 some missed, 3 timeouts: reported, not enforced yet.
+          case "$code" in 0|2|3) ;; *) exit "$code" ;; esac
+      - name: Benchmark
+        run: cargo bench -p skeleton --bench align --locked > metrics/bench.json
+      - name: Report
+        run: |
+          python tools/metrics/report.py --os "${{ matrix.os }}"             --coverage metrics/coverage.json             --mutants metrics/mutants.out/outcomes.json             --bench metrics/bench.json             --mutation-seconds "$MUTATION_SECONDS"             --out metrics/metrics-report.md
+          cat metrics/metrics-report.md >> "$GITHUB_STEP_SUMMARY"
+      # actions/upload-artifact v7.0.2, pinned by commit
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: metrics-report-${{ matrix.os }}
+          path: metrics/metrics-report.md
+          retention-days: 30
