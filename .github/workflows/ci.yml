@@ -40,9 +40,14 @@ jobs:
         run: cargo build --workspace --locked
       - name: Test
         run: cargo test --workspace --locked
-      - name: Test the tools
+      - name: Test the metrics tool
         run: python -m unittest -q test_report
         working-directory: tools/metrics
+      - name: Test the gate-check tool
+        run: python -m unittest -q test_check_digest
+        working-directory: tools/gate-check
+      - name: Digest matches the gate configuration
+        run: python tools/gate-check/check_digest.py --digest wiki/rules-digest.md --config gates/gates.toml --claude-md CLAUDE.md
 
   # Baseline metrics: coverage, mutation and benchmark on the skeleton crate.
   # Report only: no threshold is enforced here (gate values are hypotheses and
