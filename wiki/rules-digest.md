@@ -1,6 +1,6 @@
 # Rules digest (the short version agents load)
 
-Status: derived from the wiki on 2026-10-24 (v0.12). The wiki pages are canonical; if this digest and a page disagree, the page wins and the digest is fixed. A CI check (phase 0a) compares the numbers below with the gate configuration. `CLAUDE.md` imports this file and nothing else from the wiki by default.
+Status: derived from the wiki on 2026-10-24 (v0.12); section 9 updated for the GitHub Free plan. The wiki pages are canonical; if this digest and a page disagree, the page wins and the digest is fixed. A CI check (phase 0a) compares the numbers below with the gate configuration. `CLAUDE.md` imports this file and nothing else from the wiki by default.
 
 ## 1. Mission and priorities
 
@@ -49,7 +49,7 @@ Class 1 routine, Class 2 sensitive (public API/port, new dependency or adapter, 
 
 ## 9. Delivery
 
-Owner approves against a diff hash, not a commit SHA. Owner defines the task, Claude Code works as a software team and runs the review phase, the owner approves once (metric report + product view), Claude Code opens the PR, auto-merge on green CI, the release workflow computes the version (every merge bumps at least patch, docs-only included), keeps baselines outside git, tags, and publishes the source workspace, tools, samples and metric report as a private GitHub Release. Pause after approval only if a fix changes product-visible behaviour or moves metrics outside tolerance.
+Owner approves against a diff hash, not a commit SHA. Owner defines the task, Claude Code works as a software team and runs the review phase, the owner approves once (metric report + product view), Claude Code opens the PR and merges it with `gh` after green checks (GitHub Free plan: no auto-merge, no branch protection, so merging is policy, not enforcement; see [github-plan-findings](workflow/github-plan-findings.md)), the release workflow computes the version (every merge bumps at least patch, docs-only included), keeps baselines outside git, tags, and publishes the source workspace, tools, samples and metric report as a private GitHub Release. Pause after approval only if a fix changes product-visible behaviour or moves metrics outside tolerance.
 
 ## 10. Safety rules for agents
 
