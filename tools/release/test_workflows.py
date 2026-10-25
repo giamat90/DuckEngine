@@ -227,6 +227,7 @@ class Ci(unittest.TestCase):
         for folder, module in (("tools/templates", "test_templates"), ("tools/token-probe", "test_probe"),
                                ("tools/gate-check", "test_governance_guard"),
                                ("tools/gate-check", "test_pr_gates"),
+                               ("tools/gate-check", "test_protected_paths"),
                                ("tools/classify-change", "test_classify_change"),
                                ("tools/arch-check", "test_arch_check"),
                                ("tools/wiki-lint", "test_wiki_lint"),

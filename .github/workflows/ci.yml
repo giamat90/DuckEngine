@@ -53,6 +53,7 @@ jobs:
           python -m unittest -q test_check_digest
           python -m unittest -q test_governance_guard
           python -m unittest -q test_pr_gates
+          python -m unittest -q test_protected_paths
         working-directory: tools/gate-check
       - name: Test the change classifier
         run: python -m unittest -q test_classify_change
@@ -93,7 +94,7 @@ jobs:
   # effect once merged, so a change to gates/ together with what it judges (digest, wiki,
   # crate layout) needs two merges. The tools' own unit tests stay in g1: they test the code
   # of the push. Limit: arch-check runs cargo inside the push, so the push's rust-toolchain.toml
-  # and .cargo/ are honoured (both are protected paths, so the governance guard flags them).
+  # and .cargo/ are honoured (both are protected paths since 0c-9, so the governance guard flags them).
   # This workflow file is itself part of the push, so the owner reads any change to it.
   gates:
     name: gates from main (architecture, wiki, digest, report)

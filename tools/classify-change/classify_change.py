@@ -2,8 +2,8 @@
 
 Rules: wiki/workflow/architect-review-surface.md section 1. The highest class of any
 changed file wins; a path or a line the rules do not recognise rounds up to class 2.
-Class 3 comes from gates/protected-paths.txt (the same list the governance guard
-uses), the `contracts/` directories, toolchain and lint configuration files, and any
+Class 3 comes from gates/protected-paths.txt (the same list and the same matcher, tools/gate-check/protected_paths.py, as the governance guard),
+the `contracts/` directories, toolchain and lint configuration files, and any
 path that can alias another file on Windows. Added and removed lines of .rs files are
 scanned for `unsafe`, atomics, locks, intrinsics and public items.
 
@@ -25,6 +25,9 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
+
+sys.path.append(str(Path(__file__).resolve().parents[1] / "gate-check"))
+from protected_paths import is_alias, is_protected, load_protected  # noqa: E402,F401  (the matcher shared with the guard)
 
 GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 ROUTINE, SENSITIVE, GOVERNANCE = 1, 2, 3
@@ -52,7 +55,6 @@ SUBMODULE = re.compile(r"^Subproject commit ")
 # `pub` anywhere on the line (after an attribute, inside an impl), but not pub(crate) and friends.
 PUBLIC_ITEM = re.compile(r"(?<![\w:])pub\b(?!\s*\()")
 PUBLIC_API_REMOVAL = re.compile(r"(?<![\w:])pub\b(?!\s*\()|\bmacro_export\b|\bmacro_rules!")
-ALIAS_PART = re.compile(r"[. ]$|~\d")
 
 
 class ClassifyError(Exception):
@@ -71,22 +73,6 @@ class Change:
 class Result:
     level: int
     reasons: list
-
-
-def load_protected(text):
-    entries = [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
-    if not entries:
-        raise ValueError("the protected-paths list is empty")
-    for entry in entries:
-        if entry.startswith(("./", "/")) or "\\" in entry or " #" in entry:
-            raise ValueError(f"malformed protected-paths entry '{entry}' (it would never match)")
-    return entries
-
-
-def _is_protected(path, protected):
-    path = path.casefold()  # Windows file systems are case-insensitive
-    entries = [entry.casefold() for entry in protected]
-    return any(path.startswith(entry) if entry.endswith("/") else path == entry for entry in entries)
 
 
 def _in_base_area(parts):
@@ -130,9 +116,9 @@ def _folded_parts(path):
 def classify_path(path, protected):
     """(class, reason) from the path alone."""
     parts = _folded_parts(path)
-    if "\\" in path or ":" in path or any(ALIAS_PART.search(part) for part in parts):
+    if is_alias(path):
         return GOVERNANCE, "path that can alias another file on Windows"
-    if _is_protected(path, protected):
+    if is_protected(path, protected):
         return GOVERNANCE, "protected path"
     if "contracts" in parts[:-1]:
         return GOVERNANCE, "contract suite"
@@ -205,11 +191,11 @@ def changes(repo, base, head):
     # Resolve first: a revision that looks like an option must not reach git as one.
     shas = [_git(repo, "rev-parse", "--verify", "--end-of-options", f"{rev}^{{commit}}").strip() for rev in (base, head)]
     span = "...".join(shas)
-    listing = _git(repo, "diff", "--name-status", "--no-renames", "--no-ext-diff", "-z", span).split("\0")
+    listing = _git(repo, "diff", "--name-status", "--no-renames", "--no-ext-diff", "--ignore-submodules=none", "-z", span).split("\0")
     found = {}
     for status, path in zip(listing[0::2], listing[1::2]):
         # --text: a NUL byte or a `-diff` attribute must not hide the lines from the scan.
-        diff = _git(repo, "diff", "-U0", "--text", "--no-renames", "--no-ext-diff", "--no-color", span, "--", f":(literal){path}")
+        diff = _git(repo, "diff", "-U0", "--text", "--no-renames", "--no-ext-diff", "--ignore-submodules=none", "--no-color", span, "--", f":(literal){path}")
         added, removed, readable = _diff_lines(diff)
         found[path] = Change(status, added, removed, opaque=not readable and status != "D")
     return found

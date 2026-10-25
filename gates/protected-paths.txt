@@ -1,6 +1,7 @@
 # Protected paths (Class 3, governance). A PR that changes any of them needs
 # `Governance task: yes (card <id>)` in its description (governance-guard).
 # One entry per line; a trailing / means everything below that directory.
+# `**/name` is a file at any depth, `**/name/` a directory anywhere (tools/gate-check/protected_paths.py).
 # Source: CLAUDE.md "Hard rules" and wiki/rules-digest.md section 8.
 gates/
 .github/
@@ -24,3 +25,20 @@ THIRD_PARTY.md
 clippy.toml
 deny.toml
 rust-toolchain.toml
+# Any depth (0c-9): agent instruction and launch files, build and lint configuration, contract suites.
+**/CLAUDE.md
+**/CLAUDE.local.md
+**/AGENTS.md
+**/.mcp.json
+**/run_claude.bat
+**/.claude/
+**/.cargo/
+**/clippy.toml
+**/.clippy.toml
+**/deny.toml
+**/rust-toolchain.toml
+**/rustfmt.toml
+**/.rustfmt.toml
+**/contracts/
+**/.gitattributes
+**/.gitmodules

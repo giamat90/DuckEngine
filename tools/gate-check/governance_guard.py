@@ -1,7 +1,7 @@
 """Fail a PR that changes a protected path without a declared governance task (card 0b-8).
 
-Protected paths are listed in gates/protected-paths.txt (one per line; a trailing
-/ means a directory). The PR description must then contain a line
+Protected paths are listed in gates/protected-paths.txt (format and matching rules in
+protected_paths.py, shared with the change classifier). The PR description must then contain a line
 `Governance task: yes (card <id>)`. Traceable, not unforgeable: the agent writes
 the description, the owner reads it at approval. Run from the trusted base.
 
@@ -15,6 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from protected_paths import is_protected, load_protected  # noqa: F401  (the matcher shared with the classifier)
+
 GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 DECLARATION = re.compile(r"Governance task: yes \(card [^()\s]+\)")
 # An unclosed comment or fence hides the rest of the text, as it does when rendered.
@@ -24,17 +26,6 @@ FENCED_BLOCK = re.compile(r"^[ ]{0,3}(`{3,}|~{3,}).*?(?:^[ ]{0,3}\1[`~]*[ \t]*$|
 
 class GuardError(Exception):
     pass
-
-
-def load_protected(text):
-    entries = [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
-    if not entries:
-        raise ValueError("the protected-paths list is empty")
-    return entries
-
-
-def is_protected(path, protected):
-    return any(path.startswith(entry) if entry.endswith("/") else path == entry for entry in protected)
 
 
 def declared(body):
@@ -53,7 +44,7 @@ def problems(changed, protected, body):
 def changed_files(repo, base, head):
     try:
         done = subprocess.run(
-            ["git", "diff", "--name-only", "--no-renames", "--no-ext-diff", "-z", f"{base}...{head}"], cwd=repo, env=GIT_ENV, capture_output=True, check=False
+            ["git", "diff", "--name-only", "--no-renames", "--no-ext-diff", "--ignore-submodules=none", "-z", f"{base}...{head}"], cwd=repo, env=GIT_ENV, capture_output=True, check=False
         )
     except OSError as error:
         raise GuardError(f"cannot run git in {repo}: {error}") from error
