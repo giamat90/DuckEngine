@@ -126,7 +126,7 @@ Rulesets, merge queue, auto-merge and environment protection are **not available
 |---|---|
 | Nobody pushes to `main` | policy only: the agent opens a PR from a branch and never pushes to `main` after the bootstrap commit; git history and PR list are the audit trail |
 | Wait for green CI, then merge | the session stays open: `gh run watch <run-id> --exit-status` (run id from `gh run list --commit <sha>`; `gh pr checks` does not work with the scoped token), then `gh pr merge N --squash --subject "<PR title> (#N)" --body "" --match-head-commit <sha>` (no `--auto`; the PR title is the Conventional Commit message that decides the version, checked by the `pr-title` workflow); a failing or missing check means no merge |
-| Governance guard as a required check | built in 0b-8; runs as a check, cannot be made required, so the agent treats a red `governance-guard` as a stop |
+| Governance guard as a required check | built in 0b-8; runs as a check, cannot be made required, so the agent treats a red `governance-guard` as a stop; since 0c-14 the same guard, the approval-record check and a check that the enforcement workflows still exist also run from the base branch in `trusted-pr-gates` (`pull_request_target`), which a PR cannot edit or delete |
 | Protected environment `release` | repository-level Actions secrets or OIDC; the release workflow is the only consumer and is a Class 3 file |
 | Rulesets that bind admins | none; the fine-grained token (section 4) limits what the agent can do |
 

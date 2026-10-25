@@ -14,6 +14,7 @@ RELEASE = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
 PR_TITLE = (WORKFLOWS / "pr-title.yml").read_text(encoding="utf-8")
 CI = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
 GUARD = (WORKFLOWS / "governance-guard.yml").read_text(encoding="utf-8")
+TRUSTED = (WORKFLOWS / "trusted-pr-gates.yml").read_text(encoding="utf-8")
 
 PINNED = re.compile(r"^\s*-?\s*uses:\s*\S+@[0-9a-f]{40}\b", re.M)
 USES = re.compile(r"^\s*-?\s*uses:\s*(\S+)", re.M)
@@ -149,6 +150,70 @@ class GovernanceGuard(unittest.TestCase):
         self.assertIn("::notice::", GUARD)
 
 
+class TrustedPrGates(unittest.TestCase):
+    """trusted-pr-gates.yml runs from the base branch, so a PR cannot edit or delete it (card 0c-14)."""
+
+    def test_runs_on_pull_request_target_so_the_base_version_always_runs(self):
+        self.assertRegex(TRUSTED, r"(?m)^on:\n  pull_request_target:\n")
+        self.assertNotRegex(TRUSTED, r"(?m)^  pull_request:")
+        for event in ("opened", "edited", "reopened", "synchronize"):
+            self.assertIn(event, TRUSTED)
+
+    def test_only_pull_requests_into_main_are_served(self):
+        # pull_request_target loads the workflow of the PR's base branch: without this filter a PR
+        # into a branch someone has edited would run that branch's version of this file.
+        self.assertIn("    branches: [main]\n", TRUSTED)
+
+    def test_the_token_is_read_only_and_no_secret_is_used(self):
+        self.assertRegex(TRUSTED, r"(?m)^permissions:\n  contents: read\n(?!  )")
+        self.assertNotIn("secrets.", TRUSTED)
+
+    def test_the_pr_tree_is_data_and_never_executed(self):
+        for block in run_blocks(TRUSTED):
+            for command in re.findall(r"(?m)^\s*(python3?\b[^\n]*)", block):
+                self.assertRegex(command, r"^python base/")
+            self.assertNotRegex(block, r"\b(python3?|node|pytest|pip)\b\s+(-\S+\s+)*(\./)?head/")
+            self.assertNotRegex(block, r"(?m)^\s*(\./)?head/")
+            self.assertNotRegex(block, r"\b(cargo|npm|make|bash|sh|source)\b[^\n]*head/")
+            self.assertNotIn("cd head", block)
+        self.assertNotIn("working-directory: head", TRUSTED)
+        self.assertEqual(TRUSTED.count("path: head"), 1)
+
+    def test_the_tools_and_lists_come_from_the_base_checkout(self):
+        for side in ("base", "head"):
+            self.assertRegex(TRUSTED, r"ref: \$\{\{ github.event.pull_request." + side + r".sha \}\}\n\s+path: " + side + r"\n")
+        self.assertIn("fetch-depth: 0", TRUSTED)
+        self.assertIn('--base "$BASE_SHA" --head "$HEAD_SHA"', TRUSTED)
+        self.assertEqual(TRUSTED.count('--body-file "$RUNNER_TEMP/pr-body.md"'), 2)
+        for name, side in (("BASE_SHA", "base"), ("HEAD_SHA", "head")):
+            self.assertIn(name + ": ${{ github.event.pull_request." + side + ".sha }}", TRUSTED)
+        self.assertIn("python base/tools/gate-check/governance_guard.py", TRUSTED)
+        self.assertIn("--paths base/gates/protected-paths.txt", TRUSTED)
+        self.assertIn("python base/tools/gate-check/pr_gates.py workflows --repo head "
+                      "--required base/gates/required-workflows.txt", TRUSTED)
+        self.assertIn("python base/tools/gate-check/pr_gates.py approval --repo head", TRUSTED)
+        self.assertIn("python base/acceptance/validate.py --dir head/acceptance/scenarios", TRUSTED)
+
+    def test_checkouts_keep_no_credentials_and_actions_are_pinned(self):
+        self.assertEqual(TRUSTED.count("persist-credentials: false"), TRUSTED.count("actions/checkout@"))
+        self.assertTrue(USES.findall(TRUSTED))
+        self.assertEqual(len(PINNED.findall(TRUSTED)), len(USES.findall(TRUSTED)))
+
+    def test_the_description_reaches_the_scripts_through_the_environment(self):
+        self.assertIn("PR_BODY: ${{ github.event.pull_request.body }}", TRUSTED)
+        for block in run_blocks(TRUSTED):
+            self.assertNotIn("${{", block)
+
+    def test_the_gate_steps_cannot_be_skipped_or_allowed_to_fail(self):
+        self.assertNotIn("continue-on-error", TRUSTED)
+        self.assertNotIn("if:", TRUSTED)
+
+    def test_a_missing_tool_on_the_base_is_not_skipped_silently(self):
+        # Unlike governance-guard.yml there is no bootstrap exit: the tools exist on the base now.
+        self.assertNotIn("::notice::", TRUSTED)
+        self.assertNotIn("exit 0", TRUSTED)
+
+
 class Ci(unittest.TestCase):
     def test_ci_runs_on_main_too_and_does_not_cancel_runs_on_main(self):
         self.assertNotIn("branches-ignore", CI)
@@ -161,6 +226,7 @@ class Ci(unittest.TestCase):
     def test_ci_runs_the_tests_of_every_tool_folder(self):
         for folder, module in (("tools/templates", "test_templates"), ("tools/token-probe", "test_probe"),
                                ("tools/gate-check", "test_governance_guard"),
+                               ("tools/gate-check", "test_pr_gates"),
                                ("tools/classify-change", "test_classify_change"),
                                ("tools/arch-check", "test_arch_check"),
                                ("tools/wiki-lint", "test_wiki_lint"),

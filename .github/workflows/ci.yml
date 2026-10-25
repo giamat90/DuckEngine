@@ -52,6 +52,7 @@ jobs:
         run: |
           python -m unittest -q test_check_digest
           python -m unittest -q test_governance_guard
+          python -m unittest -q test_pr_gates
         working-directory: tools/gate-check
       - name: Test the change classifier
         run: python -m unittest -q test_classify_change

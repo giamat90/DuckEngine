@@ -1,0 +1,57 @@
+name: trusted-pr-gates
+
+# Checks a pull request cannot switch off (card 0c-14). `pull_request_target` always runs
+# the workflow file of the BASE branch, so a PR that edits or deletes this file, or any
+# other enforcement workflow, still faces the version on main. The tools and the lists
+# come from the base commit; the PR tree is checked out as data only and never executed.
+# The token is read-only and no secret is used. The PR description reaches the scripts
+# through an environment variable, never through the command line.
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Protected paths need a declared governance task
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          python base/tools/gate-check/governance_guard.py --repo head --base "$BASE_SHA" --head "$HEAD_SHA" \
+            --paths base/gates/protected-paths.txt --body-file "$RUNNER_TEMP/pr-body.md"
+      - name: Enforcement workflows are still present
+        run: |
+          python base/tools/gate-check/pr_gates.py workflows --repo head --required base/gates/required-workflows.txt
+      - name: Owner approval record matches the diff
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          python base/tools/gate-check/pr_gates.py approval --repo head --base "$BASE_SHA" --head "$HEAD_SHA" \
+            --body-file "$RUNNER_TEMP/pr-body.md"
+      - name: Acceptance scenarios are well formed
+        run: |
+          python base/acceptance/validate.py --dir head/acceptance/scenarios

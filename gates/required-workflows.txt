@@ -1,0 +1,8 @@
+# Enforcement workflows that must exist in every pull request tree (card 0c-14).
+# Checked by tools/gate-check/pr_gates.py from the base commit. Removing or renaming one
+# is a governance change that needs two merges: the list is read from the base.
+ci.yml
+governance-guard.yml
+pr-title.yml
+release.yml
+trusted-pr-gates.yml
