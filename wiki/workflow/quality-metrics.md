@@ -38,7 +38,7 @@ Why mutation score: coverage says code *ran*; mutation testing says tests would 
 | Function length | Clippy `too_many_lines` / rust-code-analysis | warn > 60 lines |
 | Duplication | jscpd or similar | <= 3% |
 | Nesting depth / parameter count | Clippy (`too_many_arguments`, nesting lints) / rust-code-analysis | nesting <= 3; parameters warn > 3, fail > 5 ([clean-code-and-review §1](clean-code-and-review.md)) |
-| Magic numbers, dead code | Clippy + `dead_code` lint | 0 new |
+| Magic numbers, dead code | `dead_code` lint (magic numbers: no Clippy lint, not enforced yet) | 0 new |
 | `PERF:` waivers | scan + benchmark link check | each waiver names an existing benchmark; count reported |
 | Compiler warnings | `RUSTFLAGS=-D warnings` | 0 |
 | **`unsafe` blocks** | scan (`cargo-geiger` or grep) | only in allowlisted modules; each has a `// SAFETY:` comment; count reported per PR; **per-module `unsafe` budget** fixed in the module's design note; Miri passes on changed `unsafe` that does not cross FFI/GPU/intrinsics, and other `unsafe` is covered by sanitizers and tests (M8) |

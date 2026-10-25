@@ -15,6 +15,10 @@ unsafe_code = "forbid"
 pedantic = { level = "warn", priority = -1 }
 unwrap_used = "deny"
 expect_used = "deny"
+too_many_lines = "warn"
+too_many_arguments = "deny"
+cognitive_complexity = "deny"
+excessive_nesting = "deny"
 
 [profile.dev]
 panic = "abort"

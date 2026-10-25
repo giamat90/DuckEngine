@@ -1,0 +1,8 @@
+# Clean-code limits for Clippy. Values come from gates/gates.toml [clean_code]
+# (tools/lint-profile fails CI when they differ). Never raise a number to get
+# green. Limits Clippy cannot express are listed in
+# docs/gates/clean-code-lint-profile.md.
+too-many-lines-threshold = 60
+cognitive-complexity-threshold = 20
+too-many-arguments-threshold = 5
+excessive-nesting-threshold = 3
