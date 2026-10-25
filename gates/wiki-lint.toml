@@ -17,13 +17,19 @@ paths = ["wiki", "docs", "CLAUDE.md", "START-HERE.md"]
 
 [history]
 # Whole pages that record the past: not checked. Decision records, review reports, ADR template.
-pages = ["wiki/decisions/*.md", "wiki/review-v0.10.md", "wiki/review-independent.md", "docs/adr/*.md"]
+pages = ["wiki/decisions/*.md", "wiki/review-v0.10.md", "docs/adr/*.md"]
 
-# Lines that record the past, on the one page that carries them: changelog entries in the README.
+# Changelog lines in the README that quote removed terms. A line is exempt only while its
+# SHA-256 (trailing whitespace stripped) equals the one here, so editing it puts it back under
+# the rules. Compute: python -c "import hashlib,sys; print(hashlib.sha256(sys.argv[1].rstrip().encode()).hexdigest())" "<line>"
 # Struck-through (~~resolved~~) spans are ignored everywhere, the rest of the line is still checked.
 [[history_line]]
-page = "wiki/README.md"
-pattern = '^> - \*\*v\d+(?:\.\d+)*\*\*'
+page = "wiki/README.md"   # v0.6 line
+sha256 = "6f612fea9e3e9b0143fe24ec0a8ea57a24f7dc4789408013d025dc577b3fb504"
+
+[[history_line]]
+page = "wiki/README.md"   # v0.2 line
+sha256 = "4e64d68b72bc29ceeb9461d6bb9b23c94bb86d0f1251803557115e755acfa516"
 
 [[stale]]
 pattern = '#include'
@@ -110,24 +116,35 @@ number = '[Dd]uplication[^;]*?<= (\d+)%'
 [[known_number]]
 page = "wiki/00-vision-and-requirements.md"
 text = ">= 70%"
+within = "CPU scaling"
 reason = "CPU scaling target, not a gate; N is chosen later"
 
 [[known_number]]
 page = "docs/budgets/reference-machine-and-workloads.md"
 text = "more than 5%"
+within = "median differs by"
 reason = "noise tolerance for repeating a benchmark run, not a gate"
 
 [[known_number]]
 page = "docs/gates/phase-0a-toolchain-gates.md"
 text = ">= 70%"
+within = "deliberately well-tested module"
 reason = "phase 0a G1 acceptance criterion for the mutation tool, asserted by tools/metrics/g1_assert.py; not the PR gate"
 
 [[known_number]]
 page = "docs/gates/phase-0a-toolchain-gates.md"
 text = "< 50%"
+within = "deliberately weakly tested control"
 reason = "phase 0a G1 acceptance criterion for the weak control, asserted by tools/metrics/g1_assert.py; not the PR gate"
 
 [[known_number]]
 page = "docs/gates/phase-0a-toolchain-gates.md"
 text = "below 70%"
+within = "the well-tested set drops"
+reason = "phase 0a G1 assertion in tools/metrics/g1_assert.py; not the PR gate"
+
+[[known_number]]
+page = "docs/gates/phase-0a-toolchain-gates.md"
+text = "reaches 50%"
+within = "the control reaches"
 reason = "phase 0a G1 assertion in tools/metrics/g1_assert.py; not the PR gate"

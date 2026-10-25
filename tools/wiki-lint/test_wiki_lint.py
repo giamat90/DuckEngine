@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 import tomllib
 import unittest
@@ -23,7 +24,11 @@ pages = ["wiki/old/*.md", "wiki/review.md"]
 
 [[history_line]]
 page = "wiki/README.md"
-pattern = '^> - \*\*v\d+(?:\.\d+)*\*\*'
+sha256 = "@V06@"
+
+[[history_line]]
+page = "wiki/README.md"
+sha256 = "@V01@"
 
 [[stale]]
 pattern = '#include'
@@ -52,8 +57,12 @@ number = 'warn > (\d+) lines'
 [[known_number]]
 page = "wiki/vision.md"
 text = ">= 70%"
+within = "efficiency"
 reason = "a target, not a gate"
 """
+V06 = "> - **v0.6** dropped #include"
+V01 = "> - **v0.1** coverage >= 10%"
+CONFIG = CONFIG.replace("@V06@", hashlib.sha256(V06.encode()).hexdigest()).replace("@V01@", hashlib.sha256(V01.encode()).hexdigest())
 GATES = tomllib.loads(GATES_TEXT)
 
 
@@ -81,14 +90,29 @@ class StaleTerms(unittest.TestCase):
         self.assertEqual([], lint({"wiki/old/adr.md": "#include", "wiki/review.md": "Q13"}))
 
     def test_a_changelog_line_is_exempt_but_the_next_line_is_not(self):
-        found = lint({"wiki/README.md": "> - **v0.6** dropped #include\nbody #include\n"})
+        found = lint({"wiki/README.md": V06 + "\nbody #include\n"})
         self.assertEqual([2], [f.line for f in found])
 
     def test_a_changelog_line_is_exempt_only_on_its_own_page(self):
-        self.assertEqual(["stale-term"], rules(lint({"wiki/other.md": "> - **v0.6** dropped #include\n"})))
+        self.assertEqual(["stale-term"], rules(lint({"wiki/other.md": V06 + "\n"})))
 
     def test_a_line_that_only_looks_like_a_changelog_entry_is_not_exempt(self):
         self.assertEqual(["stale-term"], rules(lint({"wiki/README.md": "> - v9 #include\n"})))
+
+    def test_a_changelog_line_with_anything_added_is_no_longer_exempt(self):
+        # review 0c-7 W1: the exemption used to cover the whole line once it began with a version tag
+        for text in (V06 + " and Line coverage >= 50%", V06 + " #include", "> - **v9** Line coverage >= 50% and uses #include",
+                     " " + V06 + " #include"):
+            with self.subTest(text=text):
+                self.assertNotEqual([], lint({"wiki/README.md": text + "\n"}))
+
+    def test_a_changelog_line_ending_in_spaces_or_a_carriage_return_is_still_the_same_line(self):
+        self.assertEqual([], lint({"wiki/README.md": V06 + "  \r\n"}))
+
+    def test_a_history_line_must_name_a_sha256_not_a_pattern(self):
+        for entry in ("pattern = '^> - v'", "sha256 = 'abc'", "sha256 = '" + "G" * 64 + "'", ""):
+            with self.subTest(entry=entry), self.assertRaises(ValueError):
+                wl.load_config(f"[[history_line]]\npage = 'wiki/README.md'\n{entry}\n", GATES)
 
     def test_a_struck_through_span_is_exempt_but_the_rest_of_the_row_is_not(self):
         self.assertEqual([], lint({"wiki/q.md": "| ~~**Q13**~~ resolved |\n"}))
@@ -108,6 +132,49 @@ class StaleTerms(unittest.TestCase):
 
     def test_a_term_only_matches_whole_words_when_the_pattern_says_so(self):
         self.assertEqual([], lint({"wiki/a.md": "Q130 and XQ13\n"}))
+
+
+class HiddenText(unittest.TestCase):
+    """Review 0c-7 W2: ways to write a term or a number that the rules used to miss."""
+
+    def test_every_invisible_format_character_is_dropped_before_matching(self):
+        for mark in ("­", "‎", "‏", "‪", "‮", "⁦", "⁠", "﻿", "​", "؜", "᠎"):
+            with self.subTest(mark=hex(ord(mark))):
+                self.assertEqual(["threshold-mismatch"], rules(lint({"wiki/a.md": f"Line cov{mark}erage >= 85%"})))
+                self.assertEqual(["stale-term"], rules(lint({"wiki/a.md": f"#inc{mark}lude"})))
+
+    def test_combining_marks_variation_selectors_and_blank_letters_are_dropped(self):
+        for mark in ("͏", "️", "ㅤ", "⠀", "ᅟ"):
+            with self.subTest(mark=hex(ord(mark))):
+                self.assertEqual(["stale-term"], rules(lint({"wiki/a.md": f"#inc{mark}lude"})))
+
+    def test_more_bound_wordings_are_refused_when_no_rule_covers_them(self):
+        for text in ("greater than 80%", "exceeds 80%", "80% or higher", "80% minimum", "min 80%", "warn: 60"):
+            with self.subTest(text=text):
+                self.assertEqual(["threshold-uncovered"], rules(lint({"wiki/a.md": text})))
+
+    def test_html_entities_are_decoded_before_matching(self):
+        for text in ("Line coverage &ge; 85%", "Line coverage &gt;= 85%", "Line coverage &#62;= 85%", "Line coverage &#x3E;= 85%",
+                     "Line coverage &GreaterEqual; 85%", "Line coverage &gt;&equals; 85%", "Line coverage >= 85&percnt;", "&num;include"):
+            with self.subTest(text=text):
+                self.assertNotEqual([], lint({"wiki/a.md": text}))
+
+    def test_a_cyrillic_look_alike_inside_a_latin_word_is_a_finding(self):
+        for text in ("Lіne coverage >= 50%", "uses cmаke", "Q1З"):
+            with self.subTest(text=text):
+                self.assertIn("mixed-script", rules(lint({"wiki/a.md": text})))
+
+    def test_plain_cyrillic_and_greek_text_is_not_a_finding(self):
+        self.assertEqual([], lint({"wiki/a.md": "Привет мир, Δt = 0.01 and α blending\n"}))
+
+    def test_bounds_written_without_a_comparator_are_refused_when_no_rule_covers_them(self):
+        for text in ("must reach 50 %", "Minimum line coverage: 50%", "coverage must reach 85 percent", "Maximum duplication: 9%",
+                     "threshold of 50%", "floor: 80%"):
+            with self.subTest(text=text):
+                self.assertEqual(["threshold-uncovered"], rules(lint({"wiki/a.md": text})))
+
+    def test_plain_percentages_are_still_not_thresholds(self):
+        self.assertEqual([], lint({"wiki/a.md": "About 90% of the time, a 5% sample, 100% of cases\n"}))
 
 
 class Thresholds(unittest.TestCase):
@@ -136,6 +203,11 @@ class Thresholds(unittest.TestCase):
     def test_a_known_number_is_allowed_on_its_page_only(self):
         self.assertEqual([], lint({"wiki/vision.md": "efficiency >= 70% on N cores\n"}))
         self.assertEqual(["threshold-uncovered"], rules(lint({"wiki/other.md": "efficiency >= 70% on N cores\n"})))
+
+    def test_a_known_number_is_allowed_on_the_named_line_only(self):
+        # review 0c-7 W3: it used to be allowed anywhere on its page
+        self.assertEqual(["threshold-uncovered"], rules(lint({"wiki/vision.md": "Mutation score >= 70% is enough\n"})))
+        self.assertEqual([], lint({"wiki/vision.md": "Mutation score\nefficiency >= 70% on N cores\n"}))
 
     def test_history_lines_and_pages_are_exempt_from_threshold_checks(self):
         pages = {"wiki/old/x.md": "Line coverage >= 10%", "wiki/README.md": "> - **v0.1** coverage >= 10%\n"}
@@ -202,6 +274,10 @@ class Config(unittest.TestCase):
     def test_a_known_number_needs_page_text_and_reason(self):
         with self.assertRaisesRegex(ValueError, "known_number"):
             wl.load_config("[[known_number]]\npage = 'wiki/a.md'\n", GATES)
+
+    def test_a_known_number_needs_the_line_it_belongs_to(self):
+        with self.assertRaisesRegex(ValueError, "within"):
+            wl.load_config("[[known_number]]\npage = 'wiki/a.md'\ntext = '>= 7%'\nreason = 'r'\n", GATES)
 
     def test_a_gate_key_without_any_rule_is_an_error(self):
         # a gate number that no wiki rule watches would be silently unchecked
@@ -289,6 +365,32 @@ class RealWiki(unittest.TestCase):
         self.assertIn("L0-L2 >= 90%", text)
         found = wl.check({page: text.replace("L0-L2 >= 90%", "L0-L2 >= 85%")}, config)
         self.assertEqual(["threshold-mismatch"], sorted({finding.rule for finding in found}))
+
+    def test_a_stale_term_added_to_a_real_changelog_line_is_caught(self):
+        config = wl.load_config((REPO / "gates" / "wiki-lint.toml").read_text(encoding="utf-8"),
+                                tomllib.loads((REPO / "gates" / "gates.toml").read_text(encoding="utf-8")))
+        text = (REPO / "wiki" / "README.md").read_text(encoding="utf-8")
+        line = next(line for line in text.split("\n") if line.startswith("> - **v0.6**"))
+        self.assertEqual([], wl.check({"wiki/README.md": text}, config))
+        found = wl.check({"wiki/README.md": text.replace(line, line + " Line coverage >= 50%")}, config)
+        self.assertIn("threshold-mismatch", {finding.rule for finding in found})
+
+    def test_every_history_line_hash_matches_a_real_line(self):
+        data = tomllib.loads((REPO / "gates" / "wiki-lint.toml").read_text(encoding="utf-8"))
+        for entry in data["history_line"]:
+            lines = (REPO / entry["page"]).read_text(encoding="utf-8").splitlines()
+            self.assertIn(entry["sha256"], {hashlib.sha256(line.rstrip().encode()).hexdigest() for line in lines})
+
+    def test_the_history_pages_exist_and_the_review_page_is_protected(self):
+        config = tomllib.loads((REPO / "gates" / "wiki-lint.toml").read_text(encoding="utf-8"))
+        protected = (REPO / "gates" / "protected-paths.txt").read_text(encoding="utf-8").split()
+        for page in config["history"]["pages"]:
+            with self.subTest(page=page):
+                if "*" not in page:
+                    self.assertTrue((REPO / page).is_file(), "a history exemption for a page that does not exist")
+                    self.assertIn(page, protected)
+                else:
+                    self.assertTrue(any(page.startswith(entry) for entry in protected if entry.endswith("/")))
 
     def test_every_gate_number_has_a_wiki_rule(self):
         config = (REPO / "gates" / "wiki-lint.toml").read_text(encoding="utf-8")

@@ -17,6 +17,7 @@ tools/metrics/
 acceptance/
 docs/adr/
 wiki/decisions/
+wiki/review-v0.10.md
 wiki/rules-digest.md
 CLAUDE.md
 .claude/
