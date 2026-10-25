@@ -1,0 +1,31 @@
+name: pr-title
+
+# The PR title becomes the squash commit message, which decides the release
+# version. Runs trusted code from the base commit, never the PR tree.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  title:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Check the PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # Bootstrap: the PR that introduces the checker has no checker in its base.
+          if [ ! -f tools/release/check_pr_title.py ]; then
+            echo "::notice::check_pr_title.py is not on the base branch yet; skipping"
+            exit 0
+          fi
+          python tools/release/check_pr_title.py --title "$PR_TITLE"

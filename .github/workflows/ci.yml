@@ -56,6 +56,14 @@ jobs:
       - name: Test the diff-hash tool
         run: python -m unittest -q test_diff_hash
         working-directory: tools/diff-hash
+      - name: Test the release tools
+        run: |
+          python -m unittest -q test_next_version
+          python -m unittest -q test_release_plan
+          python -m unittest -q test_check_pr_title
+          python -m unittest -q test_make_assets
+          python -m unittest -q test_workflows
+        working-directory: tools/release
       - name: Digest matches the gate configuration
         run: python tools/gate-check/check_digest.py --digest wiki/rules-digest.md --config gates/gates.toml --claude-md CLAUDE.md
 

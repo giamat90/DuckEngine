@@ -1,0 +1,59 @@
+name: release
+
+# Every push to main (a squash-merged PR) releases one version: plan, build
+# assets, create a draft Release, upload, publish. The tag is created at the
+# merge commit when the Release is created. Never commits or pushes to a branch.
+on:
+  push:
+    branches: [main]
+
+# One release at a time; a queued run waits instead of cancelling a running one.
+# Each run plans from the latest tag to its own commit, so no commit is lost.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Plan the version
+        id: plan
+        run: python tools/release/release_plan.py --repo . >> "$GITHUB_OUTPUT"
+      - name: Build the assets
+        if: steps.plan.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          PREVIOUS: ${{ steps.plan.outputs.previous }}
+        run: |
+          range="HEAD"
+          if [ -n "$PREVIOUS" ]; then range="$PREVIOUS..HEAD"; fi
+          git log --format='- %s (%h)' "$range" > CHANGELOG.md
+          python tools/release/make_assets.py --repo . --version "$VERSION" --out dist --extra THIRD_PARTY.md CHANGELOG.md
+      - name: Create and publish the Release
+        if: steps.plan.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          # Drafts have no tag yet, so they are found through the API by name, not `gh release view`.
+          draft_ids() {
+            gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[] | select(.draft and .tag_name == env.TAG) | .id'
+          }
+          # A draft left by a failed earlier attempt is replaced; a published Release is never touched.
+          for id in $(draft_ids); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done
+          gh release create "$TAG" dist/* --draft --target "$GITHUB_SHA" --title "$TAG" --notes-file CHANGELOG.md
+          ids=$(draft_ids)
+          if [ "$(echo "$ids" | wc -w)" -ne 1 ]; then echo "expected exactly one draft for $TAG, got: $ids"; exit 1; fi
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ids" -F draft=false
