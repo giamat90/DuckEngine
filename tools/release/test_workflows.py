@@ -169,11 +169,50 @@ class Ci(unittest.TestCase):
                 self.assertIn(f"working-directory: {folder}", CI)
                 self.assertIn(module, CI)
 
-    def test_ci_runs_the_architecture_check_on_the_real_workspace(self):
-        self.assertIn("python tools/arch-check/arch_check.py --config gates/architecture.toml", CI)
+    def test_the_gate_steps_run_from_a_trusted_main_checkout_with_the_pr_tree_as_data(self):
+        job = CI[CI.index("\n  gates:"):CI.index("\n  metrics:")]
+        self.assertIn("ref: main\n          path: trusted", job)
+        self.assertIn("path: head", job)
+        self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
+        self.assertIn("python trusted/tools/arch-check/arch_check.py --config trusted/gates/architecture.toml --repo head", job)
+        self.assertIn("python trusted/tools/wiki-lint/wiki_lint.py --config trusted/gates/wiki-lint.toml "
+                      "--gates trusted/gates/gates.toml --repo head", job)
+        self.assertIn("python trusted/tools/gate-check/check_digest.py --digest head/wiki/rules-digest.md "
+                      "--config trusted/gates/gates.toml --claude-md head/CLAUDE.md", job)
 
-    def test_ci_lints_the_real_wiki(self):
-        self.assertIn("python tools/wiki-lint/wiki_lint.py --config gates/wiki-lint.toml --gates gates/gates.toml", CI)
+    def test_no_gate_tool_runs_from_the_pr_tree_in_the_build_job(self):
+        build = CI[CI.index("\n  g1:"):CI.index("\n  gates:")]
+        for tool in ("arch_check.py", "wiki_lint.py", "check_digest.py"):
+            with self.subTest(tool=tool):
+                self.assertNotIn(tool, build)
+
+    def test_the_gate_steps_cannot_be_skipped_or_allowed_to_fail(self):
+        job = CI[CI.index("\n  gates:"):CI.index("\n  metrics:")]
+        gate_steps = job[job.index("- name: Check the architecture rules"):job.index("# Report only")]
+        self.assertNotIn("continue-on-error", gate_steps)
+        self.assertNotIn("if:", gate_steps)
+        self.assertNotIn("working-directory: head", gate_steps)
+
+    def test_the_gate_tools_are_named_only_in_the_gates_job(self):
+        outside = CI[:CI.index("\n  gates:")] + CI[CI.index("\n  metrics:"):]
+        for tool in ("arch_check.py", "wiki_lint.py", "check_digest.py", "approval_report.py"):
+            with self.subTest(tool=tool):
+                self.assertNotIn(tool, outside)
+
+    def test_the_report_step_needs_no_credentials(self):
+        job = CI[CI.index("\n  gates:"):CI.index("\n  metrics:")]
+        step = job[job.index("- name: Approval report"):]
+        self.assertNotIn("git -C head fetch", step)
+        self.assertIn("rev-parse --verify", step)
+
+    def test_the_approval_report_is_built_by_main_tools_into_the_job_summary_on_branches_only(self):
+        job = CI[CI.index("\n  gates:"):CI.index("\n  metrics:")]
+        step = job[job.index("- name: Approval report"):]
+        self.assertIn("if: github.ref_type == 'branch' && github.ref != 'refs/heads/main'", step)
+        self.assertIn("python trusted/tools/metrics/approval_report.py", step)
+        self.assertIn("--tools-dir trusted/tools --gates-dir trusted/gates --repo head", step)
+        self.assertIn("python trusted/tools/diff-hash/diff_hash.py --repo head compute", step)
+        self.assertIn('>> "$GITHUB_STEP_SUMMARY"', step)
 
     def test_ci_runs_the_release_tool_tests(self):
         self.assertIn("working-directory: tools/release", CI)

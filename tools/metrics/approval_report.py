@@ -11,9 +11,8 @@ produces yet are listed under "Not in this report" rather than left out silently
 The tools come from --tools-dir (default: next to this file) and their configuration from
 --gates-dir (default: <repo>/gates). Point both at a trusted checkout of main to judge a PR
 by main's rules; with the defaults on a PR tree the PR also controls the rules it is judged
-by, which is the policy-plus-owner-reading position of the other `ci` tools (card 0c-5
-moves them to a trusted checkout). A tool that cannot run, times out, exits non-zero,
-prints a violation or prints no summary line counts as a failed check; a classifier that
+by, which is why the `ci` `gates` job (card 0c-5) passes both from a checkout of main.
+A tool that cannot run, times out, exits non-zero, prints a violation or prints no summary line counts as a failed check; a classifier that
 fails counts as class 3 and as a failed check. Exit codes: 0 all pass, 1 a check failed,
 2 the report could not be written.
 """
