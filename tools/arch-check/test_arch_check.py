@@ -279,6 +279,118 @@ class EvasionOfBannedUse(unittest.TestCase):
         self.assertEqual([], make(self, {"platform": ([], {"lib.rs": "use std::fs;"})}, config))
 
 
+class SourceScope(unittest.TestCase):
+    """Review 0c-7 A1, A2: which files are scanned."""
+
+    def test_a_target_folder_inside_src_is_scanned(self):
+        ws = Workspace(self, {"base": ([], {})})
+        (ws.dir / "base" / "src" / "target").mkdir()
+        (ws.dir / "base" / "src" / "target" / "mod.rs").write_text("use std::fs;", encoding="utf-8")
+        self.assertEqual(["banned-use"], rules(ws.check(REAL)))
+
+    def test_the_crate_build_output_folder_is_not_scanned(self):
+        ws = Workspace(self, {"base": ([], {})})
+        (ws.dir / "base" / "target" / "debug").mkdir(parents=True)
+        (ws.dir / "base" / "target" / "debug" / "gen.rs").write_text("use std::fs;", encoding="utf-8")
+        self.assertEqual([], ws.check(REAL))
+
+    def with_target(self, test_crates, src_path):
+        ws = Workspace(self, test_crates)
+        ws.packages[0]["targets"] = [{"name": "x", "src_path": str(src_path(ws))}]
+        return ws.check(REAL)
+
+    def test_a_target_whose_source_is_outside_the_crate_folder_is_a_finding(self):
+        found = self.with_target({"base": ([], {})}, lambda ws: ws.dir / "elsewhere" / "lib.rs")
+        self.assertEqual(["src-outside"], rules(found))
+        self.assertIn("base", found[0].message)
+
+    def test_a_dot_dot_path_that_leaves_the_crate_is_a_finding(self):
+        found = self.with_target({"base": ([], {})}, lambda ws: ws.dir / "base" / "src" / ".." / ".." / "other" / "lib.rs")
+        self.assertEqual(["src-outside"], rules(found))
+
+    def test_targets_inside_the_crate_folder_are_fine(self):
+        found = self.with_target({"base": ([], {"lib.rs": ""})}, lambda ws: ws.dir / "base" / "src" / "lib.rs")
+        self.assertEqual([], found)
+
+    def test_an_adapter_may_have_its_source_elsewhere(self):
+        found = self.with_target({"adapter_gl": ([], {})}, lambda ws: ws.dir / "elsewhere" / "lib.rs")
+        self.assertEqual([], found)
+
+    def test_a_package_without_targets_is_still_checked(self):
+        self.assertEqual([], make(self, {"base": ([], {"lib.rs": ""})}, REAL))
+
+
+class IncludeAndPathVariants(unittest.TestCase):
+    """Review 0c-7 A3: every way to pull in a file the scan cannot follow."""
+
+    def test_other_spellings_are_refused(self):
+        for text in ("include!{\"../x.rs\"}", "include !(\"../x.rs\");", "include\n!(\"../x.rs\");", "std::include!(\"x.rs\");",
+                     "core::include ! [\"x.rs\"];", "#[cfg_attr(all(), path = \"../x.rs\")] mod x;", "#[cfg_attr(unix, path=\"x.rs\")]\nmod x;",
+                     "#![path = \"x.rs\"]", "#[ path\n= \"x.rs\" ] mod x;"):
+            with self.subTest(text=text):
+                self.assertEqual(["banned-use"], banned(self, text))
+
+    def test_embedding_data_and_unrelated_names_stay_allowed(self):
+        for text in ('const A: &str = include_str!("a.txt");', 'const B: &[u8] = include_bytes!("b.bin");',
+                     "let path = 1; let p = path;", "fn include() {} include();", "let x = Path::new(a).path();"):
+            with self.subTest(text=text):
+                self.assertEqual([], banned(self, text))
+
+
+class ForeignCodeAndDeterminism(unittest.TestCase):
+    """Review 0c-7 A4: extern blocks, link attributes, std::ffi, std::arch, inline assembly, math."""
+
+    def test_extern_blocks_are_refused_in_layers_0_to_2(self):
+        for text in ('extern "C" { fn f(); }', 'unsafe extern "system" {\n fn f();\n}', "extern{ fn f(); }", 'extern\n"C"\n{ }',
+                     'extern r"C" { }', 'extern "C"{}'):
+            with self.subTest(text=text):
+                self.assertEqual(["banned-use"], banned(self, text, crate="render"))
+
+    def test_extern_functions_and_crates_are_not_blocks(self):
+        for text in ('pub extern "C" fn f() {}', 'type F = extern "C" fn(i32);', "extern crate alloc;"):
+            with self.subTest(text=text):
+                self.assertEqual([], banned(self, text, crate="render"))
+
+    def test_link_attributes_are_refused(self):
+        for text in ('#[link(name = "m")] extern "C" {}', '#[link_name = "x"] fn f();', '#[ link ( name = "m" ) ]', '#[unsafe(link_name = "x")] fn f();'):
+            with self.subTest(text=text):
+                self.assertIn("banned-use", banned(self, text, crate="render"))
+
+    def test_std_ffi_is_an_os_module_only_the_platform_may_use(self):
+        for text in ("use std::ffi::OsString;", "use std::{ffi, mem};", "std::ffi::CStr::from_ptr(p);"):
+            with self.subTest(text=text):
+                self.assertEqual(["banned-use"], banned(self, text, crate="render"))
+        self.assertEqual([], banned(self, "use std::ffi::OsString;", crate="platform"))
+
+    def test_architecture_intrinsics_and_assembly_belong_to_base_only(self):
+        for text in ("use std::arch::x86_64::_mm_add_ps;", "core::arch::asm!(\"nop\");", "use core::{arch, mem};", "use std::{arch::x86_64::*};",
+                     "asm!(\"nop\");", "global_asm!(\"nop\");", "use std::arch::asm;"):
+            with self.subTest(text=text):
+                self.assertEqual(["banned-use"], banned(self, text, crate="render"))
+                self.assertEqual([], banned(self, text, crate="base"))
+
+    def test_other_core_modules_stay_allowed(self):
+        self.assertEqual([], banned(self, "use core::mem; use core::sync::atomic::AtomicU32;", crate="render"))
+
+    def test_libm_free_functions_are_refused_in_base_because_the_math_facade_lives_there(self):
+        for text in ("f32::cos(x)", "f64::powf(x, y)"):
+            with self.subTest(text=text):
+                self.assertEqual(["banned-use"], banned(self, text, crate="base"))
+
+    def test_base_may_use_methods_named_like_libm_ones_exact_floats_and_hash_containers(self):
+        text = "logger.log(Level::Info); self.exp(1); x.sqrt() + x.abs(); let m: HashMap<u32, u32> = HashMap::new(); v.sort_unstable();"
+        self.assertEqual([], banned(self, text, crate="base"))
+
+    def test_inequality_tests_on_names_that_look_like_macros_are_not_flagged(self):
+        for text in ("if include != 3 {}", "if asm != 3 {}"):
+            with self.subTest(text=text):
+                self.assertEqual([], banned(self, text, crate="render"))
+
+    def test_hash_maps_are_refused_in_simulation_crates_only(self):
+        self.assertIn("banned-use", banned(self, "let m: HashSet<u32> = HashSet::new();", crate="physics"))
+        self.assertEqual([], banned(self, "let m: HashSet<u32> = HashSet::new();", crate="render"))
+
+
 class GraphEvasion(unittest.TestCase):
     """Review 0c-2 F6-F12."""
 

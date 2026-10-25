@@ -12,8 +12,11 @@ layers 0-2), banned-use (source patterns in layers 0-2).
 
 Known gaps (reviews/0c-2.md): the source scan is textual. A banned name built by a
 macro, `std` reached through a type alias or a re-export from another crate, or a
-file pulled in by a macro other than `include!` escapes it (`#[path]` and `include!`
-are refused outright in layers 0-2). Dev-dependencies are exempt from the layer,
+file pulled in by a macro other than `include!` escapes it (`#[path]`, also inside `cfg_attr`, and `include!`
+are refused outright in layers 0-2, as are extern blocks, `#[link]`, and `arch`/`asm!` outside
+`base`; a target whose source file is outside the crate folder is the finding `src-outside`).
+A `path =` key of any other attribute, such as `#[cfg(path = "x")]`, is refused too, and `]` inside
+an attribute ends the attribute match early. Dev-dependencies are exempt from the layer,
 allowlist and cycle rules (a test may use a null adapter) but not from the
 banned-crate list and the forbidden edges. Features and target-specific
 dependencies are treated as normal ones.
@@ -245,9 +248,17 @@ def _source_files(package):
     for path in sorted(root.rglob("*.rs")):
         relative = path.relative_to(root)
         nested = any((root / folder / "Cargo.toml").exists() for folder in relative.parents if str(folder) != ".")
-        if "target" not in relative.parts and not nested:
+        if relative.parts[0] != "target" and not nested:  # only the crate's own build output, not a module called target
             files.append(path)
     return files
+
+
+def _source_roots_findings(package):
+    """A cargo target whose source file is outside the crate folder hides code from the scan."""
+    root = _crate_folder(package).resolve()
+    paths = {target.get("src_path") or "" for target in package.get("targets", [])}
+    outside = sorted(path for path in paths if not Path(os.path.normpath(path)).resolve().is_relative_to(root))
+    return [Finding("src-outside", f"{package['name']}: target source {path} is outside the crate folder, so the source scan would not see it") for path in outside]
 
 
 def _split_top(text):
@@ -319,7 +330,7 @@ def _package_findings(package, layers, config, names):
         else:
             found += _external_findings(crate, layer, dependency, config)
     if layer in ENGINE_LAYERS:
-        found += _use_findings(package, config.banned_use)
+        found += _source_roots_findings(package) + _use_findings(package, config.banned_use)
     return found
 
 
