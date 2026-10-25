@@ -55,6 +55,11 @@ jobs:
       - name: Test the change classifier
         run: python -m unittest -q test_classify_change
         working-directory: tools/classify-change
+      - name: Test the architecture checker
+        run: python -m unittest -q test_arch_check
+        working-directory: tools/arch-check
+      - name: Check the architecture rules
+        run: python tools/arch-check/arch_check.py --config gates/architecture.toml
       - name: Test the clean-code lint profile
         run: python -m unittest -q test_lint_profile
         working-directory: tools/lint-profile
