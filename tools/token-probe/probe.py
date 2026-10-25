@@ -3,15 +3,15 @@
 Run: python probe.py   (uses whatever token `gh` is logged in with)
 
 The probe makes only harmless calls: reads, and one throwaway branch
-(agent/token-probe) that is created, used for a refused workflow-file write, and
-always deleted. It never writes to main. It prints probe names and HTTP statuses
+(agent/token-probe) that is created and always deleted. It never writes to main
+and never writes a workflow file: the Workflows permission is granted on purpose
+(card 0c-8) and cannot be probed without a write. It prints probe names and HTTP statuses
 only, never a token or a response body. Exit code 0 means every probe passed.
 
 Expected scopes: wiki/workflow/delivery-pipeline.md section 4 and
 docs/gates/agent-token-setup.md.
 """
 
-import base64
 import json
 import subprocess
 import sys
@@ -27,7 +27,6 @@ OK = (200,)
 CREATED = (201,)
 DELETED = (204,)
 DENIED = (403, 404)
-REFUSED = (403,)
 LEFTOVER = (0, 422)  # create failed or unanswered: the branch may exist
 
 # name, path, accepted statuses (all GET); the order is the report order.
@@ -72,38 +71,17 @@ def main_sha(response):
         return None
 
 
-def workflow_write_fields():
-    content = base64.b64encode(b"name: token-probe\non: workflow_dispatch\njobs: {}\n")
-    return {
-        "message": "token probe (refused for a scoped token)",
-        "content": content.decode("ascii"),
-        "branch": BRANCH,
-    }
-
-
 def branch_probes(call):
     ref = call("GET", f"repos/{REPO}/git/ref/heads/main")
     results = [verdict("read-contents", ref.status, OK)]
     sha = main_sha(ref)
     if sha is None:
-        return results + [Result("write-branch", False, None), Result("workflow-write-denied", False, None)]
+        return results + [Result("write-branch", False, None)]
     created = call("POST", f"repos/{REPO}/git/refs", {"ref": f"refs/heads/{BRANCH}", "sha": sha})
     results.append(verdict("write-branch", created.status, CREATED))
-    return results + after_branch(call, created.status)
-
-
-def after_branch(call, created_status):
-    results = []
-    try:
-        if created_status in CREATED:
-            workflow = call("PUT", f"repos/{REPO}/contents/.github/workflows/token-probe.yml", workflow_write_fields())
-            results.append(verdict("workflow-write-denied", workflow.status, REFUSED))
-        else:
-            results.append(Result("workflow-write-denied", False, None))
-    finally:
-        if created_status in CREATED + LEFTOVER:
-            deleted = call("DELETE", f"repos/{REPO}/git/refs/heads/{BRANCH}")
-            results.append(verdict("cleanup-branch", deleted.status, DELETED))
+    if created.status in CREATED + LEFTOVER:
+        deleted = call("DELETE", f"repos/{REPO}/git/refs/heads/{BRANCH}")
+        results.append(verdict("cleanup-branch", deleted.status, DELETED))
     return results
 
 

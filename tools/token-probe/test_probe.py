@@ -11,7 +11,6 @@ MAIN_REF = json.dumps({"object": {"sha": SHA}})
 REPO = probe.REPO
 REF_PATH = f"repos/{REPO}/git/ref/heads/main"
 CREATE_PATH = f"repos/{REPO}/git/refs"
-WORKFLOW_PATH = f"repos/{REPO}/contents/.github/workflows/token-probe.yml"
 DELETE_PATH = f"repos/{REPO}/git/refs/heads/{probe.BRANCH}"
 SECRETS_PATH = f"repos/{REPO}/actions/secrets"
 ADMIN_PATH = f"repos/{REPO}/actions/permissions"
@@ -25,7 +24,6 @@ SCOPED = {
     ("GET", SECRETS_PATH): probe.Response(403, "{}"),
     ("GET", ADMIN_PATH): probe.Response(403, "{}"),
     ("POST", CREATE_PATH): probe.Response(201, "{}"),
-    ("PUT", WORKFLOW_PATH): probe.Response(403, "{}"),
     ("DELETE", DELETE_PATH): probe.Response(204, ""),
 }
 
@@ -44,7 +42,6 @@ class FakeGitHub:
             "secrets": SECRETS_PATH,
             "admin": ADMIN_PATH,
             "create": CREATE_PATH,
-            "workflow": WORKFLOW_PATH,
             "delete": DELETE_PATH,
             "ref": REF_PATH,
         }[path])
@@ -79,7 +76,7 @@ class ScopedToken(unittest.TestCase):
             {
                 "read-meta", "read-contents", "read-pulls", "read-actions",
                 "secrets-denied", "admin-denied",
-                "write-branch", "workflow-write-denied", "cleanup-branch",
+                "write-branch", "cleanup-branch",
             },
         )
 
@@ -89,11 +86,12 @@ class ScopedToken(unittest.TestCase):
         created = [c for c in github.calls if c[0] == "POST"]
         self.assertEqual(created[0][2], {"ref": f"refs/heads/{probe.BRANCH}", "sha": SHA})
 
-    def test_workflow_probe_targets_the_throwaway_branch_only(self):
+    def test_never_writes_a_workflow_file(self):
+        # Workflows is allowed on purpose and cannot be probed without a write (card 0c-8).
         github = FakeGitHub()
         probe.run(github)
-        put = next(c for c in github.calls if c[0] == "PUT")
-        self.assertEqual(put[2]["branch"], probe.BRANCH)
+        self.assertNotIn("PUT", [c[0] for c in github.calls])
+        self.assertFalse([c for c in github.calls if ".github" in c[1]])
 
     def test_never_writes_to_main(self):
         github = FakeGitHub()
@@ -115,33 +113,8 @@ class BroadToken(unittest.TestCase):
         results = by_name(probe.run(FakeGitHub(GET__admin=probe.Response(200, "{}"))))
         self.assertFalse(results["admin-denied"].ok)
 
-    def test_workflow_write_that_succeeds_fails(self):
-        results = by_name(probe.run(FakeGitHub(PUT__workflow=probe.Response(201, "{}"))))
-        self.assertFalse(results["workflow-write-denied"].ok)
-
-    def test_branch_is_deleted_even_when_workflow_write_succeeded(self):
-        github = FakeGitHub(PUT__workflow=probe.Response(201, "{}"))
-        probe.run(github)
-        self.assertEqual(github.calls[-1][:2], ("DELETE", DELETE_PATH))
-
 
 class TokenMissingPermissions(unittest.TestCase):
-    def test_branch_is_deleted_when_a_call_raises(self):
-        github = FakeGitHub()
-        answer = github.answers[("PUT", WORKFLOW_PATH)]
-        github.answers[("PUT", WORKFLOW_PATH)] = None
-
-        def failing(method, path, fields=None):
-            if method == "PUT":
-                github.calls.append((method, path, fields))
-                raise RuntimeError("boom")
-            return github(method, path, fields)
-
-        with self.assertRaises(RuntimeError):
-            probe.run(failing)
-        self.assertEqual(github.calls[-1][:2], ("DELETE", DELETE_PATH))
-        self.assertIsNotNone(answer)
-
     def test_unanswered_create_still_attempts_cleanup(self):
         github = FakeGitHub(POST__create=probe.Response(0, ""))
         results = by_name(probe.run(github))
@@ -152,8 +125,6 @@ class TokenMissingPermissions(unittest.TestCase):
         github = FakeGitHub(POST__create=probe.Response(403, "{}"))
         results = by_name(probe.run(github))
         self.assertFalse(results["write-branch"].ok)
-        self.assertFalse(results["workflow-write-denied"].ok)
-        self.assertIsNone(results["workflow-write-denied"].status)
         self.assertNotIn("DELETE", [c[0] for c in github.calls])
 
     def test_leftover_probe_branch_is_cleaned_up(self):
@@ -183,8 +154,8 @@ class Report(unittest.TestCase):
         self.assertNotIn(SHA, "\n".join(lines))
 
     def test_not_run_probe_is_reported_as_such(self):
-        results = probe.run(FakeGitHub(POST__create=probe.Response(403, "{}")))
-        self.assertIn("FAIL workflow-write-denied (not run)", probe.format_results(results))
+        results = probe.run(FakeGitHub(GET__ref=probe.Response(403, "{}")))
+        self.assertIn("FAIL write-branch (not run)", probe.format_results(results))
 
     def test_exit_code_follows_the_results(self):
         self.assertEqual(probe.main(FakeGitHub(), print_line=lambda _: None), 0)

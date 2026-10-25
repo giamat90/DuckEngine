@@ -18,7 +18,7 @@ Method: `gh api` probes against the real repository, then GitHub docs for what a
 | GitHub Actions | **Enabled**, all actions allowed | probed |
 | Actions minutes | **2,000 per month**, artifact storage 500 MB, cache 10 GB per repository; without a payment method, runs are blocked when the quota is used | docs |
 | Runner cost | Linux 2-core x64 $0.006/min, Windows 2-core $0.010/min (about 1.67x), Linux arm64 $0.005/min, macOS $0.062/min (about 10x). Treat Windows as 2x for budgeting | docs (rates; ratios computed) |
-| Fine-grained token scope names | **Verified** (2026-10-25, card 0b-1) | probed: [agent-token-setup](../../docs/gates/agent-token-setup.md), `tools/token-probe`. Contents rw, Pull requests rw, Actions read, Metadata read; Administration, Secrets and Workflows are refused. `gh pr checks` does not work (check runs need a Checks permission a personal fine-grained token does not offer); `gh run watch --exit-status` does |
+| Fine-grained token scope names | **Verified** (2026-10-25, card 0b-1) | probed: [agent-token-setup](../../docs/gates/agent-token-setup.md), `tools/token-probe`. Contents rw, Pull requests rw, Actions read, Metadata read; Administration and Secrets are refused; Workflows is allowed on purpose (card 0c-8) and not probed. `gh pr checks` does not work (check runs need a Checks permission a personal fine-grained token does not offer); `gh run watch --exit-status` does |
 | arm64 hosted runner availability on Free private repos | **Not verified** | needs a test run (phase 2) |
 
 Not checked: the exact plan name and billing page (the API needs the `user` scope; the owner stays on Free anyway).

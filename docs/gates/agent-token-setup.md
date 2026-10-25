@@ -20,7 +20,8 @@ settings, Personal access tokens, Fine-grained tokens).
 | Repository permission **Pull requests** | Read and write (open PRs, merge them) |
 | Repository permission **Actions** | Read (read CI runs and logs) |
 | Repository permission **Metadata** | Read (GitHub adds it automatically) |
-| Everything else | **No access**: in particular not Commit statuses (tried, it does not help, see below), Administration, Workflows, Secrets, Environments, Variables, Webhooks, Issues |
+| Repository permission **Workflows** | Read and write (decision of 2026-10-25, card 0c-8: the owner keeps it on permanently so governance tasks can push `.github/workflows/*`; the owner reads every workflow diff, see section 4) |
+| Everything else | **No access**: in particular not Commit statuses (tried, it does not help, see below), Administration, Secrets, Environments, Variables, Webhooks, Issues |
 
 Finding (2026-10-25): `gh pr checks` and `gh pr view --json statusCheckRollup`
 do **not** work with this token, even with Commit statuses added: reading check
@@ -67,34 +68,38 @@ touches `main`, and prints probe names and HTTP statuses only.
 |---|---|---|
 | read-meta, read-pulls, read-actions, read-contents | Metadata, Pull requests, Actions, Contents read | 200 |
 | write-branch | Contents write (create a ref) | 201 |
-| workflow-write-denied | no Workflows permission: writing `.github/workflows/*` is refused | 403 or 404 |
 | secrets-denied | no Secrets permission | 403 or 404 |
 | admin-denied | no Administration permission | 403 or 404 |
 | cleanup-branch | Contents write (delete the ref) | 204 |
 
+Workflows write is not probed either: it is granted on purpose, and GitHub offers
+no read-only test of a write permission, so the probe never writes a workflow
+file (before card 0c-8 it expected a refusal).
 Pull-request write is not probed (it would leave a comment on a real PR). It is
 shown by opening and merging the card's own PR with the new token.
 
 Today's broad login fails three probes (checked 2026-10-25, before the scoped
 token existed): secrets readable (200), administration readable (200), workflow
-write accepted (201). That is the difference the scoped token removes.
+write accepted (201; that probe no longer exists). The scoped token removes the
+first two.
 
 ## 4. Limits to know
 
 - GitHub Free has no branch protection or rulesets ([github-plan-findings](../../wiki/workflow/github-plan-findings.md)).
   A token with Contents write can push to `main`; "never push to `main`" is a
   written rule, not enforced by this token.
-- Without the Workflows permission the agent cannot push changes under
-  `.github/workflows/`. Governance tasks that edit workflows (0b-6 and later)
-  need a decision per task: the owner pushes that one change from their own
-  terminal, or the token is widened for that task and narrowed again.
+- With the Workflows permission the agent can push changes under
+  `.github/workflows/`, and a workflow is PR-controlled: a changed workflow can
+  switch its own check off. So the owner reads **every workflow diff** (the PR
+  description names it), and a workflow change only happens in a task the owner
+  declares as a governance task. The permission is a convenience, not a gate.
 
 ## 5. Result of the verification (2026-10-25)
 
 Run by the agent in the 0b-1 session with the scoped token (output is in the
 PR description): **9 of 9 probes as expected** (reads 200; branch create 201
 and delete 204; workflow-file write, secrets and administration refused with
-403). The same probe with the previous
+403; the workflow probe was removed in card 0c-8, leaving 8). The same probe with the previous
 broad login failed 3 of 9. Not covered by the probe, to be shown by the card's own
 PR (not yet verified when this was written): pull-request write and `gh pr merge` with this token.
 

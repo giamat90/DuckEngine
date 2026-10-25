@@ -99,7 +99,7 @@ No approvals are involved, so this is purely about limiting damage if a session 
 
 | Setup | Effect |
 |---|---|
-| **Fine-grained token for Claude Code, scoped to this repository only**: contents (read/write on branches), pull requests (read/write), actions (read). **No** administration, no secrets/environments access; the owner added the Workflows permission for governance tasks and should switch it off afterwards (scope names verified 2026-10-25, see [agent-token-setup](../../docs/gates/agent-token-setup.md)) | agent can push `agent/*`, open and merge PRs, read CI logs; cannot change rulesets or read secrets |
+| **Fine-grained token for Claude Code, scoped to this repository only**: contents (read/write on branches), pull requests (read/write), actions (read). **No** administration, no secrets/environments access; the owner keeps the Workflows permission on permanently (card 0c-8) and reads every workflow diff (scope names verified 2026-10-25, see [agent-token-setup](../../docs/gates/agent-token-setup.md)) | agent can push `agent/*`, open and merge PRs, read CI logs; cannot change rulesets or read secrets |
 | Rulesets on `main` that also bind admins: PR required, required status checks, no direct push (**paid plan only; not available on Free**, see section 5 for the fallbacks) | nobody, including the PO's own token, can push straight to `main` by accident |
 | Release/publish credentials exist only as GitHub Actions secrets or OIDC, in a protected environment | the agent never holds them |
 
