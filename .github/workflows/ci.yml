@@ -1,10 +1,10 @@
 name: ci
 
-# Runs on every branch except main. Merging is policy on the GitHub Free plan
-# (no branch protection), so the agent merges only after these checks are green.
+# Runs on every push, main included: before a merge the agent waits for green (merging is
+# policy on the GitHub Free plan, no branch protection); on main it shows a broken merge result.
+# It does not gate the release.
 on:
   push:
-    branches-ignore: [main]
   workflow_dispatch:
 
 permissions:
@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -48,7 +48,9 @@ jobs:
           python -m unittest -q test_g1_assert
         working-directory: tools/metrics
       - name: Test the gate-check tool
-        run: python -m unittest -q test_check_digest
+        run: |
+          python -m unittest -q test_check_digest
+          python -m unittest -q test_governance_guard
         working-directory: tools/gate-check
       - name: Test the clean-code lint profile
         run: python -m unittest -q test_lint_profile
@@ -62,8 +64,15 @@ jobs:
           python -m unittest -q test_release_plan
           python -m unittest -q test_check_pr_title
           python -m unittest -q test_make_assets
+          python -m unittest -q test_check_squash_subject
           python -m unittest -q test_workflows
         working-directory: tools/release
+      - name: Test the task and review templates
+        run: python -m unittest -q test_templates
+        working-directory: tools/templates
+      - name: Test the token probe
+        run: python -m unittest -q test_probe
+        working-directory: tools/token-probe
       - name: Digest matches the gate configuration
         run: python tools/gate-check/check_digest.py --digest wiki/rules-digest.md --config gates/gates.toml --claude-md CLAUDE.md
 
@@ -72,6 +81,7 @@ jobs:
   # are wired in when the gate configuration exists).
   metrics:
     name: metrics (${{ matrix.os }})
+    if: github.ref_type == 'branch' && github.ref != 'refs/heads/main'   # report only and costly: skip on main and tags
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     env:

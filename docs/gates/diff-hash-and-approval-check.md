@@ -62,8 +62,9 @@ owner really approved: the `Approved` line is only checked to be present, and
 the owner's approval itself stays a session decision (a record is written only
 after it).
 
-Run it from a trusted checkout of `main`, never from the PR tree, as the digest
-requires (gate tools are executed from `main`).
+The digest wants gate tools run from a trusted checkout of `main`, not the PR tree.
+The agent runs this tool by hand from its own checkout; it is not a workflow
+(see the controls table in [pipeline-runbook](pipeline-runbook.md)).
 
 ## Status and limits
 

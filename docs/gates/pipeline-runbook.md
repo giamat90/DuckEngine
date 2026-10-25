@@ -22,14 +22,14 @@ stay in `wiki/workflow/delivery-pipeline.md` and `board-management.md`.
 
 | Control | Status |
 |---|---|
-| `ci` on every non-`main` push (fmt, clippy, build, test, digest check, tool tests) | enforced by Actions, but not required for merging |
-| `pr-title` check | enforced by Actions, not required; the final squash subject is typed by the agent, so after the merge verify `git log -1 --format=%s` equals the PR title |
+| `ci` on every push (fmt, clippy, build, test, digest check, all tool tests; the report-only metrics job skips `main`) | enforced by Actions, but not required for merging; on `main` it is a signal of a broken merge result and does not gate the release |
+| `pr-title` check | enforced by Actions, not required |
+| Squash subject equals the PR title | enforced in `release.yml` before anything is built (`check_squash_subject.py`); a mismatch blocks that release, the next merge releases both |
 | Never push to `main`; merge only after approval | policy only (the token could push; no branch protection on Free) |
 | Owner approval and its record in the PR description | policy only; `diff_hash.py check` is run by the agent |
 | Merged head equals the approved, checked head | policy, helped by `--match-head-commit` |
-| Gate tools run from a trusted `main` checkout | not built; `ci` runs them from the PR tree |
-| `governance-guard` | not built |
-| CI on `main` after the merge | not built |
+| Gate tools run from a trusted `main` checkout | built for `pr-title` and `governance-guard`; `ci` still runs its tool tests from the PR tree (phase 0c) |
+| `governance-guard` (protected paths in `gates/protected-paths.txt` need `Governance task: yes (card <id>)` in the PR description) | enforced by Actions from the base commit, not required; traceable, not unforgeable |
 | `release.yml` (serialised, skips tagged commits, draft then publish, `contents: write` only) | enforced by Actions |
-| Stray tags pushed with the agent token | not handled: a tag that is not an ancestor of `main` stops releases until deleted |
+| Stray tags pushed with the agent token | a tag that is not an ancestor of `main` is ignored; one that takes the next version's name fails the release with a clear error until deleted |
 | Card to Done only after the Release exists | policy: check `gh release list` first |

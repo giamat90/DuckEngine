@@ -22,7 +22,7 @@ An AI deciding that its own change is "routine" is a conflict of interest. A scr
 | New adapter, or any change in `adapters/` that alters behaviour exercised by a contract suite | 2 |
 | Contract-suite test semantics (`contracts/`), architecture checker, `tools/classify-change`, quality thresholds/gate config, CI workflows, ADRs, `THIRD_PARTY.md` structure, the agent instruction file, this wiki's rules pages | 3 |
 
-Merge rules (updated by the owner's delivery decision, see [delivery-pipeline](delivery-pipeline.md)): **every task, in every class, needs the owner's acceptance (manual product test and/or metrics) before the PR is opened**; GitHub then auto-merges when required checks are green. There is **one** approval, yours, before the PR. For Class 2 you read the design note + diff summary + benchmark delta; for Class 3 you read the governance diff (configuration). **Class 2 additionally requires an independent review (R3 + R6 + R7) by a different session or model than the author (D-2).** No separate GitHub approval step exists. Class 3 changes happen only in tasks you declare as governance tasks.
+Merge rules (updated by the owner's delivery decision, see [delivery-pipeline](delivery-pipeline.md)): **every task, in every class, needs the owner's acceptance (manual product test and/or metrics) before the merge**; the agent opens the PR first and gives you its link and diff hash, then squash-merges after your approval and green checks (Free plan: no auto-merge). There is **one** approval, yours. For Class 2 you read the design note + diff summary + benchmark delta; for Class 3 you read the governance diff (configuration). **Class 2 additionally requires an independent review (R3 + R6 + R7) by a different session or model than the author (D-2).** No separate GitHub approval step exists. Class 3 changes happen only in tasks you declare as governance tasks.
 
 If the classifier is unsure, it rounds **up**. Changing the classifier is Class 3.
 
@@ -98,7 +98,7 @@ Because Class 1 is never read by a human, we rely on layered automated defences.
 
 - Human audit sample: not adopted (owner does not read code); replaced by the automated agent audit in §5. Every spike result and ADR proposal is evaluated by a second agent before it reaches the owner (D-2).
 - The classifier triggers above are a first proposal; they will be tuned with real diffs in phase 0-1 and kept under Class 3 control.
-- Agent tooling: **Claude Code** (owner, Q21c). Run mode (**confirmed by owner**): per task, autonomous until the checks pass and the owner accepts; then PR, auto-merge, tag, deploy through GitHub CI ([delivery-pipeline](delivery-pipeline.md)). No unattended runs.
+- Agent tooling: **Claude Code** (owner, Q21c). Run mode (**confirmed by owner**): per task, autonomous until the checks pass and the owner accepts; then squash-merge, tag, Release through GitHub CI ([delivery-pipeline](delivery-pipeline.md)). No unattended runs.
 
 ## 7. Metrics-only governance: the Goodhart problem, and the product view
 

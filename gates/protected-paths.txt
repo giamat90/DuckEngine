@@ -1,0 +1,21 @@
+# Protected paths (Class 3, governance). A PR that changes any of them needs
+# `Governance task: yes (card <id>)` in its description (governance-guard).
+# One entry per line; a trailing / means everything below that directory.
+# Source: CLAUDE.md "Hard rules" and wiki/rules-digest.md section 8.
+gates/
+.github/
+tools/gate-check/
+tools/diff-hash/
+tools/lint-profile/
+tools/release/
+tools/templates/
+tools/metrics/
+docs/adr/
+wiki/decisions/
+wiki/rules-digest.md
+CLAUDE.md
+.claude/settings.json
+THIRD_PARTY.md
+clippy.toml
+deny.toml
+rust-toolchain.toml

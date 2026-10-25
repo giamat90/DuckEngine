@@ -11,7 +11,7 @@ Everything below only makes those four steps safe and repeatable. Feature names 
 
 **Plan constraint (verified 2026-10-24, [github-plan-findings](github-plan-findings.md)):** the repository is private on the GitHub **Free** plan, which has no branch protection, rulesets, auto-merge, merge queue or environments. Wherever this page says auto-merge, ruleset, required check enforcement or protected environment, read the fallback in section 5: Claude Code runs `gh pr merge` itself after the owner's approval and a green `gh run watch <run-id> --exit-status`, and merging is policy, not enforcement.
 
-**Built in phase 0b (verified end to end in card 0b-7):** PR title check (`pr-title`), diff hash and approval record (`tools/diff-hash`, run by the agent, not by a workflow), squash merge by the agent after a green `gh run watch`, release workflow (`release.yml`: draft Release, assets, publish). **Not built:** auto-merge, rulesets, required checks, `governance-guard`, a CI run on `main`, the package smoke test and per-platform tool/sample archives. Control by control, see [pipeline-runbook](../../docs/gates/pipeline-runbook.md).
+**Built in phase 0b (verified end to end in card 0b-7; hardened in 0b-8):** PR title check (`pr-title`), `governance-guard`, `ci` also on `main`, squash-subject check in the release, diff hash and approval record (`tools/diff-hash`, run by the agent, not by a workflow), squash merge by the agent after a green `gh run watch`, release workflow (`release.yml`: draft Release, assets, publish). **Not built:** auto-merge, rulesets, required checks, the package smoke test and per-platform tool/sample archives. Control by control, see [pipeline-runbook](../../docs/gates/pipeline-runbook.md).
 
 ## 1. Task lifecycle
 
@@ -91,7 +91,7 @@ Formats are in [architect-review-surface](architect-review-surface.md):
 
 ## 3. Governance changes
 
-Gate configuration, thresholds, the classifier, contract-suite semantics, CI/release workflows, ADRs and `THIRD_PARTY.md` structure are protected paths. They change only in a task the PO **declares as a governance task** in the card; for that task the protection is unlocked, and the governance diff is part of the acceptance package the PO reads. A `governance-guard` check (planned, **not built yet**; to run from the trusted base, N-2: gate tools and configuration are read from `main`, never from the PR tree) would fail any PR that touches protected paths without that declaration (traceable, not unforgeable - an accepted residual risk). Until it exists the declaration is policy only, and the CI steps that run from the PR tree are not a trusted-base control.
+Gate configuration, thresholds, the classifier, contract-suite semantics, CI/release workflows, ADRs and `THIRD_PARTY.md` structure are protected paths. They change only in a task the PO **declares as a governance task** in the card; for that task the protection is unlocked, and the governance diff is part of the acceptance package the PO reads. The `governance-guard` check (built in 0b-8; tool and list from the base commit, PR tree as data only; the workflow file itself comes from the PR, so a PR that edits it can switch the check off, which the owner sees in the governance diff) fails any PR that touches a path in `gates/protected-paths.txt` without a `Governance task: yes (card <id>)` line in its description (traceable, not unforgeable - an accepted residual risk). On the Free plan it cannot be a required check, so the agent treats a red `governance-guard` as a stop. The `ci` steps that run from the PR tree are not a trusted-base control.
 
 ## 4. Credentials and blast radius (recommended, one-time, no per-task steps)
 
@@ -99,13 +99,15 @@ No approvals are involved, so this is purely about limiting damage if a session 
 
 | Setup | Effect |
 |---|---|
-| **Fine-grained token for Claude Code, scoped to this repository only**: contents (read/write on branches), pull requests (read/write), actions (read). **No** administration, no workflow-file editing, no secrets/environments access (scope names verified 2026-10-25, see [agent-token-setup](../../docs/gates/agent-token-setup.md)) | agent can push `agent/*`, open PRs, arm auto-merge, read CI logs; cannot change rulesets, edit CI workflows, or read secrets |
-| Rulesets on `main` that also bind admins: PR required, required status checks, no direct push | nobody, including the PO's own token, can push straight to `main` by accident |
+| **Fine-grained token for Claude Code, scoped to this repository only**: contents (read/write on branches), pull requests (read/write), actions (read). **No** administration, no secrets/environments access; the owner added the Workflows permission for governance tasks and should switch it off afterwards (scope names verified 2026-10-25, see [agent-token-setup](../../docs/gates/agent-token-setup.md)) | agent can push `agent/*`, open and merge PRs, read CI logs; cannot change rulesets or read secrets |
+| Rulesets on `main` that also bind admins: PR required, required status checks, no direct push (**paid plan only; not available on Free**, see section 5 for the fallbacks) | nobody, including the PO's own token, can push straight to `main` by accident |
 | Release/publish credentials exist only as GitHub Actions secrets or OIDC, in a protected environment | the agent never holds them |
 
 A separate GitHub account or a GitHub App is optional (better attribution and isolation), but not needed for this flow: a scoped token under the PO's own account gives most of the benefit.
 
 ## 5. GitHub features doing the work
+
+The first table is the target design (it needs a paid plan). What actually runs on the Free plan is in the fallback table below.
 
 | Need | GitHub feature **[K]** |
 |---|---|
@@ -123,8 +125,8 @@ Rulesets, merge queue, auto-merge and environment protection are **not available
 | Need | Fallback on Free |
 |---|---|
 | Nobody pushes to `main` | policy only: the agent opens a PR from a branch and never pushes to `main` after the bootstrap commit; git history and PR list are the audit trail |
-| Wait for green CI, then merge | the session stays open: `gh run watch <run-id> --exit-status` (run id from `gh run list --commit <sha>`; `gh pr checks` does not work with the scoped token), then `gh pr merge N --squash --subject "<PR title> (#N)" --body ""` (no `--auto`; the PR title is the Conventional Commit message that decides the version, checked by the `pr-title` workflow); a failing or missing check means no merge |
-| Governance guard as a required check | still runs as a check; it cannot be made required, so the agent treats a red `governance-guard` as a stop |
+| Wait for green CI, then merge | the session stays open: `gh run watch <run-id> --exit-status` (run id from `gh run list --commit <sha>`; `gh pr checks` does not work with the scoped token), then `gh pr merge N --squash --subject "<PR title> (#N)" --body "" --match-head-commit <sha>` (no `--auto`; the PR title is the Conventional Commit message that decides the version, checked by the `pr-title` workflow); a failing or missing check means no merge |
+| Governance guard as a required check | built in 0b-8; runs as a check, cannot be made required, so the agent treats a red `governance-guard` as a stop |
 | Protected environment `release` | repository-level Actions secrets or OIDC; the release workflow is the only consumer and is a Class 3 file |
 | Rulesets that bind admins | none; the fine-grained token (section 4) limits what the agent can do |
 

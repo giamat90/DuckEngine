@@ -72,8 +72,8 @@ enforced by any tool yet, so a PR can break them while CI stays green:
 | Clean-code limits (function length, cyclomatic, cognitive, nesting, parameters, duplication, magic numbers, dead code) | Numbers in `gates/gates.toml`; since card 0b-3 Clippy enforces function length, cognitive complexity, parameters (fail tier) and nesting, see [clean-code-lint-profile](clean-code-lint-profile.md) for what is still unenforced. |
 | `unsafe` allowlist and per-module budget | No mechanism. `skeleton-unsafe` is a per-crate `deny` plus one module-level `allow`; `undocumented_unsafe_blocks` is set only in that crate, and nothing stops another crate from defining its own `[lints]`. |
 | Miri, zero-allocation counting allocator, `disallowed-methods`, banned imports, 0 skipped tests | Not configured. |
-| Gate tools run from a trusted checkout of `main` | Not yet. CI runs `check_digest.py` and `gates.toml` from the PR tree, so one PR can change digest, config and script together. |
-| `governance-guard` check | Not built. |
+| Gate tools run from a trusted checkout of `main` | Partly (card 0b-8): `pr-title` and `governance-guard` do. CI still runs `check_digest.py` and `gates.toml` from the PR tree, so one PR can change digest, config and script together. |
+| `governance-guard` check | Built in card 0b-8 (`tools/gate-check/governance_guard.py`, workflow `governance-guard`); not a required check on the Free plan. |
 | Test code may use `unwrap`/`expect` | Clippy denies them in tests too; add `allow-unwrap-in-tests` to `clippy.toml` when the first test needs it. |
 
 ## Accepted by the owner (not changed here)

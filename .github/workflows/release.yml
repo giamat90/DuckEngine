@@ -13,8 +13,10 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+# pull-requests: read is only to read the PR title in the squash-subject check.
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   release:
@@ -29,6 +31,16 @@ jobs:
       - name: Plan the version
         id: plan
         run: python tools/release/release_plan.py --repo . >> "$GITHUB_OUTPUT"
+      - name: Check the squash subject is the PR title
+        if: steps.plan.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The subject decides the version; the Free plan cannot force the squash message.
+          subject=$(git log -1 --format=%s)
+          number=$(python tools/release/check_squash_subject.py number --subject="$subject")
+          title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number" --jq .title)
+          python tools/release/check_squash_subject.py check --subject="$subject" --title="$title"
       - name: Build the assets
         if: steps.plan.outputs.skip != 'true'
         env:

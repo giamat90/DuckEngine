@@ -108,14 +108,34 @@ class GitPlan(unittest.TestCase):
         self.repo.git("tag", "v0.1.0")
         self.assertTrue(self.plan().skip)
 
-    def test_a_tag_that_is_not_an_ancestor_of_head_is_an_error(self):
-        self.repo.commit("fix: base")
+    # Card 0b-8 changes the 0b-6 rule "a tag that is not an ancestor of HEAD is an error":
+    # a stray tag no longer stops every release; it is ignored unless it takes the new name.
+    def stray_tag(self, name):
         self.repo.git("checkout", "-q", "-b", "other")
         self.repo.commit("fix: elsewhere")
-        self.repo.git("tag", "v0.5.0")
+        self.repo.git("tag", name)
         self.repo.git("checkout", "-q", "main")
+
+    def test_a_tag_that_is_not_an_ancestor_of_head_is_ignored(self):
+        self.repo.commit("fix: base")
+        self.repo.git("tag", "v0.1.0")
+        self.stray_tag("v0.5.0")
         self.repo.commit("fix: on main")
-        with self.assertRaises(release_plan.PlanError):
+        result = self.plan()
+        self.assertEqual((result.version, result.previous), ("0.1.1", "v0.1.0"))
+
+    def test_a_stray_tag_with_no_release_before_it_gives_the_initial_version(self):
+        self.repo.commit("fix: base")
+        self.stray_tag("v0.5.0")
+        self.repo.commit("fix: on main")
+        self.assertEqual(self.plan().version, "0.1.0")
+
+    def test_a_stray_tag_that_takes_the_new_version_is_an_error(self):
+        self.repo.commit("fix: base")
+        self.repo.git("tag", "v0.1.0")
+        self.stray_tag("v0.1.1")
+        self.repo.commit("fix: on main")
+        with self.assertRaisesRegex(release_plan.PlanError, "v0.1.1 already exists"):
             self.plan()
 
     def test_not_a_repository_is_an_error(self):

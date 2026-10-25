@@ -26,9 +26,9 @@ Not checked: the exact plan name and billing page (the API needs the `user` scop
 ## 2. What this changes in the design
 
 - Merging is **policy, not enforcement**. Claude Code merges only after `gh run watch --exit-status` is green, and only after the owner's approval against the diff hash. Nothing in GitHub stops a direct push to `main`, so the audit trail (git history, PR list, card comments) is the control.
-- The flow in [delivery-pipeline](delivery-pipeline.md) that uses `gh pr merge --auto`, merge queue, rulesets and environment protection needs the fallback: the agent runs `gh pr merge` itself after the checks pass. The session stays open while the checks run.
+- The target flow in [delivery-pipeline](delivery-pipeline.md) (`gh pr merge --auto`, merge queue, rulesets, environment protection) is replaced by the fallback: the agent runs `gh pr merge` itself after the checks pass. The session stays open while the checks run.
 - Release credentials live as repository-level Actions secrets or OIDC, not as environment secrets. Because there is no environment protection, the release workflow is the only consumer and is a Class 3 file.
-- Gate tools must still run from a trusted checkout of `main` ([rules-digest](../rules-digest.md) section 8). With no protection on `main`, that guarantee rests on the policy above.
+- Gate tools should run from a trusted checkout of `main` ([rules-digest](../rules-digest.md) section 8): built for `pr-title` and `governance-guard`; the `ci` steps still run from the PR tree. With no protection on `main`, the rest rests on the policy above.
 
 ## 3. Budget (gate G5)
 

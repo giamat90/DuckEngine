@@ -362,7 +362,7 @@ sequenceDiagram
   CC->>CI: open PR
   CI->>CI: classifier, tests, coverage, mutation, lint, perf, determinism
   alt all green
-    CI->>CI: auto-merge
+    CC->>CC: squash-merge after green CI (Free plan: no auto-merge)
     CI->>Rel: merge event
     Rel->>Rel: version from Conventional Commits (every merge bumps)
     Rel-->>PO: private GitHub Release (source workspace, tools, samples, metrics)

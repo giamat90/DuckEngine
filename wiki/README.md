@@ -42,7 +42,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 11a | [workflow/github-plan-findings](workflow/github-plan-findings.md) | What the GitHub Free plan allows on the private repo (V1) |
 | 12 | [workflow/roadmap](workflow/roadmap.md) | Phases with measurable exit criteria |
 | 12d | [workflow/clean-code-and-review](workflow/clean-code-and-review.md) | Clean-code rules, TDD style, and the mandatory review phase (R1-R8, findings loop, review report) |
-| 12c | [workflow/delivery-pipeline](workflow/delivery-pipeline.md) | Task lifecycle: agent runs per task -> owner acceptance -> PR -> auto-merge -> tag -> deploy via GitHub CI |
+| 12c | [workflow/delivery-pipeline](workflow/delivery-pipeline.md) | Task lifecycle: agent runs per task -> PR -> owner acceptance -> agent squash-merge -> tag -> Release via GitHub CI |
 | 12b | [workflow/architect-review-surface](workflow/architect-review-surface.md) | What the product owner/architect reads (design notes, metric reports, Class 2/3 diffs) and how the rest is made safe |
 | 13 | [decisions/](decisions/README.md) | ADR index (`Proposed` unless marked decided by owner) |
 | 14 | [open-questions-and-risks](open-questions-and-risks.md) | **Start here for the refinement session** |

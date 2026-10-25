@@ -13,6 +13,7 @@ WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 RELEASE = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
 PR_TITLE = (WORKFLOWS / "pr-title.yml").read_text(encoding="utf-8")
 CI = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+GUARD = (WORKFLOWS / "governance-guard.yml").read_text(encoding="utf-8")
 
 PINNED = re.compile(r"^\s*-?\s*uses:\s*\S+@[0-9a-f]{40}\b", re.M)
 USES = re.compile(r"^\s*-?\s*uses:\s*(\S+)", re.M)
@@ -45,8 +46,24 @@ class Release(unittest.TestCase):
     def test_releases_are_serialised_and_never_cancelled(self):
         self.assertRegex(RELEASE, r"(?m)^concurrency:\n  group: release\n  cancel-in-progress: false\n")
 
-    def test_token_can_write_contents_and_nothing_else(self):
-        self.assertRegex(RELEASE, r"(?m)^permissions:\n  contents: write\n(?!  )")
+    def test_token_can_write_contents_and_read_pull_requests_and_nothing_else(self):
+        # pull-requests: read is only for the squash-subject check (card 0b-8).
+        self.assertRegex(RELEASE, r"(?m)^permissions:\n  contents: write\n  pull-requests: read\n(?!  )")
+
+    def test_squash_subject_is_checked_before_anything_is_built_or_published(self):
+        check = RELEASE.find("check_squash_subject.py")
+        self.assertGreater(check, -1)
+        self.assertLess(check, RELEASE.find("make_assets.py"))
+        self.assertLess(check, RELEASE.find("gh release create"))
+        self.assertIn("steps.plan.outputs.skip != 'true'", RELEASE[RELEASE.rfind("- name", 0, check):check])
+
+    def test_subject_and_title_reach_the_script_through_the_shell_not_an_expression(self):
+        blocks = [b for b in run_blocks(RELEASE) if "check_squash_subject.py" in b]
+        self.assertTrue(blocks)
+        for block in blocks:
+            self.assertIn("git log -1 --format=%s", block)
+            self.assertIn('--subject="$subject"', block)
+            self.assertIn('gh api "repos/$GITHUB_REPOSITORY/pulls/', block)
 
     def test_uses_no_secrets(self):
         self.assertNotIn("secrets.", RELEASE)
@@ -101,11 +118,57 @@ class PullRequestTitle(unittest.TestCase):
         self.assertEqual(len(PINNED.findall(PR_TITLE)), len(USES.findall(PR_TITLE)))
 
 
+class GovernanceGuard(unittest.TestCase):
+    def test_runs_on_pull_request_never_pull_request_target(self):
+        self.assertIn("pull_request:", GUARD)
+        self.assertNotIn("pull_request_target", GUARD)
+
+    def test_runs_again_after_a_description_edit(self):
+        self.assertIn("edited", GUARD)
+
+    def test_the_tool_runs_from_the_base_commit_and_the_pr_tree_is_only_data(self):
+        self.assertIn("ref: ${{ github.event.pull_request.base.sha }}", GUARD)
+        self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", GUARD)
+        self.assertIn("python base/tools/gate-check/governance_guard.py", GUARD)
+        self.assertIn("--paths base/gates/protected-paths.txt", GUARD)
+
+    def test_description_reaches_the_script_through_the_environment(self):
+        self.assertIn("PR_BODY: ${{ github.event.pull_request.body }}", GUARD)
+        for block in run_blocks(GUARD):
+            self.assertNotIn("${{", block)
+
+    def test_token_is_read_only_and_actions_are_pinned(self):
+        self.assertRegex(GUARD, r"(?m)^permissions:\n  contents: read\n(?!  )")
+        self.assertTrue(USES.findall(GUARD))
+        self.assertEqual(len(PINNED.findall(GUARD)), len(USES.findall(GUARD)))
+
+    def test_checkouts_keep_no_credentials(self):
+        self.assertEqual(GUARD.count("persist-credentials: false"), GUARD.count("actions/checkout@"))
+
+    def test_a_missing_tool_on_the_base_is_a_notice_not_a_failure(self):
+        self.assertIn("::notice::", GUARD)
+
+
 class Ci(unittest.TestCase):
+    def test_ci_runs_on_main_too_and_does_not_cancel_runs_on_main(self):
+        self.assertNotIn("branches-ignore", CI)
+        self.assertIn("cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}", CI)
+
+    def test_the_report_only_metrics_job_skips_main_and_tags_to_save_minutes(self):
+        job = CI[CI.index("\n  metrics:"):CI.index("\n  deny:")]
+        self.assertIn("if: github.ref_type == 'branch' && github.ref != 'refs/heads/main'", job)
+
+    def test_ci_runs_the_tests_of_every_tool_folder(self):
+        for folder, module in (("tools/templates", "test_templates"), ("tools/token-probe", "test_probe"),
+                               ("tools/gate-check", "test_governance_guard")):
+            with self.subTest(folder=folder):
+                self.assertIn(f"working-directory: {folder}", CI)
+                self.assertIn(module, CI)
+
     def test_ci_runs_the_release_tool_tests(self):
         self.assertIn("working-directory: tools/release", CI)
         for module in ("test_next_version", "test_release_plan", "test_check_pr_title",
-                       "test_make_assets", "test_workflows"):
+                       "test_make_assets", "test_workflows", "test_check_squash_subject"):
             with self.subTest(module=module):
                 self.assertIn(module, CI)
 

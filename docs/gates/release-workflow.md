@@ -21,20 +21,33 @@ Governance task (owner-declared). Files: `.github/workflows/release.yml`,
    the workflow adds `THIRD_PARTY.md` and a changelog.
 5. A **draft** Release is created with the assets (the tag is created at the merge commit),
    then published. The repository is private, so the Release is private.
-6. The workflow never commits or pushes to a branch. It uses only `GITHUB_TOKEN`
+6. Before anything is built, `check_squash_subject.py` compares the commit subject with the PR title
+   (number from the trailing `(#N)`, title read with `gh api`, so the token also has `pull-requests: read`).
+   A mismatch, a missing `(#N)` or a direct push fails the run and publishes nothing; the next merge
+   releases both, as for any failed run. This is how a wrong squash subject is caught on the Free plan.
+7. The workflow never commits or pushes to a branch. It uses only `GITHUB_TOKEN`
    with `contents: write`; no extra secrets.
 
 ## Why two merges cannot get the same version
 
 - Runs are serialised; each plans after the previous run created its tag.
 - A commit that already has a release tag is skipped (re-runs are safe).
-- A latest tag that is not an ancestor of `HEAD` stops the run with an error.
+- Only tags reachable from `HEAD` count (`git tag --merged HEAD`), so a stray tag on another branch is
+  ignored (card 0b-8; before it, such a tag stopped every release). If the next version's name already
+  exists as a tag that is not an ancestor, the run fails with a clear error until the tag is deleted.
+  A stray tag that *is* an ancestor and has a higher number makes the next version jump from it.
 - A leftover draft from a failed attempt is replaced; a published Release is never touched.
 
 Limits: if a run fails, the next run still releases from the last tag, so its version covers both merges.
 GitHub also keeps only one *pending* run per concurrency group: when several merges land while a run
 is going, only the newest pending run happens and its version covers the skipped ones. So "every merge
 bumps a version" (digest section 9) holds per release, not per merge; no version is duplicated and no commit is lost.
+Accepted limit (0b-8 review F4): the squash check compares only the newest commit with its PR title; a
+`BREAKING CHANGE:` footer in an older, unchecked commit body (after a failed run) can still change the next version.
+Always merge with `--body ""`.
+Remedy when the squash check fails: it cannot be re-run into success unless the PR title is restored to the
+subject; otherwise the next merge releases both. Edit the title back and re-run the failed workflow if the
+version must be published now.
 Drafts are found through the API (a draft has no tag, so `gh release view TAG` cannot see it).
 
 ## PR title check
@@ -43,6 +56,19 @@ Drafts are found through the API (a draft has no tag, so `gh release view TAG` c
 commit, with the title passed through an environment variable. On the PR that introduces the checker
 it prints a notice and passes (no checker in the base yet); this is deliberate.
 Merging is policy on the Free plan, so the check is not enforced by branch protection.
+
+## Governance guard and CI on `main` (card 0b-8)
+
+- `governance-guard.yml` (event `pull_request`, read-only token) checks out the base commit (tool and
+  `gates/protected-paths.txt`) and the PR head separately as data, and fails when a protected path changed
+  and the description lacks `Governance task: yes (card <id>)`. Like `pr-title` it skips with a notice on
+  the PR that introduces it, and it is a check, not a required check.
+- Limit: the tool and list come from the base, but GitHub runs the workflow *definition* from the PR, so a PR
+  that edits `governance-guard.yml` or `pr-title.yml` can disable its own check. The owner reads any
+  `.github/` diff; a real fix needs a paid plan (required workflows). Renames and deletes of protected
+  files are caught (`--no-renames`); the declaration needs a card id and is ignored inside code or comments.
+- `ci` also runs on pushes to `main`: a broken merge result is visible within minutes. It does not gate the
+  release; the report-only `metrics` job is skipped there to save Actions minutes.
 
 ## Verification
 

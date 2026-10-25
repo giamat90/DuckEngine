@@ -69,19 +69,18 @@ def _git(repo, *args):
 
 
 def git_plan(repo):
-    tags = _git(repo, "tag", "--list").split()
+    # Only tags reachable from HEAD count: a stray tag elsewhere cannot stop releases.
+    tags = _git(repo, "tag", "--list", "--merged", "HEAD").split()
     head_tags = _git(repo, "tag", "--points-at", "HEAD").split()
     previous = latest_tag(tags)
     messages = []
     if previous and not latest_tag(head_tags):
-        ancestor = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", previous, "HEAD"], cwd=repo, env=GIT_ENV, capture_output=True, check=False
-        )
-        if ancestor.returncode != 0:
-            raise PlanError(f"latest release tag {previous} is not an ancestor of HEAD")
         log = _git(repo, "log", "-z", "--format=%B", f"{previous}..HEAD")
         messages = [m for m in log.split("\0") if m.strip()]
-    return plan(tags, head_tags, messages)
+    result = plan(tags, head_tags, messages)
+    if not result.skip and result.tag in _git(repo, "tag", "--list").split():
+        raise PlanError(f"tag {result.tag} already exists but is not an ancestor of HEAD; delete or move it")
+    return result
 
 
 def format_output(result):
