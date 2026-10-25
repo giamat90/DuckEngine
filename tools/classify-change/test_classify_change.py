@@ -136,6 +136,71 @@ class Content(unittest.TestCase):
         self.assertEqual(self.content_class("engine/a/src/x.rs", ["let x = 1 + 2;"]), 1)
 
 
+class Waivers(unittest.TestCase):
+    """0c-12 (reviews/0c-7.md L1, F7): an added lint-level attribute is a waiver, and a waiver is class 2."""
+    LINES = ("#[allow(clippy::too_many_lines)]", "#![allow(clippy::all)]", "#[expect(dead_code, reason = \"x\")]",
+             "#![warn(clippy::unwrap_used)]", "  #  !  [ allow ( dead_code ) ]", "#[cfg_attr(test, allow(dead_code))]",
+             "#[ignore]", "#[ignore = \"slow\"]", "#[allow(", "#[cfg_attr(test, ignore)]")
+
+    def test_an_added_lint_attribute_is_class_2_in_source_and_in_tests(self):
+        for path in ("engine/a/src/x.rs", "engine/a/tests/t.rs"):
+            for line in self.LINES:
+                with self.subTest(path=path, line=line):
+                    self.assertEqual(2, cc.classify_content(path, [line])[0])
+
+    def test_the_reason_names_the_waiver(self):
+        self.assertIn("waiver", cc.classify_content("engine/a/src/x.rs", ["#[allow(dead_code)]"])[1])
+
+    def test_code_that_only_resembles_a_waiver_is_class_1(self):
+        for line in ("let allowed = 1;", "fn expect_ok() {}", "value.expect_err(\"x\");", "#[derive(Debug)]",
+                     "#[must_use]", "// #[allow(dead_code)] is not used here", "#[test]", "#[deny(clippy::all)]"):
+            with self.subTest(line=line):
+                self.assertEqual(1, cc.classify_content("engine/a/src/x.rs", [line])[0])
+
+    def test_waivers_lists_the_added_waiver_lines_per_file(self):
+        found = cc.waivers({
+            "engine/a/src/x.rs": cc.Change("M", ["fn f() {}", "    #[allow(dead_code)]", "#[ignore]"]),
+            "engine/a/src/y.rs": cc.Change("M", ["fn g() {}"]),
+            "wiki/p.md": cc.Change("M", ["#[allow(dead_code)] in prose"]),
+        })
+        self.assertEqual([("engine/a/src/x.rs", "#[allow(dead_code)]"), ("engine/a/src/x.rs", "#[ignore]")], found)
+
+    def test_a_lint_level_set_to_allow_in_cargo_toml_is_a_waiver(self):
+        changes = {"Cargo.toml": cc.Change("M", ['unwrap_used = "allow"', 'pedantic = { level = "warn", priority = -1 }', 'x = "deny"']),
+                   "engine/a/Cargo.toml": cc.Change("M", ['cognitive_complexity = "warn"'])}
+        self.assertEqual([("Cargo.toml", 'unwrap_used = "allow"'), ("Cargo.toml", 'pedantic = { level = "warn", priority = -1 }'),
+                          ("engine/a/Cargo.toml", 'cognitive_complexity = "warn"')], cc.waivers(changes))
+
+    def test_a_long_waiver_line_is_cut_for_the_report(self):
+        found = cc.waivers({"engine/a/src/x.rs": cc.Change("M", ["#[allow(" + "dead_code, " * 40 + ")]"])})
+        self.assertLessEqual(len(found[0][1]), 120)
+
+    def test_an_attribute_wrapped_over_several_added_lines_is_found(self):
+        for lines in (["#[", "    allow(dead_code)", "]"], ["#[cfg_attr(", "    test,", "    allow(dead_code)", ")]"],
+                      ["#![cfg_attr(not(test), allow(dead_code))]"]):
+            with self.subTest(lines=lines):
+                self.assertEqual(2, cc.classify_content("engine/a/src/x.rs", lines)[0])
+                self.assertEqual(1, len(cc.waivers({"engine/a/src/x.rs": cc.Change("M", lines)})))
+
+    def test_a_waiver_word_inside_a_string_or_doc_attribute_is_not_a_waiver(self):
+        for line in ('#[doc = "allow(x)"]', '#[should_panic(expected = "warn(")]', '#[cfg(feature = "allow(")]'):
+            with self.subTest(line=line):
+                self.assertEqual(1, cc.classify_content("engine/a/src/x.rs", [line])[0])
+
+    def test_an_upper_case_extension_is_still_scanned(self):
+        self.assertEqual(2, cc.classify_content("engine/a/src/X.RS", ["#[allow(dead_code)]"])[0])
+
+    def test_a_very_long_line_does_not_stall_the_scan(self):
+        import time
+        for line in ("#[cfg_attr(" * 6000, "#" + " " * 60000, "#[" + "a, " * 20000):
+            started = time.monotonic()
+            cc.classify_content("engine/a/src/x.rs", [line])
+            self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_removed_waivers_are_not_counted(self):
+        self.assertEqual([], cc.waivers({"engine/a/src/x.rs": cc.Change("M", ["fn f() {}"], ["#[allow(dead_code)]"])}))
+
+
 class ReviewFindings(unittest.TestCase):
     """Regressions for the independent review of 0c-1 (reviews/0c-1.md)."""
 
@@ -403,6 +468,23 @@ class Main(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(lines[0], "class=3")
         self.assertIn("gates/g.toml", lines[1])
+
+    def test_waivers_are_counted_and_listed_after_the_reasons(self):
+        (self.path / "engine" / "a" / "src").mkdir(parents=True)
+        (self.path / "engine" / "a" / "src" / "x.rs").write_text("#[allow(dead_code)]\nfn f() {}\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "w")
+        code, lines = self.run_main("topic")
+        self.assertEqual(0, code)
+        self.assertEqual("waivers=1", lines[-2])
+        self.assertEqual("  engine/a/src/x.rs: #[allow(dead_code)]", lines[-1])
+
+    def test_no_waivers_is_stated_as_zero(self):
+        (self.path / "wiki").mkdir()
+        (self.path / "wiki" / "p.md").write_text("x\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "p")
+        self.assertEqual("waivers=0", self.run_main("topic")[1][-1])
 
     def test_a_docs_only_change_is_class_1(self):
         (self.path / "wiki").mkdir()

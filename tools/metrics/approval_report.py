@@ -2,7 +2,8 @@
 
 Runs the gate tools that exist (change classifier, architecture checker, wiki lint) on a
 branch and renders one Markdown report: verdict, change class with the files that set
-it, one row per check, the violations. The report states results only; thresholds live in
+it, the number of waivers the diff adds (card 0c-12; listed, never counted as a failure:
+the owner judges each one), one row per check, the violations. The report states results only; thresholds live in
 gates/ and are enforced by the tools, not here. Sections of the full report that no tool
 produces yet are listed under "Not in this report" rather than left out silently; checks that
 exist but run in other CI jobs are listed under "Checks that run in other jobs". The verdict
@@ -24,11 +25,12 @@ import argparse
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 CLASS_NAMES = {1: "routine", 2: "sensitive", 3: "governance"}
 CLASS_LINE = re.compile(r"^class=([123])$")
+WAIVERS_LINE = re.compile(r"^waivers=(\d+)$")
 REASON_LINE = re.compile(r"^\s+(\S.*?): (.+)$")
 SUMMARY_LINE = re.compile(r"^(OK|FAIL) (.*)$")
 VIOLATION_LINE = re.compile(r"^VIOLATION (.*)$")
@@ -39,7 +41,7 @@ NOT_IN_REPORT = (
     "Coverage and mutation score per module on this diff (the `metrics` job reports the skeleton baseline).",
     "Performance: benchmark deltas against the baseline, allocations per frame.",
     "Robustness: sanitizer, Miri and static-analysis findings.",
-    "Governance: waiver count, Class 2 and 3 changes since the last report.",
+    "Governance: Class 2 and 3 changes since the last report.",
     "Top risks of the code: complexity, churn, lowest mutation scores.",
     "Product view and agent audit findings.",
     "Complexity, duplication and magic-number limits (no tool enforces them yet).",
@@ -59,6 +61,7 @@ class Classification:
     klass: int
     reasons: list
     failed: bool = False
+    waivers: list = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -73,10 +76,21 @@ def parse_classification(text):
     match = CLASS_LINE.match(lines[0]) if lines else None
     if not match:
         raise ValueError(f"not classifier output: {text[:60]!r}")
-    reasons = [REASON_LINE.match(line) for line in lines[1:]]
-    if not all(reasons):
+    body = lines[1:]
+    marks = [index for index, line in enumerate(body) if WAIVERS_LINE.match(line)]
+    if len(marks) != 1:
+        raise ValueError("classifier output has no single 'waivers=<count>' line")
+    reasons, listed = _pairs(body[:marks[0]]), _pairs(body[marks[0] + 1:])
+    if int(WAIVERS_LINE.match(body[marks[0]]).group(1)) != len(listed):
+        raise ValueError("classifier output: the waiver count does not match the waivers listed")
+    return Classification(int(match.group(1)), reasons, waivers=listed)
+
+
+def _pairs(lines):
+    found = [REASON_LINE.match(line) for line in lines]
+    if not all(found):
         raise ValueError("classifier output has a line that is not '<path>: <reason>'")
-    return Classification(int(match.group(1)), [(found.group(1), found.group(2)) for found in reasons])
+    return [(item.group(1), item.group(2)) for item in found]
 
 
 def parse_summary(text):
@@ -157,6 +171,14 @@ def _verdict(classification, checks):
     return f"{failing} check{'s' if failing > 1 else ''} failing"
 
 
+def _waiver_row(classification):
+    if classification.failed:
+        return "| Waivers added | not known | the classifier failed |"
+    if not classification.waivers:
+        return "| Waivers added | 0 | none |"
+    return f"| Waivers added | {len(classification.waivers)} | the owner reviews each one |"
+
+
 def render(head, base, diff_hash, classification, checks):
     klass = classification.klass
     status = "FAIL (classifier failed, treated as class 3)" if classification.failed else f"{klass} ({CLASS_NAMES[klass]})"
@@ -171,7 +193,10 @@ def render(head, base, diff_hash, classification, checks):
         "|---|---|---|",
         f"| Change class | {status} | {len(classification.reasons)} file(s) set it |",
     ]
+    lines.append(_waiver_row(classification))
     lines += [f"| {_md(name)} | {'pass' if summary.passed else 'FAIL'} | {_md(summary.detail)} |" for name, summary in checks.items()]
+    if classification.waivers:
+        lines += ["", "## Waivers added", ""] + [f"- {_code(path)}: {_code(text)}" for path, text in classification.waivers]
     if classification.reasons:
         lines += ["", "## Why the class", ""]
         lines += [f"- {_code(path)}: {_md(why)}" for path, why in classification.reasons]

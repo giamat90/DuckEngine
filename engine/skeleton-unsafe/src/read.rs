@@ -1,5 +1,8 @@
 //! Unaligned little-endian reads from a byte slice.
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "the one module of this crate that may use unsafe; every block has a SAFETY comment"
+)]
 
 /// Reads a little-endian `u32` at `offset`, or `None` when fewer than four
 /// bytes remain there.

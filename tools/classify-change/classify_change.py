@@ -5,7 +5,16 @@ changed file wins; a path or a line the rules do not recognise rounds up to clas
 Class 3 comes from gates/protected-paths.txt (the same list and the same matcher, tools/gate-check/protected_paths.py, as the governance guard),
 the `contracts/` directories, toolchain and lint configuration files, and any
 path that can alias another file on Windows. Added and removed lines of .rs files are
-scanned for `unsafe`, atomics, locks, intrinsics and public items.
+scanned for `unsafe`, atomics, locks, intrinsics and public items, and for waivers: an added
+`#[allow(`, `#[expect(`, `#[warn(` (also inside `cfg_attr`) or `#[ignore]` is class 2, and every such
+line, plus a lint level set to "allow" or "warn" in a Cargo.toml, is printed after the reasons as
+`waivers=N` with one `  <path>: <line>` per waiver (card 0c-12). Only added lines are read, so a
+waiver that moved is counted again and a lint lowered from deny to warn on an unchanged line is not
+seen; Clippy's `allow_attributes` lints (Cargo.toml) refuse `allow` and unexplained `expect` as well.
+The added lines of a file are joined, so an attribute wrapped over several added lines is found; one
+whose first line is unchanged is not. Strings and block comments are not excluded (a false positive
+rounds up). Removing a `deny` line, and flags in `.cargo/config` or `clippy.toml`, are not waivers
+here: those files are protected paths and class 3.
 
 Known gaps (reviews/0c-1.md): trait methods and enum variants are not parsed, so a
 change to them is class 2 only in a module root (lib.rs, mod.rs); a hot-path change
@@ -51,6 +60,13 @@ CONTENT_RULES = (
     (re.compile(r"\barch::|\b_mm\w*|\bintrinsics\b|\bno_mangle\b|\btarget_feature\b"), "adds an intrinsic or ABI attribute"),
     (re.compile(r"\bmacro_export\b|\bmacro_rules!"), "adds an exported or generating macro"),
 )
+# A lint attribute: the lint-level word right after `[`, or after a `,` or `(` inside the same
+# attribute (cfg_attr), with no string literal before it. The gap before it is bounded so that
+# a long line cannot make the match slow.
+WAIVER = re.compile(r'#\s*(?:!\s*)?\[(?:[^\]"]{0,200}?[,(]\s*|\s*)(?:(?:allow|expect|warn)\s*\(|ignore\b)')
+TOML_WAIVER = re.compile(r'=\s*"(?:allow|warn)"')
+WAIVER_REASON = "adds a lint waiver (an allow, expect, warn or ignore attribute)"
+WAIVER_TEXT_LIMIT = 120
 SUBMODULE = re.compile(r"^Subproject commit ")
 # `pub` anywhere on the line (after an attribute, inside an impl), but not pub(crate) and friends.
 PUBLIC_ITEM = re.compile(r"(?<![\w:])pub\b(?!\s*\()")
@@ -132,17 +148,41 @@ def classify_path(path, protected):
     return SENSITIVE, "unrecognised path, rounded up"
 
 
+def _waiver_lines(path, added):
+    """The added lines that start a waiver, in order, without the comment-only lines."""
+    folded = path.casefold()
+    if folded.rsplit("/", 1)[-1] == "cargo.toml":
+        return [line.strip() for line in added if TOML_WAIVER.search(line)]
+    if not folded.endswith(".rs"):
+        return []
+    code = ["" if line.lstrip().startswith("//") else line for line in added]
+    text = "\n".join(code)
+    starts = {text.count("\n", 0, match.start()) for match in WAIVER.finditer(text)}
+    return [code[index].strip() for index in sorted(starts)]
+
+
+def waivers(changes):
+    """[(path, added line)] of every waiver line, sorted by path, lines cut to a reportable length."""
+    found = []
+    for path, change in sorted(changes.items()):
+        for text in _waiver_lines(path, change.added):
+            found.append((path, text if len(text) <= WAIVER_TEXT_LIMIT else text[:WAIVER_TEXT_LIMIT - 3] + "..."))
+    return found
+
+
 def classify_content(path, added, removed=(), opaque=False):
     """(class, reason) from the diff lines of a file; only .rs files are scanned for code."""
     if opaque:
         return SENSITIVE, "diff has no readable lines"
     if any(SUBMODULE.match(line) for line in added):
         return SENSITIVE, "submodule change"
-    if not path.endswith(".rs"):
+    if not path.casefold().endswith(".rs"):
         return ROUTINE, ""
     in_tests = _is_crate_test_file(_folded_parts(path))
     if not in_tests and any(PUBLIC_API_REMOVAL.search(line) for line in removed):
         return SENSITIVE, "removes or changes a public item"
+    if _waiver_lines(path, added):
+        return SENSITIVE, WAIVER_REASON
     for line in added:
         for pattern, reason in CONTENT_RULES:
             if pattern.search(line):
@@ -214,12 +254,16 @@ def main(argv, print_line=print):
         if not found:
             raise ClassifyError(f"no changed files between {args.base} and {args.head}; are the revisions right?")
         result = classify(found, protected)
+        listed = waivers(found)
     except (ClassifyError, ValueError, OSError) as error:
         print_line(f"FAIL {error}")
         return 1
     print_line(f"class={result.level}")
     for reason in result.reasons:
         print_line(f"  {reason}")
+    print_line(f"waivers={len(listed)}")
+    for path, text in listed:
+        print_line(f"  {path}: {text}")
     return 0
 
 

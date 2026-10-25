@@ -12,8 +12,15 @@ import approval_report as ar
 CLASSIFIER_3 = """class=3
   gates/wiki-lint.toml: protected path
   tools/x.py: protected path
+waivers=0
 """
-CLASSIFIER_1 = "class=1\n"
+CLASSIFIER_1 = "class=1\nwaivers=0\n"
+CLASSIFIER_W = """class=2
+  engine/a/src/x.rs: adds a lint waiver
+waivers=2
+  engine/a/src/x.rs: #[allow(dead_code)]
+  engine/a/src/y.rs: #[ignore]
+"""
 OK_LINE = "OK 3 crates checked, 0 violations\n"
 FAIL_TEXT = "VIOLATION layer a.rs:3 L1 includes L2\nFAIL 3 crates checked, 1 violations\n"
 
@@ -28,8 +35,22 @@ class ParseClassification(unittest.TestCase):
         found = ar.parse_classification(CLASSIFIER_1)
         self.assertEqual((1, []), (found.klass, found.reasons))
 
+    def test_waivers_are_parsed_after_the_reasons(self):
+        found = ar.parse_classification(CLASSIFIER_W)
+        self.assertEqual([("engine/a/src/x.rs", "adds a lint waiver")], found.reasons)
+        self.assertEqual([("engine/a/src/x.rs", "#[allow(dead_code)]"), ("engine/a/src/y.rs", "#[ignore]")], found.waivers)
+
+    def test_no_waivers_line_is_an_error_not_zero(self):
+        with self.assertRaises(ValueError):
+            ar.parse_classification("class=1\n")
+
+    def test_a_waiver_count_that_does_not_match_the_list_is_an_error(self):
+        for text in ("class=1\nwaivers=2\n  a.rs: x\n", "class=1\nwaivers=0\n  a.rs: x\n", "class=1\nwaivers=x\n"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                ar.parse_classification(text)
+
     def test_a_reason_may_contain_a_colon(self):
-        found = ar.parse_classification("class=2\n  a/b.rs: public item: pub fn f\n")
+        found = ar.parse_classification("class=2\n  a/b.rs: public item: pub fn f\nwaivers=0\n")
         self.assertEqual([("a/b.rs", "public item: pub fn f")], found.reasons)
 
     def test_unrecognised_output_is_an_error(self):
@@ -95,6 +116,22 @@ class Render(unittest.TestCase):
         text = self.build()
         self.assertIn("| Change class | 3 (governance) |", text)
         self.assertIn("- `gates/wiki-lint.toml`: protected path", text)
+
+    def test_no_waivers_is_a_visible_zero(self):
+        text = self.build()
+        self.assertIn("| Waivers added | 0 | none |", text)
+        self.assertNotIn("## Waivers added", text)
+
+    def test_waivers_are_counted_and_listed_but_do_not_fail_the_verdict(self):
+        text = ar.render("agent/x", "main", "83f5093def889fac", ar.parse_classification(CLASSIFIER_W),
+                         {"Wiki lint": ar.parse_summary(OK_LINE)})
+        self.assertIn("| Waivers added | 2 | the owner reviews each one |", text)
+        self.assertIn("## Waivers added", text)
+        self.assertIn("- `engine/a/src/x.rs`: `#[allow(dead_code)]`", text)
+        self.assertIn("Verdict: all 2 checks in this report pass", text)
+
+    def test_the_waiver_count_is_no_longer_listed_as_missing(self):
+        self.assertNotIn("waiver count", self.build())
 
     def test_a_routine_change_is_labelled_routine(self):
         text = self.build(klass=1)
@@ -167,7 +204,7 @@ class FailClosed(unittest.TestCase):
         self.assertEqual((3, True), (found.klass, found.failed))
 
     def test_a_classifier_success_is_parsed(self):
-        found = ar.run_classifier([sys.executable, "-c", "print('class=2'); print('  a.rs: public item')"])
+        found = ar.run_classifier([sys.executable, "-c", "print('class=2'); print('  a.rs: public item'); print('waivers=0')"])
         self.assertEqual((2, False, [("a.rs", "public item")]), (found.klass, found.failed, found.reasons))
 
     def test_a_failed_classifier_fails_the_verdict(self):
@@ -254,7 +291,7 @@ class Main(unittest.TestCase):
         self.dir = Path(tempfile.mkdtemp(prefix="with space "))
         self.addCleanup(lambda: __import__("shutil").rmtree(self.dir, ignore_errors=True))
         self.tools = self.dir / "tools"
-        for folder, name, body in (("classify-change", "classify_change.py", "print('class=1')"),
+        for folder, name, body in (("classify-change", "classify_change.py", "print('class=1'); print('waivers=0')"),
                                    ("arch-check", "arch_check.py", "print('OK 3 crates checked, 0 violations')"),
                                    ("wiki-lint", "wiki_lint.py", "print('OK 9 pages checked, 0 violations')"),
                                    ("diff-hash", "diff_hash.py", "print('0' * 16)")):

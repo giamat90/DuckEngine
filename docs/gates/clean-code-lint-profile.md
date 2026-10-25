@@ -19,6 +19,10 @@ lint at `warn` level also fails the build.
 | `nesting_max` 3 | `excessive_nesting` (nursery) | deny | `excessive-nesting-threshold` | 3 |
 | dead code | rustc `dead_code` | warn | | `-D warnings` makes it fail |
 
+Waivers (card 0c-12): `allow_attributes` and `allow_attributes_without_reason` are `deny`, so a lint is
+turned off only with `#[expect(lint, reason = "...")]`, which also fails once the lint no longer fires.
+The change classifier lists every added waiver for the owner.
+
 How Clippy counts, measured with the seeded tests:
 
 - Function length is the number of lines between the braces: 60 is clean, 61 is flagged.

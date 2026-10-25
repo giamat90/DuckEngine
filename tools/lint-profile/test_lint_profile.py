@@ -38,6 +38,8 @@ CLIPPY_KEYS = {
 # The lints the profile must turn on, and the limit each one polices.
 CLEAN_CODE_LINTS = ("too_many_lines", "cognitive_complexity", "too_many_arguments", "excessive_nesting")
 LINT_LEVELS = ("warn", "deny")
+# The lints that make a waiver visible: no `allow` attribute, and every `expect` names its reason.
+WAIVER_LINTS = ("allow_attributes", "allow_attributes_without_reason")
 
 CARGO = os.environ.get("CARGO", "cargo")
 
@@ -161,6 +163,12 @@ class LintTables(unittest.TestCase):
     def test_workspace_table_enables_the_clean_code_lints(self):
         self.check_table(clippy_lints(CARGO_TOML, workspace=True))
 
+    def test_workspace_table_denies_unreasoned_and_plain_allow_attributes(self):
+        lints = clippy_lints(CARGO_TOML, workspace=True)
+        for lint in WAIVER_LINTS:
+            with self.subTest(lint=lint):
+                self.assertEqual("deny", level_of(lints.get(lint)))
+
     def test_unsafe_crate_repeats_the_clean_code_lints(self):
         self.check_table(clippy_lints(UNSAFE_CRATE_TOML, workspace=False))
 
@@ -231,6 +239,15 @@ class SeededViolations(unittest.TestCase):
     def test_nesting_over_the_limit_is_flagged(self):
         levels = gates_limit("nesting_max")
         self.assertIn("clippy::excessive_nesting", self.codes(function_nested(levels)))
+
+    def test_an_allow_attribute_is_flagged(self):
+        self.assertIn("clippy::allow_attributes", self.codes("#[allow(dead_code)]\nfn unused() {}\n"))
+
+    def test_an_expect_without_a_reason_is_flagged(self):
+        self.assertIn("clippy::allow_attributes_without_reason", self.codes("#[expect(dead_code)]\nfn unused() {}\n"))
+
+    def test_an_expect_with_a_reason_is_clean(self):
+        self.assertEqual(set(), self.codes('#[expect(dead_code, reason = "seeded")]\nfn unused() {}\n'))
 
     def test_small_tangle_is_clean(self):
         self.assertNotIn("clippy::cognitive_complexity", self.codes(function_tangled(2)))
