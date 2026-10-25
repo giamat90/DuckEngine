@@ -160,7 +160,8 @@ class Ci(unittest.TestCase):
 
     def test_ci_runs_the_tests_of_every_tool_folder(self):
         for folder, module in (("tools/templates", "test_templates"), ("tools/token-probe", "test_probe"),
-                               ("tools/gate-check", "test_governance_guard")):
+                               ("tools/gate-check", "test_governance_guard"),
+                               ("tools/classify-change", "test_classify_change")):
             with self.subTest(folder=folder):
                 self.assertIn(f"working-directory: {folder}", CI)
                 self.assertIn(module, CI)

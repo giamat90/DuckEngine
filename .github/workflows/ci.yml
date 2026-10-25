@@ -52,6 +52,9 @@ jobs:
           python -m unittest -q test_check_digest
           python -m unittest -q test_governance_guard
         working-directory: tools/gate-check
+      - name: Test the change classifier
+        run: python -m unittest -q test_classify_change
+        working-directory: tools/classify-change
       - name: Test the clean-code lint profile
         run: python -m unittest -q test_lint_profile
         working-directory: tools/lint-profile

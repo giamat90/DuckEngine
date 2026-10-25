@@ -6,6 +6,7 @@ gates/
 .github/
 tools/gate-check/
 tools/diff-hash/
+tools/classify-change/
 tools/lint-profile/
 tools/release/
 tools/templates/
@@ -14,7 +15,8 @@ docs/adr/
 wiki/decisions/
 wiki/rules-digest.md
 CLAUDE.md
-.claude/settings.json
+.claude/
+.githooks/
 THIRD_PARTY.md
 clippy.toml
 deny.toml

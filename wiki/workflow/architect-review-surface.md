@@ -26,6 +26,8 @@ Merge rules (updated by the owner's delivery decision, see [delivery-pipeline](d
 
 If the classifier is unsure, it rounds **up**. Changing the classifier is Class 3.
 
+Status (card 0c-1): `tools/classify-change/classify_change.py` is built (Python, stdlib; usage in its docstring) and its tests run in `ci`. It decides from paths (class 3 = `gates/protected-paths.txt` plus `contracts/`; class 2 = the rows above; class 1 = module `src/`, `tests/`, `benches/`, docs, wiki, reviews) and from the **added lines** of `.rs` files (`unsafe`, atomics, locks and threads, intrinsics, new `pub` items). An unrecognised path is class 2. Also class 3: toolchain and lint configuration files at any depth, and any path that can alias another file on Windows (backslash, `:`, trailing dot or space, `~1`); path matching ignores case. An empty diff, an unknown revision or a malformed protected list is an error (exit 1, no `class=` line): a consumer must treat a non-zero exit as class 3. Not yet decided by the tool: the API-diff row (cargo-public-api; the `pub` scan is a conservative stand-in, and trait methods and enum variants outside a module root `lib.rs`/`mod.rs` are not parsed), the benchmark-noise row (needs benchmark data, supplied by the metrics report in 0c-4), and which wiki pages are "rules pages" (open question for the owner: only `wiki/rules-digest.md` and `wiki/decisions/` are protected today). It is not yet a required check: wiring it into the pipeline comes with 0c-4 and 0c-5.
+
 ## 2. Design note (one per new module, port, or significant redesign)
 
 Required for every Class 2 change that introduces or reshapes a module or port; stored at `wiki/design/<module>.md` (short, 1-2 pages). Template:
