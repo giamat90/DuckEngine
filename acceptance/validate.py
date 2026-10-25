@@ -3,9 +3,12 @@
 A scenario is one TOML file in a scenarios folder: an outcome the owner wants, written in
 plain language, that the implementing agent does not author (see README.md). This tool checks
 the shape only: it does not run anything. A scenario that is `active` must say how it is
-checked; a `pending` one is a promise not yet backed by a check and is counted as such.
+checked, but nothing runs that check yet, so the summary reports active scenarios as unchecked;
+a `pending` one is a promise not yet backed by a check and is counted as such. `--min N` is a
+floor: fewer scenarios than N is a violation, so deleting scenarios cannot pass (raise it as
+scenarios are added).
 
-    validate.py --dir acceptance/scenarios
+    validate.py --dir acceptance/scenarios [--min N]
 
 Prints `VIOLATION <file>: <why>` per problem, then `OK ...` or `FAIL ...`. Exit 0 when valid,
 1 otherwise. An unreadable, malformed, oversized or unknown-keyed file, a symlink, any file that is not
@@ -109,12 +112,18 @@ def validate(directory):
 def main(argv, print_line=print):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", type=Path, required=True)
-    result = validate(parser.parse_args(argv).dir)
+    parser.add_argument("--min", type=int, default=0, dest="floor")
+    args = parser.parse_args(argv)
+    if args.floor < 0:
+        parser.error("--min must not be negative")
+    result = validate(args.dir)
+    if result.active + result.pending < args.floor:
+        result.problems.append(f"{args.dir}: fewer than the floor of {args.floor} scenarios")
     for problem in result.problems:
         print_line(f"VIOLATION {problem}")
     total = result.active + result.pending
     verdict = "FAIL" if result.problems else "OK"
-    print_line(f"{verdict} {total} scenarios ({result.active} active, {result.pending} pending), {len(result.problems)} violations")
+    print_line(f"{verdict} {total} scenarios ({result.active} active (unchecked: nothing runs the check), {result.pending} pending), {len(result.problems)} violations")
     return 1 if result.problems else 0
 
 

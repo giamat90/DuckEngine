@@ -123,13 +123,13 @@ jobs:
         run: python trusted/tools/gate-check/check_digest.py --digest head/wiki/rules-digest.md --config trusted/gates/gates.toml --claude-md head/CLAUDE.md
       # Report only (the checks above already gate): the owner's metric report for this push.
       - name: Approval report
-        if: github.ref_type == 'branch' && github.ref != 'refs/heads/main'
+        if: ${{ !cancelled() && github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
         continue-on-error: true
         run: |
           set -euo pipefail
           head_sha="$(git -C head rev-parse HEAD)"
-          git -C head rev-parse --verify --quiet origin/main > /dev/null
-          diff_hash="$(python trusted/tools/diff-hash/diff_hash.py --repo head compute --base origin/main --head "$head_sha")"
+          # A diff that cannot be hashed must still produce a report: the "Diff hash matches the diff" row then fails.
+          diff_hash="$(python trusted/tools/diff-hash/diff_hash.py --repo head compute --base origin/main --head "$head_sha")" || diff_hash=0000000000000000
           python trusted/tools/metrics/approval_report.py --tools-dir trusted/tools --gates-dir trusted/gates --repo head --base origin/main --head "$head_sha" --diff-hash "$diff_hash" --out "$RUNNER_TEMP/report.md" || status=$?
           cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
           exit "${status:-0}"

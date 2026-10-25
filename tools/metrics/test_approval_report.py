@@ -1,8 +1,11 @@
+import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import approval_report as ar
 
@@ -72,7 +75,12 @@ class Render(unittest.TestCase):
         self.assertIn("Diff hash: `83f5093def889fac`", text)
 
     def test_all_passing_gives_a_clear_verdict(self):
-        self.assertIn("Verdict: all checks pass", self.build())
+        self.assertIn("Verdict: all 3 checks in this report pass", self.build())
+
+    def test_the_verdict_never_claims_more_than_the_report_shows(self):
+        text = self.build()
+        self.assertNotIn("only the checks listed", text)
+        self.assertNotRegex(text, "Verdict: all checks")
 
     def test_a_failing_check_gives_a_failing_verdict_and_lists_violations(self):
         text = self.build(arch=FAIL_TEXT)
@@ -98,6 +106,14 @@ class Render(unittest.TestCase):
         self.assertIn("## Not in this report", text)
         for word in ("Coverage", "mutation", "Performance", "Product view"):
             self.assertIn(word, text)
+
+    def test_the_checks_that_exist_but_run_elsewhere_are_named(self):
+        text = self.build()
+        self.assertIn("## Checks that run in other jobs", text)
+        for word in ("Format", "Clippy", "Build and tests", "Digest", "Governance guard", "Holdout",
+                     "Third-party", "Complexity", "duplication", "magic"):
+            with self.subTest(word=word):
+                self.assertIn(word, text)
 
     def test_a_pipe_in_a_detail_cannot_break_the_table(self):
         text = ar.render("h", "b", "0" * 16, ar.parse_classification(CLASSIFIER_1),
@@ -176,6 +192,24 @@ class FailClosed(unittest.TestCase):
         self.assertEqual((3, True), (found.klass, found.failed))
 
 
+class Boundaries(unittest.TestCase):
+    def test_the_tools_get_the_documented_timeout(self):
+        seen = []
+
+        def fake(command, **kwargs):
+            seen.append(kwargs.get("timeout"))
+            return subprocess.CompletedProcess(command, 0, stdout="OK x\n", stderr="")
+
+        with mock.patch("subprocess.run", fake):
+            ar.run_check(["x", "y"])
+            ar.run_classifier(["x", "y"])
+        self.assertEqual([ar.TIMEOUT_SECONDS] * 2, seen)
+        self.assertEqual(600, ar.TIMEOUT_SECONDS)
+
+    def test_the_markdown_escape_covers_hash_ampersand_and_tilde(self):
+        self.assertEqual("a\\#b\\&c\\~d", ar._md("a#b&c~d"))
+
+
 class Escaping(unittest.TestCase):
     def render(self, **overrides):
         args = dict(head="agent/x", base="main", diff_hash="0" * 16,
@@ -210,6 +244,11 @@ class Escaping(unittest.TestCase):
         self.assertEqual("83f5093def889fac", ar.check_hash("83f5093def889fac"))
 
 
+GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com"}
+
+
 class Main(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="with space "))
@@ -217,9 +256,16 @@ class Main(unittest.TestCase):
         self.tools = self.dir / "tools"
         for folder, name, body in (("classify-change", "classify_change.py", "print('class=1')"),
                                    ("arch-check", "arch_check.py", "print('OK 3 crates checked, 0 violations')"),
-                                   ("wiki-lint", "wiki_lint.py", "print('OK 9 pages checked, 0 violations')")):
+                                   ("wiki-lint", "wiki_lint.py", "print('OK 9 pages checked, 0 violations')"),
+                                   ("diff-hash", "diff_hash.py", "print('0' * 16)")):
             (self.tools / folder).mkdir(parents=True)
             (self.tools / folder / name).write_text(body + "\n", encoding="utf-8")
+        for args in (("init", "-q", "-b", "a"), ("commit", "-q", "--allow-empty", "-m", "x"), ("branch", "b")):
+            self.git(*args)
+        self.git("checkout", "-q", "b")
+
+    def git(self, *args):
+        subprocess.run(["git", *args], cwd=self.dir, env=GIT_ENV, check=True, capture_output=True)
 
     def run_main(self, out=None):
         out = out or self.dir / "report.md"
@@ -250,6 +296,38 @@ class Main(unittest.TestCase):
         code = ar.main(["--repo", str(self.dir), "--base", "a", "--head", "b", "--diff-hash", "0" * 16, "--tools-dir", str(self.tools),
                         "--gates-dir", str(self.dir / "trusted"), "--out", str(out)])
         self.assertEqual(0, code)
+
+    def test_an_unresolvable_head_fails_the_tree_row(self):
+        code = ar.main(["--repo", str(self.dir), "--base", "a", "--head", "nosuchref", "--diff-hash", "0" * 16,
+                        "--tools-dir", str(self.tools), "--out", str(self.dir / "r.md")])
+        self.assertEqual(1, code)
+        self.assertIn("| Checked-out tree is the head | FAIL |", (self.dir / "r.md").read_text(encoding="utf-8"))
+
+    def test_a_diff_hash_tool_that_exits_non_zero_fails_even_when_it_prints_the_claim(self):
+        (self.tools / "diff-hash" / "diff_hash.py").write_text("print('0' * 16); raise SystemExit(1)", encoding="utf-8")
+        text = self.run_main()[1].read_text(encoding="utf-8")
+        self.assertIn("| Diff hash matches the diff | FAIL |", text)
+
+    def test_a_diff_hash_that_is_not_the_hash_of_the_diff_fails(self):
+        (self.tools / "diff-hash" / "diff_hash.py").write_text("print('1' * 16)\n", encoding="utf-8")
+        code, out = self.run_main()
+        self.assertEqual(1, code)
+        self.assertIn("| Diff hash matches the diff | FAIL |", out.read_text(encoding="utf-8"))
+
+    def test_a_matching_diff_hash_is_a_passing_row(self):
+        text = self.run_main()[1].read_text(encoding="utf-8")
+        self.assertIn("| Diff hash matches the diff | pass |", text)
+
+    def test_a_tree_that_is_not_the_head_fails(self):
+        self.git("checkout", "-q", "a")
+        self.git("commit", "-q", "--allow-empty", "-m", "y")
+        code, out = self.run_main()
+        self.assertEqual(1, code)
+        self.assertIn("| Checked-out tree is the head | FAIL |", out.read_text(encoding="utf-8"))
+
+    def test_the_head_tree_is_a_passing_row(self):
+        text = self.run_main()[1].read_text(encoding="utf-8")
+        self.assertIn("| Checked-out tree is the head | pass |", text)
 
     def test_an_unwritable_output_is_exit_two_not_a_traceback(self):
         self.assertEqual(2, self.run_main(self.dir / "nodir" / "r.md")[0])

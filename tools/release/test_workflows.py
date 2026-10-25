@@ -192,7 +192,7 @@ class TrustedPrGates(unittest.TestCase):
         self.assertIn("python base/tools/gate-check/pr_gates.py workflows --repo head "
                       "--required base/gates/required-workflows.txt", TRUSTED)
         self.assertIn("python base/tools/gate-check/pr_gates.py approval --repo head", TRUSTED)
-        self.assertIn("python base/acceptance/validate.py --dir head/acceptance/scenarios", TRUSTED)
+        self.assertIn("python base/acceptance/validate.py --dir head/acceptance/scenarios --min 1", TRUSTED)
 
     def test_checkouts_keep_no_credentials_and_actions_are_pinned(self):
         self.assertEqual(TRUSTED.count("persist-credentials: false"), TRUSTED.count("actions/checkout@"))
@@ -271,12 +271,12 @@ class Ci(unittest.TestCase):
         job = CI[CI.index("\n  gates:"):CI.index("\n  metrics:")]
         step = job[job.index("- name: Approval report"):]
         self.assertNotIn("git -C head fetch", step)
-        self.assertIn("rev-parse --verify", step)
+        self.assertIn("|| diff_hash=0000000000000000", step)
 
     def test_the_approval_report_is_built_by_main_tools_into_the_job_summary_on_branches_only(self):
         job = CI[CI.index("\n  gates:"):CI.index("\n  metrics:")]
         step = job[job.index("- name: Approval report"):]
-        self.assertIn("if: github.ref_type == 'branch' && github.ref != 'refs/heads/main'", step)
+        self.assertIn("if: ${{ !cancelled() && github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}", step)
         self.assertIn("python trusted/tools/metrics/approval_report.py", step)
         self.assertIn("--tools-dir trusted/tools --gates-dir trusted/gates --repo head", step)
         self.assertIn("python trusted/tools/diff-hash/diff_hash.py --repo head compute", step)

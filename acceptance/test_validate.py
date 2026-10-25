@@ -106,6 +106,20 @@ class Validate(Fixture):
 
         self.assertIn("symlink", validate.entry_problem(Link()))
 
+    def test_the_size_limit_is_inclusive(self):
+        path = self.dir / "example-window-opens.toml"
+        filler = b"#" + b"x" * (validate.MAX_BYTES - len(GOOD.encode()) - 2) + b"\n"
+        path.write_bytes(GOOD.encode() + filler)  # bytes: write_text would translate newlines on Windows
+        self.assertEqual(path.stat().st_size, validate.MAX_BYTES)
+        self.assertEqual(validate.validate(self.dir).problems, [])
+        path.write_bytes(GOOD.encode() + filler + b"#")
+        self.assertTrue(any("larger than" in p for p in validate.validate(self.dir).problems))
+
+    def test_a_hidden_toml_file_is_refused(self):
+        self.write("example-window-opens.toml", GOOD)
+        self.write(".hidden.toml", GOOD)
+        self.assertTrue(any(".hidden.toml" in p and "not a scenario" in p for p in validate.validate(self.dir).problems))
+
     def test_a_huge_file_is_refused_unread(self):
         self.write("example-window-opens.toml", GOOD + "#" + "x" * validate.MAX_BYTES)
         self.assertTrue(any("larger than" in p for p in validate.validate(self.dir).problems))
@@ -151,7 +165,29 @@ class Main(Fixture):
         self.write("example-window-opens.toml", GOOD)
         code, lines = self.run_main()
         self.assertEqual(code, 0)
-        self.assertEqual(lines, ["OK 1 scenarios (0 active, 1 pending), 0 violations"])
+        self.assertEqual(lines, ["OK 1 scenarios (0 active (unchecked: nothing runs the check), 1 pending), 0 violations"])
+
+    def test_active_scenarios_are_reported_as_unchecked(self):
+        self.write("example-window-opens.toml", ACTIVE)
+        self.assertEqual(self.run_main()[1], ["OK 1 scenarios (1 active (unchecked: nothing runs the check), 0 pending), 0 violations"])
+
+    def test_fewer_scenarios_than_the_floor_fail(self):
+        self.write("example-window-opens.toml", GOOD)
+        lines = []
+        code = validate.main(["--dir", str(self.dir), "--min", "2"], lines.append)
+        self.assertEqual(code, 1)
+        self.assertTrue(any(line.startswith("VIOLATION") and "fewer than the floor of 2" in line for line in lines))
+
+    def test_the_size_limit_is_64_kib(self):
+        self.assertEqual(65536, validate.MAX_BYTES)
+
+    def test_a_negative_floor_is_refused(self):
+        with self.assertRaises(SystemExit):
+            validate.main(["--dir", str(self.dir), "--min", "-1"], lambda line: None)
+
+    def test_scenarios_at_the_floor_pass(self):
+        self.write("example-window-opens.toml", GOOD)
+        self.assertEqual(validate.main(["--dir", str(self.dir), "--min", "1"], lambda line: None), 0)
 
     def test_failure_lists_violations_then_a_fail_summary(self):
         self.write("example-window-opens.toml", GOOD.replace('"pending"', '"done"'))

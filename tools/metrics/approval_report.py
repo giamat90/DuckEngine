@@ -4,7 +4,10 @@ Runs the gate tools that exist (change classifier, architecture checker, wiki li
 branch and renders one Markdown report: verdict, change class with the files that set
 it, one row per check, the violations. The report states results only; thresholds live in
 gates/ and are enforced by the tools, not here. Sections of the full report that no tool
-produces yet are listed under "Not in this report" rather than left out silently.
+produces yet are listed under "Not in this report" rather than left out silently; checks that
+exist but run in other CI jobs are listed under "Checks that run in other jobs". The verdict
+counts only the rows of this report. Two rows guard the report itself: the diff hash must be
+the hash of the diff, and the checked-out tree must be the head.
 
     approval_report.py --repo . --base origin/main --head origin/<branch> --diff-hash <hash> --out report.md
 
@@ -39,6 +42,15 @@ NOT_IN_REPORT = (
     "Governance: waiver count, Class 2 and 3 changes since the last report.",
     "Top risks of the code: complexity, churn, lowest mutation scores.",
     "Product view and agent audit findings.",
+    "Complexity, duplication and magic-number limits (no tool enforces them yet).",
+)
+OTHER_JOBS = (
+    "Format (rustfmt), Clippy, and Build and tests: the `ci` build jobs.",
+    "Digest check against the gate configuration: the `ci` `gates` job.",
+    "Governance guard and PR title: their own workflows; `trusted-pr-gates` repeats the guard from the base.",
+    "Holdout acceptance suite: `trusted-pr-gates` (shape only; nothing runs a scenario yet).",
+    "Licences, bans and advisories: the `ci` `deny` job.",
+    "Third-party manifest (`THIRD_PARTY.md`): the file itself is not checked by any tool yet.",
 )
 
 
@@ -141,7 +153,7 @@ def _failing(classification, checks):
 def _verdict(classification, checks):
     failing = _failing(classification, checks)
     if not failing:
-        return "all checks pass (only the checks listed below exist so far)"
+        return f"all {len(checks) + 1} checks in this report pass"
     return f"{failing} check{'s' if failing > 1 else ''} failing"
 
 
@@ -166,8 +178,34 @@ def render(head, base, diff_hash, classification, checks):
     for name, summary in checks.items():
         if summary.violations:
             lines += ["", f"## {_md(name)}: violations", ""] + [f"- {_md(violation)}" for violation in summary.violations]
+    lines += ["", "## Checks that run in other jobs", ""] + [f"- {item}" for item in OTHER_JOBS]
     lines += ["", "## Not in this report", ""] + [f"- {item}" for item in NOT_IN_REPORT]
     return "\n".join(lines) + "\n"
+
+
+def _git_commit(repo, revision):
+    done, problem = _run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", revision + "^{commit}"], TIMEOUT_SECONDS)
+    return None if problem or done.returncode != 0 else done.stdout.strip()
+
+
+def check_tree(repo, head):
+    """The tools judge the tree in --repo; it must be the head the report names."""
+    tree, wanted = _git_commit(repo, "HEAD"), _git_commit(repo, head)
+    if tree is None or wanted is None:
+        return Summary(False, "could not resolve HEAD or the head revision", [])
+    if tree != wanted:
+        return Summary(False, f"the tree under check is {tree[:12]}, not the head {wanted[:12]}", [])
+    return Summary(True, f"HEAD is {tree[:12]}", [])
+
+
+def check_diff_hash(command, claimed):
+    done, problem = _run(command, TIMEOUT_SECONDS)
+    if problem:
+        return Summary(False, problem, [])
+    actual = done.stdout.strip()
+    if done.returncode != 0 or actual != claimed:
+        return Summary(False, f"--diff-hash {claimed} is not the hash of the diff ({actual or 'not computed'})", [])
+    return Summary(True, f"{claimed} is the hash of the diff", [])
 
 
 def main(argv):
@@ -188,6 +226,9 @@ def main(argv):
         "Architecture check": run_check([py, str(tools / "arch-check/arch_check.py"), "--config", str(gates / "architecture.toml"), "--repo", repo]),
         "Wiki lint": run_check([py, str(tools / "wiki-lint/wiki_lint.py"), "--config", str(gates / "wiki-lint.toml"),
                                 "--gates", str(gates / "gates.toml"), "--repo", repo]),
+        "Diff hash matches the diff": check_diff_hash([py, str(tools / "diff-hash/diff_hash.py"), "--repo", repo, "compute",
+                                                       "--base", args.base, "--head", args.head], args.diff_hash),
+        "Checked-out tree is the head": check_tree(repo, args.head),
     }
     try:
         args.out.write_text(render(args.head, args.base, args.diff_hash, classification, checks), encoding="utf-8")

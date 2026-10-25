@@ -11,12 +11,12 @@ This folder is Class 3 (see `gates/protected-paths.txt`): it changes only in a t
 - **`pending`** means the outcome is specified but no check backs it yet. It is counted and reported as pending, never as passing.
 - **`active`** means a check exists and must pass. The skeleton does not run checks yet.
 - **Rotation (not built yet).** Part of the suite is meant to live only in CI and to be replaced each phase, so agents cannot overfit to it. Its storage and the way CI reads it are not decided; they need a card and the owner's decision.
-- **Never weaken a scenario** to get green: no deleting, no `active` back to `pending`, no loosened `expect`, without a governance task. The validator checks shape only and does not detect weakening (no baseline or count floor yet); the protection is the protected path plus the owner's reading.
+- **Never weaken a scenario** to get green: no deleting, no `active` back to `pending`, no loosened `expect`, without a governance task. The validator checks shape only and does not detect weakening; it has a count floor (`--min`, set to 1 in `trusted-pr-gates`, raise it as scenarios are added) so deleting everything fails, and the protection is the protected path plus the owner's reading.
 
 ## Validate
 
-    python acceptance/validate.py --dir acceptance/scenarios
+    python acceptance/validate.py --dir acceptance/scenarios [--min N]
 
-Checks the shape only (the unit tests run in `ci`). `scenarios/` may hold only `<id>.toml` files; any other file, a symlink, a nested folder or a file over 64 KiB is a violation. The approval metric report does not read the pending count yet. It is not yet run from a trusted checkout of `main` in the `gates` job, because the tool did not exist on `main` before this card; wiring it there is a follow-up.
+Checks the shape only (the unit tests run in `ci`); active scenarios are reported as unchecked because nothing runs their check. `scenarios/` may hold only `<id>.toml` files; any other file, a symlink, a nested folder or a file over 64 KiB is a violation. The approval metric report does not read the pending count yet. It is not yet run from a trusted checkout of `main` in the `gates` job, because the tool did not exist on `main` before this card; wiring it there is a follow-up.
 
 `scenarios/example-window-opens.toml` is a placeholder that shows the format.

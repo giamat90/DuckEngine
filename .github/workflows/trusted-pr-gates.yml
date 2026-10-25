@@ -54,4 +54,4 @@ jobs:
             --body-file "$RUNNER_TEMP/pr-body.md"
       - name: Acceptance scenarios are well formed
         run: |
-          python base/acceptance/validate.py --dir head/acceptance/scenarios
+          python base/acceptance/validate.py --dir head/acceptance/scenarios --min 1
