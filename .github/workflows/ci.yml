@@ -46,6 +46,7 @@ jobs:
         run: |
           python -m unittest -q test_report
           python -m unittest -q test_g1_assert
+          python -m unittest -q test_approval_report
         working-directory: tools/metrics
       - name: Test the gate-check tool
         run: |
