@@ -178,7 +178,8 @@ class ProtectedPathsFile(unittest.TestCase):
                      ".claude/settings.json", "THIRD_PARTY.md", "tools/gate-check/check_digest.py",
                      "tools/release/release_plan.py", "tools/classify-change/classify_change.py", "tools/arch-check/arch_check.py", "tools/wiki-lint/wiki_lint.py", "gates/wiki-lint.toml", "wiki/decisions/0001-x.md", "docs/adr/0001-x.md",
                      "rust-toolchain.toml", ".github/CODEOWNERS", "tools/templates/review-report.md",
-                     "tools/metrics/report.py", "tools/metrics/approval_report.py"):
+                     "tools/metrics/report.py", "tools/metrics/approval_report.py",
+                     "acceptance/scenarios/x.toml", "acceptance/validate.py"):
             with self.subTest(path=path):
                 self.assertTrue(guard.is_protected(path, listed))
 

@@ -1,0 +1,5 @@
+id = "example-window-opens"
+title = "Example: a window opens and closes"
+status = "pending"
+phase = "1"
+expect = "Starting the sample opens a window; closing it ends the process with exit code 0. This is a placeholder that shows the format: replace it with the owner's real scenarios."

@@ -80,6 +80,9 @@ jobs:
       - name: Test the task and review templates
         run: python -m unittest -q test_templates
         working-directory: tools/templates
+      - name: Test the acceptance scenario validator
+        run: python -m unittest -q test_validate
+        working-directory: acceptance
       - name: Test the token probe
         run: python -m unittest -q test_probe
         working-directory: tools/token-probe

@@ -164,7 +164,8 @@ class Ci(unittest.TestCase):
                                ("tools/classify-change", "test_classify_change"),
                                ("tools/arch-check", "test_arch_check"),
                                ("tools/wiki-lint", "test_wiki_lint"),
-                               ("tools/metrics", "test_approval_report")):
+                               ("tools/metrics", "test_approval_report"),
+                               ("acceptance", "test_validate")):
             with self.subTest(folder=folder):
                 self.assertIn(f"working-directory: {folder}", CI)
                 self.assertIn(module, CI)
