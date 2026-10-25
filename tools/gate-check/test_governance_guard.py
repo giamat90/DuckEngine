@@ -176,7 +176,7 @@ class ProtectedPathsFile(unittest.TestCase):
         for path in ("gates/gates.toml", "gates/protected-paths.txt", ".github/workflows/ci.yml",
                      ".github/workflows/release.yml", "wiki/rules-digest.md", "CLAUDE.md",
                      ".claude/settings.json", "THIRD_PARTY.md", "tools/gate-check/check_digest.py",
-                     "tools/release/release_plan.py", "tools/classify-change/classify_change.py", "tools/arch-check/arch_check.py", "wiki/decisions/0001-x.md", "docs/adr/0001-x.md",
+                     "tools/release/release_plan.py", "tools/classify-change/classify_change.py", "tools/arch-check/arch_check.py", "tools/wiki-lint/wiki_lint.py", "gates/wiki-lint.toml", "wiki/decisions/0001-x.md", "docs/adr/0001-x.md",
                      "rust-toolchain.toml", ".github/CODEOWNERS", "tools/templates/review-report.md",
                      "tools/metrics/report.py"):
             with self.subTest(path=path):

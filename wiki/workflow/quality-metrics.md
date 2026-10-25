@@ -59,7 +59,7 @@ Why mutation score: coverage says code *ran*; mutation testing says tests would 
 | Third-party manifest coverage | script | 100% of vendored deps listed |
 | **Instability I = Ce/(Ca+Ce)** and **Abstractness A** per module (R. Martin) | script from include graph | track; stable modules (low I) should be abstract; flag distance from main sequence D > 0.5 |
 | Cyclic dependencies between modules | script | 0 |
-| **Wiki-lint** (stale terms such as `#include`, `RTTI`, `Q13`, removed tool names) | script, Class 3 file | 0 hits outside history sections |
+| **Wiki-lint** (stale terms from removed or resolved decisions; gate numbers stated in a page must equal `gates/gates.toml`, and a comparator number no rule recognises is refused) | `tools/wiki-lint`, rules in `gates/wiki-lint.toml` (Class 3) | 0 hits outside history |
 | Adapters per port | count | >= 1 (Null) from day one; >= 2 real before port is `stable` |
 | **Swap diff** | when adding backend/platform N+1: files changed in engine and game code (port files excluded) | 0, with at most one counted port revision before `stable` (N-4) |
 | Cross-platform result equality | same replay/golden tests on every platform in the matrix | identical hashes: D1 across thread counts on one platform, D2 across all platforms |

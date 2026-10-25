@@ -162,13 +162,17 @@ class Ci(unittest.TestCase):
         for folder, module in (("tools/templates", "test_templates"), ("tools/token-probe", "test_probe"),
                                ("tools/gate-check", "test_governance_guard"),
                                ("tools/classify-change", "test_classify_change"),
-                               ("tools/arch-check", "test_arch_check")):
+                               ("tools/arch-check", "test_arch_check"),
+                               ("tools/wiki-lint", "test_wiki_lint")):
             with self.subTest(folder=folder):
                 self.assertIn(f"working-directory: {folder}", CI)
                 self.assertIn(module, CI)
 
     def test_ci_runs_the_architecture_check_on_the_real_workspace(self):
         self.assertIn("python tools/arch-check/arch_check.py --config gates/architecture.toml", CI)
+
+    def test_ci_lints_the_real_wiki(self):
+        self.assertIn("python tools/wiki-lint/wiki_lint.py --config gates/wiki-lint.toml --gates gates/gates.toml", CI)
 
     def test_ci_runs_the_release_tool_tests(self):
         self.assertIn("working-directory: tools/release", CI)

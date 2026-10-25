@@ -8,6 +8,7 @@ tools/gate-check/
 tools/diff-hash/
 tools/classify-change/
 tools/arch-check/
+tools/wiki-lint/
 tools/lint-profile/
 tools/release/
 tools/templates/

@@ -1,0 +1,133 @@
+# Wiki-lint rules read by tools/wiki-lint. Protected path (Class 3): a change here
+# is a governance change. Source: wiki/workflow/quality-metrics.md (Wiki-lint row).
+#
+# Two jobs:
+#  1. stale terms: words from removed or resolved decisions must not appear outside history;
+#  2. thresholds live only in gates/gates.toml: a wiki page that states a gate number must
+#     state the same number, and a comparator number that no rule recognises is refused.
+#     Pages should refer to the gate configuration rather than repeat numbers.
+#
+# Every key of gates/gates.toml needs a [[threshold]] rule here (the tool fails otherwise),
+# so a new gate cannot be added without telling the lint how it is written in prose.
+
+[scan]
+# Folders (every .md below) and single files that are checked. reviews/ is deliberately not scanned:
+# review reports quote the numbers and terms they found.
+paths = ["wiki", "docs", "CLAUDE.md", "START-HERE.md"]
+
+[history]
+# Whole pages that record the past: not checked. Decision records, review reports, ADR template.
+pages = ["wiki/decisions/*.md", "wiki/review-v0.10.md", "wiki/review-independent.md", "docs/adr/*.md"]
+
+# Lines that record the past, on the one page that carries them: changelog entries in the README.
+# Struck-through (~~resolved~~) spans are ignored everywhere, the rest of the line is still checked.
+[[history_line]]
+page = "wiki/README.md"
+pattern = '^> - \*\*v\d+(?:\.\d+)*\*\*'
+
+[[stale]]
+pattern = '#include'
+reason = "C++ leftover (the language is Rust)"
+
+[[stale]]
+pattern = '(?i)\bRTTI\b'
+reason = "C++ leftover (the language is Rust)"
+
+[[stale]]
+pattern = '\bQ\s?13\b'
+reason = "resolved question (v0.6); do not point to it"
+
+[[stale]]
+pattern = '(?i)\b(?:CMake|vcpkg|Conan|Catch2|googletest|gtest)\b'
+reason = "C++ toolchain removed by the Rust decision (v0.8)"
+
+# Gate numbers as prose states them. Each rule captures one number.
+[[threshold]]
+key = "coverage.line_min"
+number = '[Ll]ine coverage[^%]*?>= (\d+)%'
+
+[[threshold]]
+key = "coverage.new_line_min"
+number = '(?:new|changed)(?:/changed)? lines >= (\d+)%'
+
+[[threshold]]
+key = "coverage.branch_min"
+number = '[Bb]ranch[^%]*?>= (\d+)%'
+
+[[threshold]]
+key = "mutation.score_min"
+number = '[Mm]utation score[^%]*?>= (\d+)%'
+
+[[threshold]]
+key = "benchmark.warn_percent"
+number = '(?:benchmark|instruction|regression)[^;]*?>\s?(\d+)%\)?\s*\(?warn'
+
+[[threshold]]
+key = "benchmark.warn_percent"
+number = '(?:benchmark|instruction|regression)[^;]*?\bwarn (\d+)%'
+
+[[threshold]]
+key = "benchmark.fail_percent"
+number = '(?:benchmark|instruction|regression)[^;]*?>\s?(\d+)%\)?\s*\(?fail'
+
+[[threshold]]
+key = "benchmark.fail_percent"
+number = '(?:benchmark|instruction|regression)[^;]*?\bfail (\d+)%'
+
+[[threshold]]
+key = "clean_code.function_length_warn"
+number = '(?:[Ff]unction (?:size|length)|too_many_lines)[^;]*?warn > (\d+)'
+
+[[threshold]]
+key = "clean_code.cyclomatic_warn"
+number = '[Cc]yclomatic[^;]*?warn > (\d+)'
+
+[[threshold]]
+key = "clean_code.cyclomatic_fail"
+number = '[Cc]yclomatic[^;]*?fail > (\d+)'
+
+[[threshold]]
+key = "clean_code.cognitive_fail"
+number = '[Cc]ognitive[^;]*?fail > (\d+)'
+
+[[threshold]]
+key = "clean_code.nesting_max"
+number = '[Nn]esting[^;]*?<= (\d+)'
+
+[[threshold]]
+key = "clean_code.parameters_warn"
+number = '[Pp]arameters?[^;]*?warn > (\d+)'
+
+[[threshold]]
+key = "clean_code.parameters_fail"
+number = '[Pp]arameters?[^;]*?fail > (\d+)'
+
+[[threshold]]
+key = "clean_code.duplication_max_percent"
+number = '[Dd]uplication[^;]*?<= (\d+)%'
+
+# Comparator numbers that are not gates (targets, estimates). Exact text on a named page.
+[[known_number]]
+page = "wiki/00-vision-and-requirements.md"
+text = ">= 70%"
+reason = "CPU scaling target, not a gate; N is chosen later"
+
+[[known_number]]
+page = "docs/budgets/reference-machine-and-workloads.md"
+text = "more than 5%"
+reason = "noise tolerance for repeating a benchmark run, not a gate"
+
+[[known_number]]
+page = "docs/gates/phase-0a-toolchain-gates.md"
+text = ">= 70%"
+reason = "phase 0a G1 acceptance criterion for the mutation tool, asserted by tools/metrics/g1_assert.py; not the PR gate"
+
+[[known_number]]
+page = "docs/gates/phase-0a-toolchain-gates.md"
+text = "< 50%"
+reason = "phase 0a G1 acceptance criterion for the weak control, asserted by tools/metrics/g1_assert.py; not the PR gate"
+
+[[known_number]]
+page = "docs/gates/phase-0a-toolchain-gates.md"
+text = "below 70%"
+reason = "phase 0a G1 assertion in tools/metrics/g1_assert.py; not the PR gate"
