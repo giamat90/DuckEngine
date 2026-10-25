@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.16 (2026-10-24).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.17 (2026-10-25).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.17** - New page [workflow/ci-diagrams](workflow/ci-diagrams.md): seven UML views (Mermaid) of how CI, the trusted PR gates and the release work.
 > - **v0.16** - New page [workflow/board-management](workflow/board-management.md): the DuckEngine Trello board is the work queue, agents move cards, create subtasks and propose next tasks on request (owner decision). Rules-digest §11 added.
 > - **v0.15** - New page [architecture/diagrams](architecture/diagrams.md): 11 UML views in Mermaid (component, module dependencies, ports and adapters class diagram, port maturity state machine, frame sequence, render, physics and audio pipelines, composition root, delivery flow, change classes). Two stale wording fixes in overview (file system no longer "async", section numbering).
 > - **v0.13** - Independent review of v0.12: [review-independent](review-independent.md) (fresh session): 18 contradictions (7 fixed here without a decision: A2, A11 ownership, A12, A13, A16, A17, A18; the rest need an owner decision or are notes), 3 high findings (gate tools run from the branch under test, Performance requirement has no numbers, owner review surface inverted in phases 1-2), 8 medium, 3 low, decisions N-1..N-11. Nothing new decided. Versioning note: the self-review file is named `review-v0.10` but was logged as v0.11.
@@ -53,6 +54,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 18 | [review-independent](review-independent.md) | Independent second review (N-1..N-11, accepted) |
 | 19 | [architecture/diagrams](architecture/diagrams.md) | UML diagrams (Mermaid): components, modules, ports and adapters, frame, pipelines, delivery |
 | 20 | [workflow/board-management](workflow/board-management.md) | Trello board: columns, card format, how agents manage cards |
+| 21 | [workflow/ci-diagrams](workflow/ci-diagrams.md) | UML (Mermaid): how the five workflows, the trusted gates and the release work |
 
 ## Confidence legend used in this wiki
 
