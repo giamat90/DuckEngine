@@ -11,6 +11,8 @@ Everything below only makes those four steps safe and repeatable. Feature names 
 
 **Plan constraint (verified 2026-10-24, [github-plan-findings](github-plan-findings.md)):** the repository is private on the GitHub **Free** plan, which has no branch protection, rulesets, auto-merge, merge queue or environments. Wherever this page says auto-merge, ruleset, required check enforcement or protected environment, read the fallback in section 5: Claude Code runs `gh pr merge` itself after the owner's approval and a green `gh run watch <run-id> --exit-status`, and merging is policy, not enforcement.
 
+**Built in phase 0b (verified end to end in card 0b-7):** PR title check (`pr-title`), diff hash and approval record (`tools/diff-hash`, run by the agent, not by a workflow), squash merge by the agent after a green `gh run watch`, release workflow (`release.yml`: draft Release, assets, publish). **Not built:** auto-merge, rulesets, required checks, `governance-guard`, a CI run on `main`, the package smoke test and per-platform tool/sample archives. Control by control, see [pipeline-runbook](../../docs/gates/pipeline-runbook.md).
+
 ## 1. Task lifecycle
 
 ```mermaid
@@ -24,11 +26,12 @@ flowchart TD
   F -- no --> B[push branch agent/task-id; CI G1 runs on the branch]
   B --> C{CI green?}
   C -- no --> W
-  C -- yes --> R[Acceptance package: metric report + product view]
+  C -- yes --> O[CC opens the PR, computes the diff hash]
+  O --> R[Acceptance package: PR link, hash, metric report + product view]
   R --> A{3. PO approves?}
   A -- changes requested --> W
-  A -- approved --> P[4. CC opens PR and arms auto-merge]
-  P --> G[GitHub merges when required checks are green]
+  A -- approved --> P[4. CC records the approval in the PR description, waits for green CI]
+  P --> G[CC squash-merges the PR; Free plan: policy, not enforcement]
   G --> V[Release workflow: version, tag, GitHub Release with SDK artifacts]
   V --> N[CC reports result to PO; baselines updated on main]
 ```
@@ -40,9 +43,9 @@ flowchart TD
 | 3 | **REVIEW PHASE** (R1-R8: self, automated clean-up, independent, QA, architecture, security, performance, product fit) with a fix loop | Claude Code reviewer roles, separate sessions ([clean-code-and-review §4](clean-code-and-review.md)) | review report `reviews/<task-id>.md` with **0 open blocker/major** (max 3 loops, else stop and report to PO) |
 | 4 | **Push** branch `agent/<task-id>`; **CI G1 on the branch** | CC / GitHub Actions | G1 green on this SHA |
 | 5 | **Acceptance package** (includes the review report) | CC | delivered to PO |
-| 6 | **PO approval** (in the session, a plain "approved") | PO | approval recorded against this **diff hash** (content hash of the proposed change against `main`) |
-| 7 | **PR + auto-merge** (`gh pr create`, `gh pr merge --auto --squash`) | CC | PR open, auto-merge armed |
-| 8 | **Merge** when required checks pass | GitHub | on `main` |
+| 6 | **PO approval** (in the session, a plain "approved"); the PR is already open and its full link and hash were given with the package | PO | approval recorded against this **diff hash** (content hash of the proposed change against `main`) |
+| 7 | **Record and merge**: approval section in the PR description, `diff_hash.py check`, `gh run watch --exit-status`, `gh pr merge N --squash --subject "<PR title> (#N)" --body "" --match-head-commit <sha>` | CC | on `main` (Free plan: no auto-merge) |
+| 8 | **Verify the merge** the head that was approved and checked is the one merged | CC | merge commit contains exactly the approved head |
 | 9 | **Release**: version, tag, GitHub Release, SDK artifacts | GitHub Actions | Release exists |
 | 10 | **Report** | CC | PO told the version, the Release link and the metric delta |
 
@@ -82,13 +85,13 @@ Formats are in [architect-review-surface](architect-review-surface.md):
 ## 2. Approval and what happens after it
 
 - **Approval is the PO's explicit "approved" in the session**, tied to the **diff hash** of the package (N-7). Mechanical changes that leave the diff hash unchanged (rebase onto a newer `main` without conflicts, formatting that the formatter already applied) keep the approval. There is no second approval anywhere: no click on a permission prompt, no GitHub review, no CODEOWNERS approval.
-- Claude Code writes the approval into the PR description (task id, diff hash, basis, the PO's words) as an audit trail. A required check verifies that the recorded diff hash equals the PR's diff hash.
+- Claude Code writes the approval into the PR description (task id, diff hash, basis, the PO's words) as an audit trail. `diff_hash.py check` verifies that the recorded diff hash equals the PR's diff hash; the agent runs it before merging (on the Free plan it is not a required check, see [diff-hash-and-approval-check](../../docs/gates/diff-hash-and-approval-check.md)).
 - **After approval everything is automatic**: PR, wait for CI, merge, tag, publish, report.
 - **The one case where the flow can pause:** if, after approval, a failing check forces a change that alters product-visible behaviour or moves metrics outside tolerance (decided by the classifier, not by the author), Claude Code stops and asks again, because the PO approved one result and the change would ship another. Mechanical fixes (formatting, flaky-test retry, conflict-free rebase) continue automatically. This is the only exception.
 
 ## 3. Governance changes
 
-Gate configuration, thresholds, the classifier, contract-suite semantics, CI/release workflows, ADRs and `THIRD_PARTY.md` structure are protected paths. They change only in a task the PO **declares as a governance task** in the card; for that task the protection is unlocked, and the governance diff is part of the acceptance package the PO reads. A `governance-guard` check (run from the trusted base, N-2: gate tools and configuration are read from `main`, never from the PR tree) fails any PR that touches protected paths without that declaration (it is traceable, not unforgeable - an accepted residual risk of this flow).
+Gate configuration, thresholds, the classifier, contract-suite semantics, CI/release workflows, ADRs and `THIRD_PARTY.md` structure are protected paths. They change only in a task the PO **declares as a governance task** in the card; for that task the protection is unlocked, and the governance diff is part of the acceptance package the PO reads. A `governance-guard` check (planned, **not built yet**; to run from the trusted base, N-2: gate tools and configuration are read from `main`, never from the PR tree) would fail any PR that touches protected paths without that declaration (traceable, not unforgeable - an accepted residual risk). Until it exists the declaration is policy only, and the CI steps that run from the PR tree are not a trusted-base control.
 
 ## 4. Credentials and blast radius (recommended, one-time, no per-task steps)
 
@@ -127,9 +130,9 @@ Rulesets, merge queue, auto-merge and environment protection are **not available
 
 ## 6. Release workflow (every merge to `main` -> new version -> SDK artifacts)
 
-1. **Compute the version** with SemVer from the Conventional Commit types already in use: `feat:` minor, `fix:`/`perf:` patch, `!` or `BREAKING CHANGE:` major; all other types (`refactor:`, `docs:`, `test:`, `chore:`) bump patch, because every merge produces a version (owner). Pre-1.0 (`0.y.z`): breaking changes bump `y`. A port or ABI change counts as breaking. Tooling (release-please, semantic-release, or a small in-repo script) is a dev-time T2 choice for phase 0.
-2. **Build the release artifacts (D-1):** the **tagged, versioned source workspace** (consumed by Cargo through a git tag or a private registry; Rust has no stable ABI, so prebuilt engine libraries are not the delivery unit), prebuilt **tools** (shader/asset tools, arch-check, metrics) and **samples** on the CI matrix (Windows and Linux first), and a **C ABI + headers only for plug-ins or non-Rust consumers**.
-3. **Smoke-test the package:** build a minimal sample from the tagged workspace as an external Cargo consumer, run it headless with the replay hash check, and run the prebuilt tools.
+1. **Compute the version** with SemVer from the Conventional Commit types already in use: `feat:` minor, `fix:`/`perf:` patch, `!` or `BREAKING CHANGE:` major; all other types (`refactor:`, `docs:`, `test:`, `chore:`) bump patch, because every merge produces a version (owner). Pre-1.0 (`0.y.z`, owner decision of 2026-10-25, implemented in `tools/release/next_version.py`): `feat` bumps patch and breaking changes bump `y`. Queued merges can share one release (see [release-workflow](../../docs/gates/release-workflow.md)). A port or ABI change counts as breaking. Tooling (release-please, semantic-release, or a small in-repo script) is a dev-time T2 choice for phase 0.
+2. **Build the release artifacts (D-1; phase 0b builds only a source archive plus placeholder artifact, report and baselines):** the **tagged, versioned source workspace** (consumed by Cargo through a git tag or a private registry; Rust has no stable ABI, so prebuilt engine libraries are not the delivery unit), prebuilt **tools** (shader/asset tools, arch-check, metrics) and **samples** on the CI matrix (Windows and Linux first), and a **C ABI + headers only for plug-ins or non-Rust consumers**.
+3. **Smoke-test the package (not built yet):** build a minimal sample from the tagged workspace as an external Cargo consumer, run it headless with the replay hash check, and run the prebuilt tools.
 4. **Tag** `vX.Y.Z` and create the **GitHub Release** (private repo): generated changelog, tool and sample archives per platform, source archive, checksums, the metric report, and `THIRD_PARTY.md`.
 5. **Deploy** = these Release assets are the deployment (Q22, owner: deploy means versioned SDK artifacts). No server involved.
 6. **Update baselines** (benchmarks, metrics) **outside git** (N-7): stored as workflow artifacts/cache or in a dedicated data branch written only by the release job (ruleset bypass for that job); the workflow never commits to `main`, so rulesets stay strict and no extra release is triggered. **Every merge still produces a version, docs-only merges included (owner decision); a docs-only merge bumps patch.**

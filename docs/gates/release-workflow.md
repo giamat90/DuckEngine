@@ -5,7 +5,7 @@ Governance task (owner-declared). Files: `.github/workflows/release.yml`,
 
 ## What a merge does
 
-1. PRs are **squash-merged**: `gh pr merge N --squash --subject "<PR title> (#N)" --body ""`.
+1. PRs are **squash-merged**: `gh pr merge N --squash --subject "<PR title> (#N)" --body "" --match-head-commit <sha>`.
    The PR title is the Conventional Commit message (`type(scope)!: summary`).
    Always pass `--body ""`: the version tool scans the whole message for a `BREAKING CHANGE:` footer,
    so a PR description or an intermediate commit message must not leak into it. A deliberate
