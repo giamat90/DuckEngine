@@ -53,6 +53,9 @@ jobs:
       - name: Test the clean-code lint profile
         run: python -m unittest -q test_lint_profile
         working-directory: tools/lint-profile
+      - name: Test the diff-hash tool
+        run: python -m unittest -q test_diff_hash
+        working-directory: tools/diff-hash
       - name: Digest matches the gate configuration
         run: python tools/gate-check/check_digest.py --digest wiki/rules-digest.md --config gates/gates.toml --claude-md CLAUDE.md
 
