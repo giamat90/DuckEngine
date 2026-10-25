@@ -9,7 +9,7 @@
 
 Everything below only makes those four steps safe and repeatable. Feature names and plan-dependent limits marked **[K]** come from background knowledge; verify during phase 0.
 
-**Plan constraint (verified 2026-10-24, [github-plan-findings](github-plan-findings.md)):** the repository is private on the GitHub **Free** plan, which has no branch protection, rulesets, auto-merge, merge queue or environments. Wherever this page says auto-merge, ruleset, required check enforcement or protected environment, read the fallback in section 5: Claude Code runs `gh pr merge` itself after the owner's approval and a green `gh pr checks --watch`, and merging is policy, not enforcement.
+**Plan constraint (verified 2026-10-24, [github-plan-findings](github-plan-findings.md)):** the repository is private on the GitHub **Free** plan, which has no branch protection, rulesets, auto-merge, merge queue or environments. Wherever this page says auto-merge, ruleset, required check enforcement or protected environment, read the fallback in section 5: Claude Code runs `gh pr merge` itself after the owner's approval and a green `gh run watch <run-id> --exit-status`, and merging is policy, not enforcement.
 
 ## 1. Task lifecycle
 
@@ -96,7 +96,7 @@ No approvals are involved, so this is purely about limiting damage if a session 
 
 | Setup | Effect |
 |---|---|
-| **Fine-grained token for Claude Code, scoped to this repository only**: contents (read/write on branches), pull requests (read/write), actions (read). **No** administration, no workflow-file editing, no secrets/environments access **[K - verify scope names]** | agent can push `agent/*`, open PRs, arm auto-merge, read CI logs; cannot change rulesets, edit CI workflows, or read secrets |
+| **Fine-grained token for Claude Code, scoped to this repository only**: contents (read/write on branches), pull requests (read/write), actions (read). **No** administration, no workflow-file editing, no secrets/environments access (scope names verified 2026-10-25, see [agent-token-setup](../../docs/gates/agent-token-setup.md)) | agent can push `agent/*`, open PRs, arm auto-merge, read CI logs; cannot change rulesets, edit CI workflows, or read secrets |
 | Rulesets on `main` that also bind admins: PR required, required status checks, no direct push | nobody, including the PO's own token, can push straight to `main` by accident |
 | Release/publish credentials exist only as GitHub Actions secrets or OIDC, in a protected environment | the agent never holds them |
 
@@ -120,7 +120,7 @@ Rulesets, merge queue, auto-merge and environment protection are **not available
 | Need | Fallback on Free |
 |---|---|
 | Nobody pushes to `main` | policy only: the agent opens a PR from a branch and never pushes to `main` after the bootstrap commit; git history and PR list are the audit trail |
-| Wait for green CI, then merge | the session stays open: `gh pr checks --watch`, then `gh pr merge` (no `--auto`); a failing or missing check means no merge |
+| Wait for green CI, then merge | the session stays open: `gh run watch <run-id> --exit-status` (run id from `gh run list --commit <sha>`; `gh pr checks` does not work with the scoped token), then `gh pr merge` (no `--auto`); a failing or missing check means no merge |
 | Governance guard as a required check | still runs as a check; it cannot be made required, so the agent treats a red `governance-guard` as a stop |
 | Protected environment `release` | repository-level Actions secrets or OIDC; the release workflow is the only consumer and is a Class 3 file |
 | Rulesets that bind admins | none; the fine-grained token (section 4) limits what the agent can do |
