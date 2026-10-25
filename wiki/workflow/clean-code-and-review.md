@@ -8,17 +8,17 @@ Sources for the practices below (Robert C. Martin's *Clean Code*, Kent Beck's TD
 
 ## 1. What "clean" means in DuckEngine (measurable rules only)
 
-Every rule below is enforced by a tool in CI or by a scan; thresholds live in [quality-metrics](quality-metrics.md). Failing one fails the gate.
+Every rule below is enforced by a tool in CI or by a scan, except where the row says it is not enforced yet; thresholds live in [quality-metrics](quality-metrics.md). Failing one fails the gate.
 
 | Area | Rule | Enforced by |
 |---|---|---|
 | **Function size** | warn > 60 lines | Clippy `too_many_lines`, rust-code-analysis |
 | **Complexity** | cyclomatic warn > 10, fail > 15; cognitive fail > 20 | Clippy `cognitive_complexity`, rust-code-analysis |
-| **Nesting depth** | <= 3 | Clippy / rust-code-analysis |
-| **Parameters** | warn > 3, fail > 5 | Clippy `too_many_arguments` |
+| **Nesting depth** | <= 3 (Clippy counts the function body as level 1: two nested blocks inside a function; see [clean-code-lint-profile](../../docs/gates/clean-code-lint-profile.md)) | Clippy `excessive_nesting` / rust-code-analysis |
+| **Parameters** | warn > 3, fail > 5 | Clippy `too_many_arguments` (fail tier 5; the warn tier needs rust-code-analysis) |
 | **Duplication** | <= 3% | duplication detector |
 | **Dead code** | none | `dead_code` lint, `-D warnings` |
-| **Magic numbers** | none new | Clippy lint |
+| **Magic numbers** | none new | not enforced yet: Clippy has no such lint ([clean-code-lint-profile](../../docs/gates/clean-code-lint-profile.md)) |
 | **Commented-out code, TODO without issue link** | none | scan |
 | **Errors** | explicit `Result` returns; no `unwrap`/`expect` in engine code; panics abort; no silent failures | Clippy `unwrap_used`/`expect_used`, tests on error paths |
 | **`unsafe`** | only in allowlisted modules, every block has a `// SAFETY:` comment | scan, Miri |

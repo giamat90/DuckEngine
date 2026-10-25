@@ -69,7 +69,7 @@ enforced by any tool yet, so a PR can break them while CI stays green:
 | Coverage, mutation-on-diff and benchmark thresholds (digest section 7) | Reported only. The G1 assertion is the one enforced number. |
 | Branch coverage >= 80% | Cannot be measured on the pinned stable toolchain (needs nightly). |
 | PR benchmark gate on instruction counts | The bench harness measures wall-clock time; an instruction-count tool comes with the PR gate. |
-| Clean-code limits (function length, cyclomatic, cognitive, nesting, parameters, duplication, magic numbers, dead code) | Only the numbers are in `gates/gates.toml`; Clippy's size and complexity lints are not configured. |
+| Clean-code limits (function length, cyclomatic, cognitive, nesting, parameters, duplication, magic numbers, dead code) | Numbers in `gates/gates.toml`; since card 0b-3 Clippy enforces function length, cognitive complexity, parameters (fail tier) and nesting, see [clean-code-lint-profile](clean-code-lint-profile.md) for what is still unenforced. |
 | `unsafe` allowlist and per-module budget | No mechanism. `skeleton-unsafe` is a per-crate `deny` plus one module-level `allow`; `undocumented_unsafe_blocks` is set only in that crate, and nothing stops another crate from defining its own `[lints]`. |
 | Miri, zero-allocation counting allocator, `disallowed-methods`, banned imports, 0 skipped tests | Not configured. |
 | Gate tools run from a trusted checkout of `main` | Not yet. CI runs `check_digest.py` and `gates.toml` from the PR tree, so one PR can change digest, config and script together. |
