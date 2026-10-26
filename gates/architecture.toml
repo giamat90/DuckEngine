@@ -59,6 +59,13 @@ banned_crates = ["windows-sys", "windows", "winapi", "libc", "nix", "glfw", "sdl
 # may not contain. `crates` limits a rule to those crates; `allow_in` exempts crates; both
 # accept globs. Every `use` tree is also flattened, so `use std::{fs, io};` is matched as
 # `use std::fs;` and `use std::io;`, and `use std::fs as f;` also as `use std::fs;`.
+# `allow_in_tests = true` (default false, card 1-4) also exempts test-only code: items under
+# `#[cfg(test)]`, files whose own inner attribute is `#![cfg(test)]` (not one inside a module or macro)
+# and files in the crate's `tests/` folder (unless a non-test cargo target builds that file). The
+# exemption is by position, so production code on the same line as a test item is still checked. Only the
+# exact form `cfg(test)` counts; `cfg(not(test))`, `cfg(any(test, ..))` and an out-of-line
+# `#[cfg(test)] mod x;` file are not exempt (they stay findings). The exempt part of an item ends at its
+# closing brace or at the first `;` or `,` outside brackets (a generic list `<A, B>` cuts it short: safe side).
 [[banned_use]]
 pattern = '\bstd\s*::\s*(?:fs|net|env|process|os|io|ffi)\b'
 reason = "OS-facing std module; reach it through a port or inside an adapter or tool"
@@ -71,8 +78,9 @@ allow_in = ["platform"]
 
 [[banned_use]]
 pattern = '\bthread\s*::\s*(?:spawn|scope|Builder|\*)|\bstd\s*::\s*thread\s*::\s*\*'
-reason = "direct thread creation; only the job system and platform may spawn threads"
+reason = "direct thread creation; only the job system and platform may spawn threads (test-only code may)"
 allow_in = ["jobs", "platform"]
+allow_in_tests = true
 
 [[banned_use]]
 pattern = '\b(?:Instant|SystemTime)\b'

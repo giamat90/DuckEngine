@@ -16,7 +16,9 @@ file pulled in by a macro other than `include!` escapes it (`#[path]`, also insi
 are refused outright in layers 0-2, as are extern blocks, `#[link]`, and `arch`/`asm!` outside
 `base`; a target whose source file is outside the crate folder is the finding `src-outside`).
 A `path =` key of any other attribute, such as `#[cfg(path = "x")]`, is refused too, and `]` inside
-an attribute ends the attribute match early. Dev-dependencies are exempt from the layer,
+an attribute ends the attribute match early. A rule with `allow_in_tests = true` (card 1-4) skips `#[cfg(test)]`
+items, a `#![cfg(test)]` that is an inner attribute of the file itself (not one inside a module or a macro body) and the crate's `tests/` folder (except a file that a non-test cargo target builds, e.g. a `[lib] path`); the exemption is by character position, so production code on the same line as a test item is still checked; the match is textual and exact (`cfg(not(test))` and
+`cfg(any(test, ..))` are not tests; an out-of-line `#[cfg(test)] mod x;` file is still scanned; the exempt part ends at the item's closing brace or at the first `;` or `,` outside brackets, so a `#[cfg(test)]` item with a comma in generics such as `fn f<A, B>()` is cut short, which is the safe direction). Dev-dependencies are exempt from the layer,
 allowlist and cycle rules (a test may use a null adapter) but not from the
 banned-crate list and the forbidden edges. Features and target-specific
 dependencies are treated as normal ones.
@@ -60,6 +62,7 @@ class UseRule:
     reason: str
     crates: tuple
     allow_in: tuple
+    allow_in_tests: bool = False
 
 
 @dataclass(frozen=True)
@@ -88,7 +91,10 @@ def _use_rule(entry):
         pattern = re.compile(entry["pattern"])
     except re.error as error:
         raise ValueError(f"bad regex '{entry['pattern']}': {error}") from error
-    return UseRule(pattern, entry["reason"], tuple(entry.get("crates", ())), tuple(entry.get("allow_in", ())))
+    in_tests = entry.get("allow_in_tests", False)
+    if not isinstance(in_tests, bool):
+        raise ValueError("allow_in_tests must be true or false")
+    return UseRule(pattern, entry["reason"], tuple(entry.get("crates", ())), tuple(entry.get("allow_in", ())), in_tests)
 
 
 def load_config(text):
@@ -297,24 +303,65 @@ _USE = re.compile(r"(?<![\w])use\s+([^;]*);")
 
 
 def _virtual_uses(text):
-    """(line, 'use path;') for every path of every use statement, so grouped imports are seen as single paths."""
-    return [(text.count("\n", 0, match.start()) + 1, f"use {path};") for match in _USE.finditer(text) for path in flatten_use(match.group(1))]
+    """(position, 'use path;') for every path of every use statement, so grouped imports are seen as single paths."""
+    return [(match.start(), f"use {path};") for match in _USE.finditer(text) for path in flatten_use(match.group(1))]
 
 
-def _rule_lines(rule, text, virtual):
-    lines = {text.count("\n", 0, match.start()) + 1 for match in rule.pattern.finditer(text)}
-    return lines | {line for line, use in virtual if rule.pattern.search(use)}
+def _rule_hits(rule, text, virtual):
+    """Character positions where the rule matches, plain or as a flattened use path."""
+    return {match.start() for match in rule.pattern.finditer(text)} | {pos for pos, use in virtual if rule.pattern.search(use)}
+
+
+_CFG_TEST = re.compile(r"#\s*(!?)\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]")
+_INNER_ATTRIBUTES = re.compile(r"(?:\s|#\s*!\s*\[[^\]]*\])*")
+
+
+def _item_end(text, pos):
+    """The end of what a `#[cfg(test)]` at pos applies to: the item's closing brace, the first `;` or `,` outside
+    brackets, or the bracket that closes the enclosing block (a field, argument or match arm). Never later."""
+    depth = 0
+    for index in range(pos, len(text)):
+        char = text[index]
+        depth += (char in "([{") - (char in ")]}")
+        if depth < 0 or (depth == 0 and char in ",;}"):
+            return index
+    return len(text)
+
+
+def _test_spans(text):
+    """(start, end) character spans of test-only code: `#[cfg(test)]` items, or the whole file for a `#![cfg(test)]`
+    that is an inner attribute of the file itself (only whitespace and other inner attributes before it). Any other
+    cfg form, and an inner attribute inside a module or a macro body, is not a test."""
+    spans = []
+    for match in _CFG_TEST.finditer(text):
+        if not match.group(1):
+            spans.append((match.start(), _item_end(text, match.end()) + 1))
+        elif _INNER_ATTRIBUTES.fullmatch(text[:match.start()]):
+            return [(0, len(text))]
+    return spans
+
+
+def _built_sources(package):
+    """Resolved source files of every cargo target that is not a test target: they are production code wherever they sit."""
+    return {Path(os.path.normpath(target["src_path"])).resolve() for target in package.get("targets", []) if target.get("kind") != ["test"]}
+
+
+def _is_test_file(path, root, built):
+    return path.relative_to(root).parts[0] == "tests" and path.resolve() not in built
 
 
 def _use_findings(package, rules):
     crate = package["name"]
     active = [rule for rule in rules if (not rule.crates or _matches(crate, rule.crates)) and not _matches(crate, rule.allow_in)]
-    found = set()
+    found, root, built = set(), _crate_folder(package), _built_sources(package)
     for path in _source_files(package) if active else []:
         text = strip_noncode(path.read_text(encoding="utf-8", errors="replace"))
-        virtual = _virtual_uses(text)
+        virtual, spans, test_file = _virtual_uses(text), _test_spans(text), _is_test_file(path, root, built)
         for rule in active:
-            found |= {Finding("banned-use", f"{crate} {path.name}:{line}: {rule.reason}") for line in _rule_lines(rule, text, virtual)}
+            hits = _rule_hits(rule, text, virtual)
+            if rule.allow_in_tests:
+                hits = set() if test_file else {pos for pos in hits if not any(start <= pos < end for start, end in spans)}
+            found |= {Finding("banned-use", f"{crate} {path.name}:{text.count(chr(10), 0, pos) + 1}: {rule.reason}") for pos in hits}
     return sorted(found, key=lambda finding: finding.message)
 
 

@@ -181,6 +181,150 @@ class BannedUse(unittest.TestCase):
             ws.check()
 
 
+THREAD_CONFIG = CONFIG + r"""
+[[banned_use]]
+pattern = '\bthread::spawn\b'
+reason = "direct thread creation"
+allow_in = ["jobs"]
+allow_in_tests = true
+"""
+
+SPAWN = "std::thread::spawn(|| {});"
+
+
+class AllowInTests(unittest.TestCase):
+    """Card 1-4: a rule marked allow_in_tests does not apply to test-only code."""
+
+    def found(self, text, files=None, crate="base"):
+        ws = Workspace(self, {crate: ([], files if files is not None else {"lib.rs": text})})
+        return rules(ws.check(THREAD_CONFIG))
+
+    def test_a_cfg_test_module_may_spawn_threads(self):
+        self.assertEqual([], self.found("#[cfg(test)]\nmod tests {\n    fn t() { " + SPAWN + " }\n}\n"))
+
+    def test_production_code_next_to_a_test_module_still_fails(self):
+        text = "fn run() { " + SPAWN + " }\n#[cfg(test)]\nmod tests {\n    fn t() { " + SPAWN + " }\n}\n"
+        self.assertEqual(["banned-use"], self.found(text))
+
+    def test_code_after_the_test_module_still_fails(self):
+        text = "#[cfg(test)]\nmod tests { fn t() { " + SPAWN + " } }\nfn run() { " + SPAWN + " }\n"
+        self.assertEqual(["banned-use"], self.found(text))
+
+    def test_cfg_not_test_is_not_a_test(self):
+        self.assertEqual(["banned-use"], self.found("#[cfg(not(test))]\nfn run() { " + SPAWN + " }\n"))
+
+    def test_other_cfg_conditions_are_not_a_test(self):
+        for cond in ("any(test, unix)", 'feature = "test"', "all(test, unix)"):
+            self.assertEqual(["banned-use"], self.found("#[cfg(" + cond + ")]\nfn run() { " + SPAWN + " }\n"), cond)
+
+    def test_a_cfg_test_function_and_a_cfg_test_use_are_test_code(self):
+        self.assertEqual([], self.found("#[cfg(test)]\n#[allow(dead_code)]\nfn helper() { " + SPAWN + " }\n"))
+        self.assertEqual([], self.found("#[cfg(test)]\nuse std::thread::spawn;\nfn run() {}\n"), "a use item ends at the semicolon")
+
+    def test_nested_braces_in_the_test_module_do_not_end_it_early(self):
+        text = "#[cfg(test)]\nmod tests {\n    fn a() { if true { } }\n    fn b() { " + SPAWN + " }\n}\n"
+        self.assertEqual([], self.found(text))
+
+    def test_braces_in_strings_and_comments_do_not_confuse_the_extent(self):
+        text = '#[cfg(test)]\nmod tests { fn a() { let s = "}"; /* } */ }\n    fn b() { ' + SPAWN + " } }\nfn run() { " + SPAWN + " }\n"
+        self.assertEqual(["banned-use"], self.found(text))
+
+    def test_an_inner_cfg_test_attribute_makes_the_whole_file_test_code(self):
+        files = {"lib.rs": "mod t;", "t.rs": "#![cfg(test)]\nfn t() { " + SPAWN + " }\n"}
+        self.assertEqual([], self.found("", files=files))
+
+    def test_files_in_the_tests_folder_are_test_code(self):
+        ws = Workspace(self, {"base": ([], {"lib.rs": ""})})
+        (ws.dir / "base" / "tests").mkdir()
+        (ws.dir / "base" / "tests" / "threads.rs").write_text("fn t() { " + SPAWN + " }", encoding="utf-8")
+        self.assertEqual([], rules(ws.check(THREAD_CONFIG)))
+
+    def test_a_folder_called_tests_inside_src_is_not_exempt(self):
+        ws = Workspace(self, {"base": ([], {"lib.rs": ""})})
+        (ws.dir / "base" / "src" / "tests").mkdir()
+        (ws.dir / "base" / "src" / "tests" / "mod.rs").write_text("fn t() { " + SPAWN + " }", encoding="utf-8")
+        self.assertEqual(["banned-use"], rules(ws.check(THREAD_CONFIG)))
+
+    def test_an_out_of_line_test_module_is_not_exempt(self):
+        files = {"lib.rs": "#[cfg(test)]\nmod tests;\n", "tests.rs": "fn t() { " + SPAWN + " }\n"}
+        self.assertEqual(["banned-use"], self.found("", files=files))
+
+    def test_a_cfg_test_field_does_not_exempt_the_code_after_its_struct(self):
+        text = "struct S {\n    #[cfg(test)]\n    x: u8,\n    y: u8,\n}\nfn run() { " + SPAWN + " }\n"
+        self.assertEqual(["banned-use"], self.found(text))
+
+    def test_a_cfg_test_match_arm_or_argument_does_not_exempt_the_arms_after_it(self):
+        text = "fn run(v: u8) {\n    match v {\n        #[cfg(test)]\n        0 => 1,\n        _ => " + SPAWN[:-1] + ",\n    }\n}\n"
+        self.assertEqual(["banned-use"], self.found(text))
+
+    def test_a_cfg_test_statement_ends_at_its_semicolon(self):
+        text = "fn run() {\n    #[cfg(test)]\n    let _t = 1;\n    " + SPAWN + "\n}\n"
+        self.assertEqual(["banned-use"], self.found(text))
+
+    def test_commas_inside_parentheses_do_not_end_a_cfg_test_function(self):
+        self.assertEqual([], self.found("#[cfg(test)]\nfn t(a: u8, b: u8) { " + SPAWN + " }\n"))
+
+    def test_an_inner_attribute_inside_a_macro_body_does_not_exempt_the_file(self):
+        text = "macro_rules! u { () => { #![cfg(test)] }; }\npub fn r() { " + SPAWN + " }\n"
+        self.assertEqual(["banned-use"], self.found(text))
+
+    def test_an_inner_attribute_inside_an_inline_module_does_not_exempt_the_file(self):
+        text = "mod m {\n    #![cfg(test)]\n}\npub fn r() { " + SPAWN + " }\n"
+        self.assertEqual(["banned-use"], self.found(text))
+
+    def test_an_inner_attribute_after_other_inner_attributes_still_counts(self):
+        text = "#![allow(dead_code)]\n#![cfg(test)]\nfn t() { " + SPAWN + " }\n"
+        self.assertEqual([], self.found(text))
+
+    def test_an_inner_attribute_after_an_item_does_not_count(self):
+        text = "fn first() {}\n#![cfg(test)]\nfn r() { " + SPAWN + " }\n"
+        self.assertEqual(["banned-use"], self.found(text))
+
+    def test_production_code_on_the_same_line_as_a_test_item_still_fails(self):
+        for text in ("#[cfg(test)] fn t() {} fn r() { " + SPAWN + " }\n",
+                     "#[cfg(test)]\nmod t {\n}  pub fn r() { " + SPAWN + " }\n",
+                     "pub fn r() { #[cfg(test)] {} " + SPAWN + " }\n",
+                     "#[cfg(test)] use std::thread; pub fn r() { " + SPAWN + " }\n"):
+            self.assertEqual(["banned-use"], self.found(text), text)
+
+    def test_a_test_item_on_a_line_of_its_own_with_a_use_in_it_is_still_exempt(self):
+        self.assertEqual([], self.found("#[cfg(test)] mod t { use std::thread::spawn; fn f() { " + SPAWN + " } }\n"))
+
+    def test_a_file_in_tests_that_a_non_test_target_builds_is_not_exempt(self):
+        ws = Workspace(self, {"base": ([], {"lib.rs": ""})})
+        real = ws.dir / "base" / "tests" / "real.rs"
+        real.parent.mkdir()
+        real.write_text("pub fn r() { " + SPAWN + " }", encoding="utf-8")
+        ws.packages[0]["targets"] = [{"kind": ["lib"], "src_path": str(real)}]
+        self.assertEqual(["banned-use"], rules(ws.check(THREAD_CONFIG)))
+
+    def test_a_test_target_in_tests_stays_exempt(self):
+        ws = Workspace(self, {"base": ([], {"lib.rs": ""})})
+        case = ws.dir / "base" / "tests" / "case.rs"
+        case.parent.mkdir()
+        case.write_text("fn t() { " + SPAWN + " }", encoding="utf-8")
+        ws.packages[0]["targets"] = [{"kind": ["test"], "src_path": str(case)}]
+        self.assertEqual([], rules(ws.check(THREAD_CONFIG)))
+
+    def test_other_rules_are_not_relaxed_in_test_code(self):
+        text = "#[cfg(test)]\nmod tests { fn t() { use std::fs; } }\n"
+        self.assertEqual(["banned-use"], self.found(text))
+
+    def test_a_rule_without_the_key_is_not_relaxed(self):
+        config = THREAD_CONFIG.replace("allow_in_tests = true", "")
+        ws = Workspace(self, {"base": ([], {"lib.rs": "#[cfg(test)]\nmod tests { fn t() { " + SPAWN + " } }\n"})})
+        self.assertEqual(["banned-use"], rules(ws.check(config)))
+
+    def test_allow_in_tests_must_be_a_boolean(self):
+        with self.assertRaises(ValueError):
+            ac.load_config(CONFIG + '\n[[banned_use]]\npattern = "x"\nreason = "x"\nallow_in_tests = "yes"\n')
+
+    def test_the_line_in_the_message_is_the_production_line(self):
+        text = "#[cfg(test)]\nmod tests { fn t() { " + SPAWN + " } }\n\nfn run() { " + SPAWN + " }\n"
+        ws = Workspace(self, {"base": ([], {"lib.rs": text})})
+        self.assertIn("lib.rs:4", ws.check(THREAD_CONFIG)[0].message)
+
+
 class Config(unittest.TestCase):
     def test_a_layer_outside_0_to_4_is_refused(self):
         with self.assertRaises(ValueError):
