@@ -70,9 +70,10 @@ audio thread (callback driven, decoupled)     --> mixes from a lock-free command
 | `arena` | `Arena`, `ArenaBox<'a, T>`, `ArenaVec<'a, T>` | Fixed-capacity bump arena: one heap allocation in `with_capacity` (or `try_with_capacity`, which returns `None` instead of aborting), one free in `Drop`, and every allocation in between is a pointer bump with no allocator call (integration test `arena_allocations`). `alloc`, `alloc_slice_with` and `vec_with_capacity` return `Option`; `ArenaVec::push` hands the value back as `Err(value)` when full. `reset(&mut self)` makes the block reusable and the borrow checker proves no reference survives (compile_fail doc test). Types with drop glue are rejected at compile time (`const` assertion on `needs_drop`; compile_fail doc test). The block is 64-byte aligned and padding is computed from the offset with checked arithmetic, so what fits and what `used()` reports never depend on where the allocator put the block (determinism); types aligned above 64 are rejected at compile time, and huge lengths return `None` instead of overflowing. Zero-sized values and empty slices take no space. The closure of `alloc_slice_with` may allocate from the same arena (space is reserved first). Not `Sync` (a `Cell` offset) and not `Send` (raw block; handing arenas to workers is for the job-system card). |
 | `pool` | `Handle<T>`, `Pool<T>` | Generational handles and a fixed-capacity pool, safe code only. `Handle<T>` is a slot index plus a generation (two `u32`, 8 bytes), `Copy`, `Eq`, `Hash` for every `T`, and typed: a `Handle<A>` does not compile where a `Pool<B>` is expected (`compile_fail` doc test). `Pool::with_capacity` makes two heap allocations (slots and free list); `insert`, `remove`, `get`, `get_mut` and `contains` make none (integration test `pool_allocations`). `insert` hands the value back as `Err(value)` when full. `remove` bumps the slot generation, so every older handle to the slot is stale and answers `None` (a slot whose generation is already `u32::MAX` is retired instead). Free slots are reused last freed first and new slots are issued in index order, so the handles a sequence of operations produces are the same on every run. |
 | `simd` | `scalar::F32x4`, `sse2::F32x4`, `F32x4` (the build target's backend) | Four `f32` lanes with `splat`, `from_array`, `to_array`, `+ - * /`, unary `-`, `sqrt`, `min`, `max`, `abs` and `horizontal_sum`. `scalar` is the reference and is always built; `sse2` (x86-64) gives the same bits for every operation, checked by property tests over 20,000 random and special-value cases per operation (D2). Each operation is one IEEE-754 operation per lane (or a sign-bit mask, or the fixed add sequence of `horizontal_sum`): no FMA, no `rcpps` or `rsqrtps`. `min` and `max` are defined as `a < b ? a : b` and `a > b ? a : b` (the x86 rule: `other` when equal or unordered), `horizontal_sum` as `(l0 + l1) + (l2 + l3)`. NaN payloads are unspecified; simulation code must not produce NaN. 13 `unsafe` blocks in `sse2`, all single intrinsic calls with a `// SAFETY:` comment. |
+| `math` | `Scalar`, `Vec2`, `Vec3`, `Vec4` | `Scalar` is `f32` (one alias, [conventions](conventions.md)). The vectors are `repr(C)` plain data with fields `x`, `y`, `z`, `w`, alignment of one scalar. Constants `ZERO`, `ONE` and the axes, `splat`, `from_array`, `to_array`, operators `+ - neg`, scalar `*` and `/`, `dot`, `length_squared`, `length`, `distance`, `normalized` (an `Option`), `min`, `max`, `abs`, `lerp`; `Vec2::perp` and `cross`, `Vec3::cross`, `extend` and `truncate`. The order of every operation is fixed and nothing is fused, so results repeat bit for bit. Safe code only. Matrices and the quaternion follow in cards 1-19 and 1-20. |
 | `assert` | `duck_assert!`, `duck_debug_assert!` | Always-on and debug-only assertion. A failure panics with the condition or message; under `panic = "abort"` that ends the process, so nothing unwinds across a module boundary. |
 
-UML view of crate `base` as implemented (cards 1-1 to 1-3, 1-9 and 1-11). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
+UML view of crate `base` as implemented (cards 1-1 to 1-3, 1-9, 1-11 and 1-18). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
 
 ```mermaid
 classDiagram
@@ -198,6 +199,36 @@ classDiagram
     }
   }
 
+  namespace math {
+    class Scalar {
+      <<alias of f32>>
+    }
+    class Vec2 {
+      <<repr C>>
+      +x y Scalar
+      +add sub neg mul div
+      +dot length normalized
+      +min max abs lerp
+      +perp() Vec2
+      +cross(Vec2) Scalar
+      +extend(z) Vec3
+    }
+    class Vec3 {
+      <<repr C>>
+      +x y z Scalar
+      +same operations
+      +cross(Vec3) Vec3
+      +extend(w) Vec4
+      +truncate() Vec2
+    }
+    class Vec4 {
+      <<repr C>>
+      +x y z w Scalar
+      +same operations
+      +truncate() Vec3
+    }
+  }
+
   class assert {
     <<macros>>
     +duck_assert()
@@ -223,13 +254,20 @@ classDiagram
   Sse2F32x4 ..> ScalarF32x4 : must match bit for bit
   F32x4 ..> Sse2F32x4 : x86-64 with sse2
   F32x4 ..> ScalarF32x4 : any other target
+  Vec2 --> Scalar : components
+  Vec3 --> Scalar : components
+  Vec4 --> Scalar : components
+  Vec2 ..> Vec3 : extend
+  Vec3 ..> Vec4 : extend
+  Vec3 ..> Vec2 : truncate
+  Vec4 ..> Vec3 : truncate
 ```
 
 Reading the diagram: nothing in `base` knows the OS; the outward seams are `LogSink` (supplied by the caller) and `GlobalAlloc` (std). `assert` is standalone. `Pool` owns its slots and a free list of slot indices (not drawn); a `Handle` holds no reference to the pool. `ArenaBox` and `ArenaVec` borrow the arena, so `reset(&mut self)` cannot run while one is alive.
 
 Complexity: `next_u32` is O(1); `below` is O(1) expected (fewer than 2 draws on average, worst case unbounded but with probability halving each draw). Logging cost is one level comparison when the record is filtered out.
 
-Not yet covered, by design: the profiling hook; more `simd` types and ISAs, math functions, further containers (later phase 1 cards).
+Not yet covered, by design: the profiling hook; more `simd` types and ISAs, matrices and the quaternion (cards 1-19 and 1-20), vectors backed by SIMD, further containers (later phase 1 cards).
 
 Decisions of card 1-2 (counting allocator):
 
@@ -294,3 +332,16 @@ flowchart TD
   C --> E[tests compare every operation with scalar::F32x4 bit for bit]
   D --> F[the reference is the implementation]
 ```
+
+Decisions of card 1-18 (`math`, part 1: `Scalar`, `Vec2`, `Vec3`, `Vec4`):
+
+- **Three concrete types, not one `Vec<N>`.** Named fields (`v.x`, `v.y`) read better at call sites than indexing, and the physics skeleton that is generic over the dimension (physics section 4) will use a trait over these types, not a const generic. A `macro_rules` block writes the operations they share once, so the code is not triplicated.
+- **`Scalar` is a type alias of `f32`** ([conventions](conventions.md) asks for one alias so a later switch is mechanical). The f32 versus f64 analysis found f32 the right default; only world positions might need more, and that is a separate type if it ever happens.
+- **Plain `repr(C)` data, alignment 4.** `Vec4` is not 16-byte aligned. A SIMD path converts with `to_array` and `F32x4::from_array`; whether a SIMD-backed `Vec4` pays is for a benchmark to show, and it would be a separate type.
+- **Fixed order, no FMA.** `dot` adds the products left to right (tested with `2^24, 1, 1`, where another order gives a different bit pattern), `lerp` is `a * (1 - t) + b * t` (it gives both ends bit for bit for finite operands, except that a zero may come out as `+0.0`), `length` is the correctly rounded square root of `dot(self, self)`, `min` and `max` use the x86 tie rule of `simd`. This keeps D0 and D1 and lets a SIMD path match bit for bit.
+- **Errors are values, nothing panics.** `normalized` returns `None` for a zero, NaN or infinite length. The length comes from the squared length, so the useful range is components of about `1e-19` to `1e19`: above it the square overflows, far below it the square underflows to zero (both give `None`), and in between the square is subnormal and the result less accurate. Division by zero follows IEEE (infinity or NaN). There is no `Index` operator because it would panic out of range; use the fields or `to_array`.
+- **No vector-times-vector operator yet.** It is ambiguous between the componentwise, dot and cross products; it is added when a consumer needs it, under an explicit name.
+- **`PartialEq` only, no `Eq` or `Hash`.** `-0.0 == 0.0` and `NaN != NaN`, as for `f32`. Tests compare bit patterns (`to_bits`) where the sign of zero matters.
+- **A SIMD `Vec4` has to follow the same add order.** `Vec4::dot` is `((x*x + y*y) + z*z) + w*w`, but `simd::F32x4::horizontal_sum` adds `(l0 + l1) + (l2 + l3)`. A SIMD `dot` built on `horizontal_sum` would not match the scalar bits, so the SIMD card either adds a left-to-right reduction or changes the scalar order first.
+- **Checks.** 112 tests (a shared suite per dimension plus per-type tests; the properties use the seeded `Pcg32`), mutation 28 caught, 0 missed, 4 unviable, line coverage of `vector.rs` 99.90%, Miri clean (case count reduced), release profile green. Safe code only.
+- **Not measured: speed.** No benchmark and no consumer exist yet; the methods carry `#[inline]`.

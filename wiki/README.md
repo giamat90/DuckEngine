@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.30 (2026-10-26).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.31 (2026-10-26).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.31** - Implemented `base::math` part 1: `Scalar` (f32 alias), `Vec2`, `Vec3`, `Vec4` (core-runtime section 8, decisions of card 1-18). Task 1-18.
 > - **v0.30** - The pages and the digest said Clippy `disallowed-methods` enforces the simulation bans, but it is not configured and no simulation crate exists. They now name the arch-check scan as the enforcer of what it can see, review and a runtime assertion for the rest, and Clippy `disallowed-methods` as planned for the physics crate (roadmap phase 4). Task 1-17.
 > - **v0.29** - FMA rule clarified: implicit contraction and fast-math stay denied (Rust has neither), an explicit `f32::mul_add` is allowed in simulation code, and a SIMD path and its scalar reference must use the same form. The deny-table row said "anything FMA-contracting", which left `mul_add` unclear after the D2 withdrawal. Task 1-16.
 > - **v0.28** - Handle size: the conventions page said "32-bit index + generation by default" while `Handle` is 8 bytes (32-bit index + 32-bit generation, exact stale detection). The owner confirmed 8 bytes; conventions, core-runtime and overview now say so. Task 1-15.
