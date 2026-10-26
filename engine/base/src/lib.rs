@@ -5,4 +5,5 @@ pub mod alloc;
 pub mod arena;
 pub mod assert;
 pub mod log;
+pub mod pool;
 pub mod rng;

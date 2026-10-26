@@ -68,9 +68,10 @@ audio thread (callback driven, decoupled)     --> mixes from a lock-free command
 | `log` | `Level`, `Record`, `LogSink`, `Logger<S>`, `NullSink`, `MemorySink` | No global logger: the caller owns the `Logger`, so tests inject a `MemorySink` and a platform adapter supplies the sink that reaches a file or console. The message travels as `fmt::Arguments`, so a filtered record or a `NullSink` never formats it (the call site still evaluates the argument expressions; a skipping macro and a `Level::Off` are left for a later card). A sink has a single owner; sharing one across threads is not supported yet. |
 | `alloc` | `CountingAllocator<A: GlobalAlloc>`, `AllocCounts`, `count_allocations`, `current_counts` | Counters are per thread, in a `const`-initialised thread-local `Cell` without a destructor: reading them never allocates and registers no thread-exit hook, so they are safe inside the allocator. `alloc` and `alloc_zeroed` count as allocations, `realloc` as a reallocation (a growing `Vec` makes these), `dealloc` as a deallocation; `calls()` adds the three. `count_allocations(f)` returns the calling thread's delta, so another thread's allocations are not counted by construction (a thread-local), and a job asserts on its own worker thread. Install the allocator with `#[global_allocator]` in a test binary or the application (L4). |
 | `arena` | `Arena`, `ArenaBox<'a, T>`, `ArenaVec<'a, T>` | Fixed-capacity bump arena: one heap allocation in `with_capacity` (or `try_with_capacity`, which returns `None` instead of aborting), one free in `Drop`, and every allocation in between is a pointer bump with no allocator call (integration test `arena_allocations`). `alloc`, `alloc_slice_with` and `vec_with_capacity` return `Option`; `ArenaVec::push` hands the value back as `Err(value)` when full. `reset(&mut self)` makes the block reusable and the borrow checker proves no reference survives (compile_fail doc test). Types with drop glue are rejected at compile time (`const` assertion on `needs_drop`; compile_fail doc test). The block is 64-byte aligned and padding is computed from the offset with checked arithmetic, so what fits and what `used()` reports never depend on where the allocator put the block (determinism); types aligned above 64 are rejected at compile time, and huge lengths return `None` instead of overflowing. Zero-sized values and empty slices take no space. The closure of `alloc_slice_with` may allocate from the same arena (space is reserved first). Not `Sync` (a `Cell` offset) and not `Send` (raw block; handing arenas to workers is for the job-system card). |
+| `pool` | `Handle<T>`, `Pool<T>` | Generational handles and a fixed-capacity pool, safe code only. `Handle<T>` is a slot index plus a generation (two `u32`, 8 bytes), `Copy`, `Eq`, `Hash` for every `T`, and typed: a `Handle<A>` does not compile where a `Pool<B>` is expected (`compile_fail` doc test). `Pool::with_capacity` makes two heap allocations (slots and free list); `insert`, `remove`, `get`, `get_mut` and `contains` make none (integration test `pool_allocations`). `insert` hands the value back as `Err(value)` when full. `remove` bumps the slot generation, so every older handle to the slot is stale and answers `None` (a slot whose generation is already `u32::MAX` is retired instead). Free slots are reused last freed first and new slots are issued in index order, so the handles a sequence of operations produces are the same on every run. |
 | `assert` | `duck_assert!`, `duck_debug_assert!` | Always-on and debug-only assertion. A failure panics with the condition or message; under `panic = "abort"` that ends the process, so nothing unwinds across a module boundary. |
 
-UML view of crate `base` as implemented (cards 1-1 to 1-3). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
+UML view of crate `base` as implemented (cards 1-1 to 1-3 and 1-9). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
 
 ```mermaid
 classDiagram
@@ -157,6 +158,27 @@ classDiagram
     }
   }
 
+  namespace pool {
+    class Handle {
+      +index() u32
+      +generation() u32
+    }
+    class Pool {
+      +with_capacity(capacity) Pool
+      +insert(value) Result~Handle, T~
+      +remove(handle) Option~T~
+      +get(handle) Option~ref T~
+      +get_mut(handle) Option~mut ref T~
+      +contains(handle) bool
+      +len() usize
+      +capacity() usize
+    }
+    class Slot {
+      generation u32
+      value Option~T~
+    }
+  }
+
   class assert {
     <<macros>>
     +duck_assert()
@@ -177,9 +199,11 @@ classDiagram
   ArenaBox ..> Arena : borrows for its lifetime
   ArenaVec ..> Arena : borrows for its lifetime
   Arena ..> GlobalAlloc : calls the global allocator once to get and once to free the block
+  Pool *-- Slot : fixed number, allocated once
+  Pool ..> Handle : issues and checks
 ```
 
-Reading the diagram: nothing in `base` knows the OS; the outward seams are `LogSink` (supplied by the caller) and `GlobalAlloc` (std). `assert` is standalone. `ArenaBox` and `ArenaVec` borrow the arena, so `reset(&mut self)` cannot run while one is alive.
+Reading the diagram: nothing in `base` knows the OS; the outward seams are `LogSink` (supplied by the caller) and `GlobalAlloc` (std). `assert` is standalone. `Pool` owns its slots and a free list of slot indices (not drawn); a `Handle` holds no reference to the pool. `ArenaBox` and `ArenaVec` borrow the arena, so `reset(&mut self)` cannot run while one is alive.
 
 Complexity: `next_u32` is O(1); `below` is O(1) expected (fewer than 2 draws on average, worst case unbounded but with probability halving each draw). Logging cost is one level comparison when the record is filtered out.
 
@@ -201,4 +225,26 @@ Decisions of card 1-3 (arena):
 - **Construction.** `with_capacity` aborts (`handle_alloc_error`) when the block cannot be provided, like `Vec::with_capacity`; `try_with_capacity` returns `None` (also for sizes above `isize::MAX`). Every later operation reports failure as a value.
 - **Known limits.** The drop-glue check is evaluated when the code is built (post-monomorphisation), so `cargo check` alone does not report it; `ManuallyDrop` values pass it and are leaked on `reset`. `alloc_slice_with` runs the closure `len` times even for zero-sized elements, so a huge `len` of them takes that long.
 - **Miri.** Clean on `x86_64-unknown-linux-gnu`, including the arena unit tests and the integration test.
-- **Out of scope here:** growable arenas, drop-glue types, pools and handle containers.
+- **Out of scope here:** growable arenas and drop-glue types.
+
+Decisions of card 1-9 (handles and pool):
+
+- **Handle size: 8 bytes, not 4.** [conventions](conventions.md) says "32-bit index + generation by default". A 4-byte handle would leave 8 bits of generation, which wraps after 256 reuses of one slot and then accepts a stale handle; for a pool with churn that is a silent wrong object, not a rare edge. So `Handle` is a `u32` index plus a `u32` generation. A packed 4-byte variant can be added when a profile shows the size matters; the owner may overrule this.
+- **Stale handles are detected exactly.** A slot whose generation cannot advance (`u32::MAX` reached) is retired: it is never put back on the free list, so no handle can ever match it again. Cost: one slot of capacity per 2^32 reuses of that slot.
+- **Fixed capacity, failure as a value.** The capacity is a `u32` given to `with_capacity`; there is no growth, so there is no hidden allocation or move of live objects. A full pool returns `Err(value)` from `insert`, and the value is not lost.
+- **Deterministic reuse.** Fresh slots are issued in index order; freed slots go on a stack and the last freed is reused first. No hash map, no iteration over holes.
+- **No iteration.** A pool with holes is not an iteration structure (allocation policy, [section 2](#2-memory)); code that loops over many objects keeps them in a dense array and holds handles to them. A deterministic `iter` can be added when a card needs it.
+- **No `unsafe`.** The module is safe code (`Vec<Slot<T>>` with `Option<T>`), so it adds nothing to the `unsafe` budget and needs no Miri run.
+- **Known limits.** A handle carries no pool identity: a `Handle<T>` from one `Pool<T>` handed to another pool of the same `T` may name an object there (the type system separates element types, not pools). Pool identity can be added if a module needs it. A pool of a type with a large size pays `Option<T>` padding per slot.
+
+Slot life cycle (what `insert` and `remove` do to one slot):
+
+```mermaid
+stateDiagram-v2
+  [*] --> Unused : with_capacity, slot not yet opened
+  Unused --> Occupied : insert opens the next index, generation 0
+  Free --> Occupied : insert pops the last freed index
+  Occupied --> Free : remove, generation + 1, index pushed
+  Occupied --> Retired : remove when the generation is u32 MAX
+  Retired --> Retired : never reused, old handles stay stale
+```
