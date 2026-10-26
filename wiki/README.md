@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.22 (2026-10-26).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.23 (2026-10-26).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.23** - Owner rule: every documentation change is covered by a UML view in Mermaid ([clean-code-and-review section 7](workflow/clean-code-and-review.md), digest section 6, `CLAUDE.md`). New UML class diagram of crate `base` in [core-runtime section 8](architecture/core-runtime.md). Task 1-8.
 > - **v0.22** - Gate fix: renaming a module called `thread` (`use std::thread as th;`, `use self::thread as th;`) and raw identifiers (`std::r#thread`) no longer hide thread creation from the architecture check. Module renames of the other banned `std` modules (`fs`, `io`, `env`, `time`) were already caught; still open: `type F = f32` aliases for the physics float rule (the `.sin(` method rule still applies) and names built by macros ([ports-and-adapters](architecture/ports-and-adapters.md), `gates/architecture.toml`). Task 1-7.
 > - **v0.21** - Cross-thread isolation of the counting allocator is now tested ([core-runtime](architecture/core-runtime.md) note updated). Task 1-6.
 > - **v0.20** - Owner decision: threads may be created in test-only code of L0-L2 crates (`#[cfg(test)]` items, `tests/` folder); production code stays banned. New optional key `allow_in_tests` of a `[[banned_use]]` rule in `gates/architecture.toml`, set on the thread rule only ([ports-and-adapters](architecture/ports-and-adapters.md), [overview](architecture/overview.md), [core-runtime](architecture/core-runtime.md)). Task 1-4.

@@ -1,6 +1,6 @@
 # Rules digest (the short version agents load)
 
-Status: derived from the wiki on 2026-10-24 (v0.12); section 9 updated for the GitHub Free plan; section 4 updated for the allocator spike (v0.18); section 11 updated for card ids (v0.19). The wiki pages are canonical; if this digest and a page disagree, the page wins and the digest is fixed. A CI check (phase 0a) compares the numbers below with the gate configuration. `CLAUDE.md` imports this file and nothing else from the wiki by default.
+Status: derived from the wiki on 2026-10-24 (v0.12); section 9 updated for the GitHub Free plan; section 4 updated for the allocator spike (v0.18); section 11 updated for card ids (v0.19); section 6 updated for the UML rule (v0.23). The wiki pages are canonical; if this digest and a page disagree, the page wins and the digest is fixed. A CI check (phase 0a) compares the numbers below with the gate configuration. `CLAUDE.md` imports this file and nothing else from the wiki by default.
 
 ## 1. Mission and priorities
 
@@ -38,7 +38,7 @@ D0 same machine and thread count, D1 across thread counts (both required); **D2 
 
 ## 6. TDD and review
 
-Test list first, one failing test at a time with red evidence, smallest step to green, refactor on green, bug fix = failing regression test first, never weaken or delete a test to get green. After implementation a **mandatory review phase R1-R8** (self, automated, independent, QA, architecture, security, performance, product fit) with a fix loop, at most 3 loops, then stop and report. Output: `reviews/<task-id>.md` with 0 open blocker/major.
+Test list first, one failing test at a time with red evidence, smallest step to green, refactor on green, bug fix = failing regression test first, never weaken or delete a test to get green. A documentation change is covered by a UML view in Mermaid, in the page or the PR (typo, link and number fixes exempt; [clean-code-and-review](workflow/clean-code-and-review.md) section 7). After implementation a **mandatory review phase R1-R8** (self, automated, independent, QA, architecture, security, performance, product fit) with a fix loop, at most 3 loops, then stop and report. Output: `reviews/<task-id>.md` with 0 open blocker/major.
 
 ## 7. Gates (values are hypotheses, ratcheting, calibrated in phase 0)
 

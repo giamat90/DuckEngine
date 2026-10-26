@@ -15,6 +15,7 @@ Project: DuckEngine, a game engine written from scratch in Rust. Private, propri
 - How CI, the trusted PR gates and the release work: `wiki/workflow/ci-diagrams.md`. A red check is a stop; merging is policy on the GitHub Free plan, not enforcement.
 - Owner approval is given once, in the session, against a diff hash. Before you ask for it, open the PR and give the owner its full link (URL) together with the hash; merge only after the approval. Never treat a card move, a comment or silence as approval.
 - A task is closed when its PR is merged: move the card to Done at once, walking it through the columns in order, without asking.
+- Every change to a documentation page is covered by a UML view in Mermaid, in the page or in the PR (typo, link and number fixes are exempt): `wiki/workflow/clean-code-and-review.md` section 7.
 
 ## Hard rules (also in the digest, repeated because they matter most)
 

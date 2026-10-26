@@ -76,7 +76,7 @@ flowchart LR
 |---|---|---|---|
 | **R1 Self-review** | developer | read the whole diff top to bottom against the checklist below; remove debug code, dead code, stray changes | - |
 | **R2 Automated clean-up** | developer | reuse, simplification, efficiency and altitude cleanups on the changed code; format, lint, full local gates | the `simplify` skill, rustfmt, Clippy |
-| **R3 Independent review** | reviewer (separate session/agent, not the author's context) | correctness bugs, measurable clean-code violations, test quality; it receives the task card, the diff and the wiki rules, **not** the author's reasoning | the `code-review` skill at an effort level matching the class |
+| **R3 Independent review** | reviewer (separate session/agent, not the author's context) | for documentation changes: the UML view is present and matches the code (section 7); correctness bugs, measurable clean-code violations, test quality; it receives the task card, the diff and the wiki rules, **not** the author's reasoning | the `code-review` skill at an effort level matching the class |
 | **R4 QA review** | QA | test adequacy: mutation survivors triaged, edge cases, property/golden/contract tests, determinism, flakiness | mutation tool, coverage |
 | **R5 Architecture review** | architect | layers, ports, banned imports, ADR conformance, public API surface, design note accurate and present | arch-check, classifier |
 | **R6 Security review** | security | memory safety, untrusted input (asset parsers, decoders), integer overflow, secrets, new dependencies and licences | the `security-review` skill, sanitizers, fuzz corpus |
@@ -140,3 +140,18 @@ Only measurable rules are governed (owner decision, Q24). These are enforced as 
 ## 6. Open points
 
 - **Q24:** resolved (owner): measurable rules only, `PERF:` waivers accepted.
+
+## 7. Documentation changes carry a UML view (owner rule, task 1-8)
+
+Every time a documentation page is changed, the change is covered by a UML view in Mermaid: a class, sequence, state, activity or component diagram of what the change describes. "Documentation page" means a page in `wiki/`, an ADR, a design note, or a review report that describes structure or behaviour. The diagram sits in the changed page; when the page is a pure list or table (a changelog, an index), it sits in the PR description instead. A change that only fixes a typo, a link or a number is exempt (say so in the PR). A change that only mirrors a rule or a changelog line elsewhere (the digest, `CLAUDE.md`, `wiki/README.md`) is covered by the diagram of the change it mirrors. If the page already has a diagram, update it in the same change. If a diagram and the code or a page disagree, the page wins and the diagram is fixed. There is no automatic check yet: the independent reviewer (R3) and the product-fit reviewer (R8) look for the diagram, and a lint is a later governance task.
+
+```mermaid
+flowchart LR
+  C[Doc page changed] --> T{Only typo, link or number?}
+  T -- yes --> E[Exempt: say so in the PR]
+  T -- no --> D{Page already has a diagram?}
+  D -- yes --> U[Update it in the same change]
+  D -- no --> A[Add a Mermaid UML view in the page or the PR]
+  U --> R[R3 and R8 look for it]
+  A --> R
+```

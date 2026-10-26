@@ -70,6 +70,117 @@ audio thread (callback driven, decoupled)     --> mixes from a lock-free command
 | `arena` | `Arena`, `ArenaBox<'a, T>`, `ArenaVec<'a, T>` | Fixed-capacity bump arena: one heap allocation in `with_capacity` (or `try_with_capacity`, which returns `None` instead of aborting), one free in `Drop`, and every allocation in between is a pointer bump with no allocator call (integration test `arena_allocations`). `alloc`, `alloc_slice_with` and `vec_with_capacity` return `Option`; `ArenaVec::push` hands the value back as `Err(value)` when full. `reset(&mut self)` makes the block reusable and the borrow checker proves no reference survives (compile_fail doc test). Types with drop glue are rejected at compile time (`const` assertion on `needs_drop`; compile_fail doc test). The block is 64-byte aligned and padding is computed from the offset with checked arithmetic, so what fits and what `used()` reports never depend on where the allocator put the block (determinism); types aligned above 64 are rejected at compile time, and huge lengths return `None` instead of overflowing. Zero-sized values and empty slices take no space. The closure of `alloc_slice_with` may allocate from the same arena (space is reserved first). Not `Sync` (a `Cell` offset) and not `Send` (raw block; handing arenas to workers is for the job-system card). |
 | `assert` | `duck_assert!`, `duck_debug_assert!` | Always-on and debug-only assertion. A failure panics with the condition or message; under `panic = "abort"` that ends the process, so nothing unwinds across a module boundary. |
 
+UML view of crate `base` as implemented (cards 1-1 to 1-3). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
+
+```mermaid
+classDiagram
+  direction LR
+
+  namespace rng {
+    class Pcg32 {
+      +new(seed, stream) Pcg32
+      +next_u32() u32
+      +next_f32() f32
+      +below(bound) Result~u32, ZeroBound~
+    }
+    class ZeroBound
+  }
+
+  namespace log {
+    class LogSink {
+      <<trait>>
+      +write(Record)
+    }
+    class NullSink
+    class MemorySink {
+      +entries() Entry[]
+    }
+    class Entry {
+      +level Level
+      +target String
+      +message String
+    }
+    class Record {
+      +level Level
+      +target str
+      +message Arguments
+    }
+    class Level {
+      <<enum>>
+      Error
+      Warn
+      Info
+      Debug
+      Trace
+    }
+    class Logger {
+      +log(level, target, args)
+      +enabled(level) bool
+    }
+  }
+
+  namespace alloc {
+    class GlobalAlloc {
+      <<trait, std>>
+    }
+    class CountingAllocator {
+      +alloc / dealloc / realloc
+    }
+    class AllocCounts {
+      +allocations u64
+      +reallocations u64
+      +deallocations u64
+      +bytes_requested u64
+      +calls() u64
+      +since(earlier) AllocCounts
+    }
+    class COUNTS {
+      <<private thread-local Cell>>
+    }
+  }
+
+  namespace arena {
+    class Arena {
+      +capacity() usize
+      +used() usize
+      +with_capacity(bytes) Arena
+      +try_with_capacity(bytes) Option~Arena~
+      +alloc(value) Option~ArenaBox~
+      +alloc_slice_with(len, f) Option~ArenaVec~
+      +vec_with_capacity(n) Option~ArenaVec~
+      +reset(&mut self)
+    }
+    class ArenaBox
+    class ArenaVec {
+      +push(value) Result
+      +capacity() usize
+    }
+  }
+
+  class assert {
+    <<macros>>
+    +duck_assert()
+    +duck_debug_assert()
+  }
+
+  Pcg32 ..> ZeroBound : error value
+  Logger *-- LogSink : owns a sink S
+  Logger ..> Record : builds
+  Record --> Level
+  LogSink <|.. NullSink
+  LogSink <|.. MemorySink
+  MemorySink *-- Entry
+  GlobalAlloc <|.. CountingAllocator
+  CountingAllocator ..> GlobalAlloc : forwards to A
+  CountingAllocator ..> COUNTS : bumps
+  COUNTS *-- AllocCounts
+  ArenaBox ..> Arena : borrows for its lifetime
+  ArenaVec ..> Arena : borrows for its lifetime
+  Arena ..> GlobalAlloc : calls the global allocator once to get and once to free the block
+```
+
+Reading the diagram: nothing in `base` knows the OS; the outward seams are `LogSink` (supplied by the caller) and `GlobalAlloc` (std). `assert` is standalone. `ArenaBox` and `ArenaVec` borrow the arena, so `reset(&mut self)` cannot run while one is alive.
+
 Complexity: `next_u32` is O(1); `below` is O(1) expected (fewer than 2 draws on average, worst case unbounded but with probability halving each draw). Logging cost is one level comparison when the record is filtered out.
 
 Not yet covered, by design: a counting proof that `NullSink` logging allocates nothing (needs the counting allocator of card 1-2); the profiling hook; `simd`, math functions, containers (later phase 1 cards).
