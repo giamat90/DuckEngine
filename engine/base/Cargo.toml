@@ -1,0 +1,11 @@
+[package]
+name = "base"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Layer 0 base crate: deterministic RNG, logging and assertions (std only, no OS access)."
+
+[lints]
+workspace = true
