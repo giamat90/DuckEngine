@@ -7,3 +7,4 @@ pub mod assert;
 pub mod log;
 pub mod pool;
 pub mod rng;
+pub mod simd;

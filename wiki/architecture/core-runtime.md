@@ -69,9 +69,10 @@ audio thread (callback driven, decoupled)     --> mixes from a lock-free command
 | `alloc` | `CountingAllocator<A: GlobalAlloc>`, `AllocCounts`, `count_allocations`, `current_counts` | Counters are per thread, in a `const`-initialised thread-local `Cell` without a destructor: reading them never allocates and registers no thread-exit hook, so they are safe inside the allocator. `alloc` and `alloc_zeroed` count as allocations, `realloc` as a reallocation (a growing `Vec` makes these), `dealloc` as a deallocation; `calls()` adds the three. `count_allocations(f)` returns the calling thread's delta, so another thread's allocations are not counted by construction (a thread-local), and a job asserts on its own worker thread. Install the allocator with `#[global_allocator]` in a test binary or the application (L4). |
 | `arena` | `Arena`, `ArenaBox<'a, T>`, `ArenaVec<'a, T>` | Fixed-capacity bump arena: one heap allocation in `with_capacity` (or `try_with_capacity`, which returns `None` instead of aborting), one free in `Drop`, and every allocation in between is a pointer bump with no allocator call (integration test `arena_allocations`). `alloc`, `alloc_slice_with` and `vec_with_capacity` return `Option`; `ArenaVec::push` hands the value back as `Err(value)` when full. `reset(&mut self)` makes the block reusable and the borrow checker proves no reference survives (compile_fail doc test). Types with drop glue are rejected at compile time (`const` assertion on `needs_drop`; compile_fail doc test). The block is 64-byte aligned and padding is computed from the offset with checked arithmetic, so what fits and what `used()` reports never depend on where the allocator put the block (determinism); types aligned above 64 are rejected at compile time, and huge lengths return `None` instead of overflowing. Zero-sized values and empty slices take no space. The closure of `alloc_slice_with` may allocate from the same arena (space is reserved first). Not `Sync` (a `Cell` offset) and not `Send` (raw block; handing arenas to workers is for the job-system card). |
 | `pool` | `Handle<T>`, `Pool<T>` | Generational handles and a fixed-capacity pool, safe code only. `Handle<T>` is a slot index plus a generation (two `u32`, 8 bytes), `Copy`, `Eq`, `Hash` for every `T`, and typed: a `Handle<A>` does not compile where a `Pool<B>` is expected (`compile_fail` doc test). `Pool::with_capacity` makes two heap allocations (slots and free list); `insert`, `remove`, `get`, `get_mut` and `contains` make none (integration test `pool_allocations`). `insert` hands the value back as `Err(value)` when full. `remove` bumps the slot generation, so every older handle to the slot is stale and answers `None` (a slot whose generation is already `u32::MAX` is retired instead). Free slots are reused last freed first and new slots are issued in index order, so the handles a sequence of operations produces are the same on every run. |
+| `simd` | `scalar::F32x4`, `sse2::F32x4`, `F32x4` (the build target's backend) | Four `f32` lanes with `splat`, `from_array`, `to_array`, `+ - * /`, unary `-`, `sqrt`, `min`, `max`, `abs` and `horizontal_sum`. `scalar` is the reference and is always built; `sse2` (x86-64) gives the same bits for every operation, checked by property tests over 20,000 random and special-value cases per operation (D2). Each operation is one IEEE-754 operation per lane (or a sign-bit mask, or the fixed add sequence of `horizontal_sum`): no FMA, no `rcpps` or `rsqrtps`. `min` and `max` are defined as `a < b ? a : b` and `a > b ? a : b` (the x86 rule: `other` when equal or unordered), `horizontal_sum` as `(l0 + l1) + (l2 + l3)`. NaN payloads are unspecified; simulation code must not produce NaN. 13 `unsafe` blocks in `sse2`, all single intrinsic calls with a `// SAFETY:` comment. |
 | `assert` | `duck_assert!`, `duck_debug_assert!` | Always-on and debug-only assertion. A failure panics with the condition or message; under `panic = "abort"` that ends the process, so nothing unwinds across a module boundary. |
 
-UML view of crate `base` as implemented (cards 1-1 to 1-3 and 1-9). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
+UML view of crate `base` as implemented (cards 1-1 to 1-3, 1-9 and 1-11). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
 
 ```mermaid
 classDiagram
@@ -179,6 +180,24 @@ classDiagram
     }
   }
 
+  namespace simd {
+    class ScalarF32x4 {
+      <<reference>>
+      +splat(f32) F32x4
+      +from_array / to_array
+      +add sub mul div neg
+      +sqrt min max abs
+      +horizontal_sum() f32
+    }
+    class Sse2F32x4 {
+      <<x86-64 backend>>
+      +same operations
+    }
+    class F32x4 {
+      <<alias of the target backend>>
+    }
+  }
+
   class assert {
     <<macros>>
     +duck_assert()
@@ -201,13 +220,16 @@ classDiagram
   Arena ..> GlobalAlloc : calls the global allocator once to get and once to free the block
   Pool *-- Slot : fixed number, allocated once
   Pool ..> Handle : issues and checks
+  Sse2F32x4 ..> ScalarF32x4 : must match bit for bit
+  F32x4 ..> Sse2F32x4 : x86-64 with sse2
+  F32x4 ..> ScalarF32x4 : any other target
 ```
 
 Reading the diagram: nothing in `base` knows the OS; the outward seams are `LogSink` (supplied by the caller) and `GlobalAlloc` (std). `assert` is standalone. `Pool` owns its slots and a free list of slot indices (not drawn); a `Handle` holds no reference to the pool. `ArenaBox` and `ArenaVec` borrow the arena, so `reset(&mut self)` cannot run while one is alive.
 
 Complexity: `next_u32` is O(1); `below` is O(1) expected (fewer than 2 draws on average, worst case unbounded but with probability halving each draw). Logging cost is one level comparison when the record is filtered out.
 
-Not yet covered, by design: a counting proof that `NullSink` logging allocates nothing (needs the counting allocator of card 1-2); the profiling hook; `simd`, math functions, containers (later phase 1 cards).
+Not yet covered, by design: the profiling hook; more `simd` types and ISAs, math functions, further containers (later phase 1 cards).
 
 Decisions of card 1-2 (counting allocator):
 
@@ -247,4 +269,28 @@ stateDiagram-v2
   Occupied --> Free : remove, generation + 1, index pushed
   Occupied --> Retired : remove when the generation is u32 MAX
   Retired --> Retired : never reused, old handles stay stale
+```
+
+Decisions of card 1-11 (`simd` v0, and the N-6 spike):
+
+- **N-6 spike result: ISA backends live inside `base`, selected at compile time by `cfg`.** Alternatives considered: (a) a generic top-down design (a `Simd` trait implemented by separate crates), (b) backends inside `base` behind `cfg`. (a) adds a crate boundary and trait-generic code everywhere for no gain while there is one ISA; (b) keeps `core::arch` in one crate, which the architecture check already allows only in `base`. The scalar reference is always built, so the oracle is available on every target. Reversible: a backend is one file with the same operations.
+- **One type, `F32x4`, four lanes.** It is the width every ISA targeted here (SSE2, NEON) has natively. Wider types (`F32x8` for AVX2) and integer lanes come with the first consumer that needs them, and only where a benchmark justifies them.
+- **Bit-identical by definition, not by tolerance.** Every operation is a single IEEE-754 instruction per lane. Where the ISA instruction and a natural scalar expression could differ, the scalar reference is written to the instruction: `min` and `max` return the second operand on equal or unordered lanes, and the lane sum has a fixed pair order. Excluded on purpose: FMA, `rcpps` and `rsqrtps` (they differ between x86 and ARM).
+- **NaN payloads are not part of the contract.** The tests treat any two NaN results as equal, except for `abs` and `neg`, which are compared strictly. Simulation code must not produce NaN.
+- **Subnormals.** Equivalence is tested under the default floating-point control state. Simulation jobs set and assert the control registers (digest section 5); the NEON backend must use the same flush-to-zero setting.
+- **Inlining.** The small methods carry `#[inline]`; whether they inline across crates without LTO is for the first benchmark to show.
+- **`unsafe`.** `std::arch` intrinsics are `unsafe fn` to call, even for SSE2 which is in the x86-64 baseline, so `sse2` carries `#![expect(unsafe_code, ..)]`: 13 blocks, each one intrinsic call with a `// SAFETY:` comment. The module is compiled only when the target has `sse2`, which makes the comment true by construction. Third allowed module (with `alloc` and `arena`); the per-module budget is still unchecked by tooling.
+- **Miri** is clean on the host target for all `simd` tests (case count reduced under Miri).
+- **Not measured: speedup.** Gate G4 (SIMD speedup) and the D2 cost report (FMA and reciprocal estimates forbidden) need a benchmark and a consumer; neither exists yet. This card proves equivalence, not speed.
+- **On x86-64 the scalar and SSE2 code both compile to SSE instructions**, so the equivalence tests cannot fail by an ISA difference here; they pin the contract for the NEON backend (phase 2), which is where scalar and vector code can differ.
+
+How the backend is chosen (compile time):
+
+```mermaid
+flowchart TD
+  A[simd::F32x4 is used] --> B{target is x86-64 with sse2?}
+  B -- yes --> C[alias of sse2::F32x4]
+  B -- no --> D[alias of scalar::F32x4]
+  C --> E[tests compare every operation with scalar::F32x4 bit for bit]
+  D --> F[the reference is the implementation]
 ```

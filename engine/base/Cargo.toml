@@ -8,7 +8,7 @@ license-file.workspace = true
 description = "Layer 0 base crate: deterministic RNG, logging and assertions (std only, no OS access)."
 
 # Not `workspace = true`: the workspace forbids unsafe code. This crate denies
-# it instead and allows it in two modules (`alloc`, `arena`), with every block
+# it instead and allows it in three modules (`alloc`, `arena`, `simd::sse2`), with every block
 # documented (same pattern as `skeleton-unsafe`). The rest repeats the
 # workspace lints.
 [lints.rust]
