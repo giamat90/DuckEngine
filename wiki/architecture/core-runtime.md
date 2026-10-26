@@ -70,10 +70,10 @@ audio thread (callback driven, decoupled)     --> mixes from a lock-free command
 | `arena` | `Arena`, `ArenaBox<'a, T>`, `ArenaVec<'a, T>` | Fixed-capacity bump arena: one heap allocation in `with_capacity` (or `try_with_capacity`, which returns `None` instead of aborting), one free in `Drop`, and every allocation in between is a pointer bump with no allocator call (integration test `arena_allocations`). `alloc`, `alloc_slice_with` and `vec_with_capacity` return `Option`; `ArenaVec::push` hands the value back as `Err(value)` when full. `reset(&mut self)` makes the block reusable and the borrow checker proves no reference survives (compile_fail doc test). Types with drop glue are rejected at compile time (`const` assertion on `needs_drop`; compile_fail doc test). The block is 64-byte aligned and padding is computed from the offset with checked arithmetic, so what fits and what `used()` reports never depend on where the allocator put the block (determinism); types aligned above 64 are rejected at compile time, and huge lengths return `None` instead of overflowing. Zero-sized values and empty slices take no space. The closure of `alloc_slice_with` may allocate from the same arena (space is reserved first). Not `Sync` (a `Cell` offset) and not `Send` (raw block; handing arenas to workers is for the job-system card). |
 | `pool` | `Handle<T>`, `Pool<T>` | Generational handles and a fixed-capacity pool, safe code only. `Handle<T>` is a slot index plus a generation (two `u32`, 8 bytes), `Copy`, `Eq`, `Hash` for every `T`, and typed: a `Handle<A>` does not compile where a `Pool<B>` is expected (`compile_fail` doc test). `Pool::with_capacity` makes two heap allocations (slots and free list); `insert`, `remove`, `get`, `get_mut` and `contains` make none (integration test `pool_allocations`). `insert` hands the value back as `Err(value)` when full. `remove` bumps the slot generation, so every older handle to the slot is stale and answers `None` (a slot whose generation is already `u32::MAX` is retired instead). Free slots are reused last freed first and new slots are issued in index order, so the handles a sequence of operations produces are the same on every run. |
 | `simd` | `scalar::F32x4`, `sse2::F32x4`, `F32x4` (the build target's backend) | Four `f32` lanes with `splat`, `from_array`, `to_array`, `+ - * /`, unary `-`, `sqrt`, `min`, `max`, `abs` and `horizontal_sum`. `scalar` is the reference and is always built; `sse2` (x86-64) gives the same bits for every operation, checked by property tests over 20,000 random and special-value cases per operation (D2). Each operation is one IEEE-754 operation per lane (or a sign-bit mask, or the fixed add sequence of `horizontal_sum`): no FMA, no `rcpps` or `rsqrtps`. `min` and `max` are defined as `a < b ? a : b` and `a > b ? a : b` (the x86 rule: `other` when equal or unordered), `horizontal_sum` as `(l0 + l1) + (l2 + l3)`. NaN payloads are unspecified; simulation code must not produce NaN. 13 `unsafe` blocks in `sse2`, all single intrinsic calls with a `// SAFETY:` comment. |
-| `math` | `Scalar`, `Vec2`, `Vec3`, `Vec4` | `Scalar` is `f32` (one alias, [conventions](conventions.md)). The vectors are `repr(C)` plain data with fields `x`, `y`, `z`, `w`, alignment of one scalar. Constants `ZERO`, `ONE` and the axes, `splat`, `from_array`, `to_array`, operators `+ - neg`, scalar `*` and `/`, `dot`, `length_squared`, `length`, `distance`, `normalized` (an `Option`), `min`, `max`, `abs`, `lerp`; `Vec2::perp` and `cross`, `Vec3::cross`, `extend` and `truncate`. The order of every operation is fixed and nothing is fused, so results repeat bit for bit. Safe code only. Matrices and the quaternion follow in cards 1-19 and 1-20. |
+| `math` | `Scalar`, `Vec2`, `Vec3`, `Vec4`, `Mat3`, `Mat4` | `Scalar` is `f32` (one alias, [conventions](conventions.md)). The vectors are `repr(C)` plain data with fields `x`, `y`, `z`, `w`, alignment of one scalar. Constants `ZERO`, `ONE` and the axes, `splat`, `from_array`, `to_array`, operators `+ - neg`, scalar `*` and `/`, `dot`, `length_squared`, `length`, `distance`, `normalized` (an `Option`), `min`, `max`, `abs`, `lerp`; `Vec2::perp` and `cross`, `Vec3::cross`, `extend` and `truncate`. The order of every operation is fixed and nothing is fused, so results repeat bit for bit. Safe code only. `Mat3` and `Mat4` are column-major `repr(C)` plain data holding their columns (`cols`), column vectors, `M * v` ([conventions](conventions.md)). `IDENTITY`, `ZERO`, `from_cols`, `from_cols_array`, `to_cols_array`, `transpose`, `determinant`, `inverse` (an `Option`), `is_finite`, the operators `Mat * Vec` and `Mat * Mat`, `from_scale` and `from_rotation_x`, `_y`, `_z` (radians, counter-clockwise); `Mat4` adds `from_translation`, `from_mat3`, `transform_point3` and `transform_vector3`. The quaternion follows in card 1-20. |
 | `assert` | `duck_assert!`, `duck_debug_assert!` | Always-on and debug-only assertion. A failure panics with the condition or message; under `panic = "abort"` that ends the process, so nothing unwinds across a module boundary. |
 
-UML view of crate `base` as implemented (cards 1-1 to 1-3, 1-9, 1-11 and 1-18). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
+UML view of crate `base` as implemented (cards 1-1 to 1-3, 1-9, 1-11, 1-18 and 1-19). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
 
 ```mermaid
 classDiagram
@@ -227,6 +227,24 @@ classDiagram
       +same operations
       +truncate() Vec3
     }
+    class Mat3 {
+      <<repr C>>
+      +cols Vec3 x3
+      +transpose determinant
+      +inverse() Option
+      +mul Vec3 and Mat3
+      +from_scale from_rotation_xyz
+    }
+    class Mat4 {
+      <<repr C>>
+      +cols Vec4 x4
+      +transpose determinant
+      +inverse() Option
+      +mul Vec4 and Mat4
+      +from_translation from_scale
+      +from_mat3 from_rotation_xyz
+      +transform_point3 transform_vector3
+    }
   }
 
   class assert {
@@ -261,13 +279,17 @@ classDiagram
   Vec3 ..> Vec4 : extend
   Vec3 ..> Vec2 : truncate
   Vec4 ..> Vec3 : truncate
+  Mat3 *-- Vec3 : three columns
+  Mat4 *-- Vec4 : four columns
+  Mat4 ..> Mat3 : from_mat3
+  Mat4 ..> Vec3 : transform_point3
 ```
 
 Reading the diagram: nothing in `base` knows the OS; the outward seams are `LogSink` (supplied by the caller) and `GlobalAlloc` (std). `assert` is standalone. `Pool` owns its slots and a free list of slot indices (not drawn); a `Handle` holds no reference to the pool. `ArenaBox` and `ArenaVec` borrow the arena, so `reset(&mut self)` cannot run while one is alive.
 
 Complexity: `next_u32` is O(1); `below` is O(1) expected (fewer than 2 draws on average, worst case unbounded but with probability halving each draw). Logging cost is one level comparison when the record is filtered out.
 
-Not yet covered, by design: the profiling hook; more `simd` types and ISAs, matrices and the quaternion (cards 1-19 and 1-20), vectors backed by SIMD, further containers (later phase 1 cards).
+Not yet covered, by design: the profiling hook; more `simd` types and ISAs, the quaternion (card 1-20), vectors backed by SIMD, further containers (later phase 1 cards).
 
 Decisions of card 1-2 (counting allocator):
 
@@ -345,3 +367,15 @@ Decisions of card 1-18 (`math`, part 1: `Scalar`, `Vec2`, `Vec3`, `Vec4`):
 - **A SIMD `Vec4` has to follow the same add order.** `Vec4::dot` is `((x*x + y*y) + z*z) + w*w`, but `simd::F32x4::horizontal_sum` adds `(l0 + l1) + (l2 + l3)`. A SIMD `dot` built on `horizontal_sum` would not match the scalar bits, so the SIMD card either adds a left-to-right reduction or changes the scalar order first.
 - **Checks.** 112 tests (a shared suite per dimension plus per-type tests; the properties use the seeded `Pcg32`), mutation 28 caught, 0 missed, 4 unviable, line coverage of `vector.rs` 99.90%, Miri clean (case count reduced), release profile green. Safe code only.
 - **Not measured: speed.** No benchmark and no consumer exist yet; the methods carry `#[inline]`.
+
+Decisions of card 1-19 (`math`, part 2: `Mat3`, `Mat4`):
+
+- **A matrix holds its columns.** `Mat3 { cols: [Vec3; 3] }` and `Mat4 { cols: [Vec4; 4] }` are `repr(C)`, so the memory is the column-major flat array that `to_cols_array` returns and a graphics API can take the bytes as they are. `cols` is a public field: indexing a fixed array is the caller's choice, and no `Index` operator is offered (it would panic out of range).
+- **`PartialEq` only, as for the vectors.** `-0.0 == 0.0` and `NaN != NaN`; tests that need the sign of zero compare bit patterns. The determinant and the inverse are tested against an `f64` reference with a tolerance, not bit for bit; only the products and the matrix-vector sums have their order pinned bitwise.
+- **Operators only for the products.** `Mat * Vec` and `Mat * Mat` are `Mul` impls; `(a * b) * v` applies `b` first. Each result element is a row times a column with the products added left to right (tested with `2^24, 1, 1`, and bit for bit against a plain loop), and `(A*B)^T` equals `B^T * A^T` bit for bit because the same products are added in the same order. No FMA, so a SIMD path can be checked against these.
+- **`inverse` is an `Option`.** `Mat3` uses the cross products of the columns and `Mat4` the 2x2 minors of the first two and the last two rows (the determinant is the Laplace expansion over the same minors). `None` when the determinant is infinite or NaN, or when any element of the result is not finite. A zero determinant gives infinite or NaN quotients, so the finiteness check refuses it too, which keeps one rule instead of two. The determinant of a matrix with tiny columns (a scale of about `1e-15` or less for `Mat3`, `1e-11` for `Mat4`) underflows to zero, so such a matrix is refused although it is invertible. A matrix that is nearly singular but has a finite, non-zero determinant is inverted without a warning: there is no condition-number test, no pivoting, and the caller decides what precision it needs.
+- **Rotations use `std` `sin_cos`.** Right-handed, counter-clockwise: `rotation_z` takes +X to +Y, `rotation_x` takes +Y to +Z, `rotation_y` takes +Z to +X, and a zero angle is exactly the identity. `sin` and `cos` are the platform libm: the same on one machine and build (D0, D1), not identical across platforms (D2 is not pursued). Miri changes the last bits of `sin` and `cos` on purpose, so the one test that compares two evaluations uses a tolerance.
+- **Points and directions are separate calls.** `transform_point3` uses `w = 1` and `transform_vector3` uses `w = 0`; neither divides by `w`, so both are for affine transforms. Projection matrices (depth 0..1, right-handed) are not in this card; they belong with the camera and render work, where a consumer exists.
+- **`Default` is the identity.** A default transform leaves things where they are (unlike the vectors, where the default is zero, as for numbers). `ZERO` is there for the other meaning.
+- **Checks.** 71 tests (a shared suite per size plus per-type tests; the properties use the seeded `Pcg32`, the determinant is compared with an `f64` Laplace expansion, the inverse with the identity on both sides). Mutation on `matrix.rs`: the first full run had 307 mutants, 294 caught, 10 unviable and 3 missed in a guard that the finiteness check made redundant; the guard was simplified, an overflow test added, and the rerun of the 178 mutants in the two `inverse` functions caught all. Line coverage of `matrix.rs` 99.91%, Miri clean, release profile green. Safe code only.
+- **Not measured: speed.** No benchmark and no consumer exist yet. The implementation converts through flat arrays and relies on the compiler to unroll them; whether a hand-written `Mat4 * Vec4` or a SIMD one pays is for a benchmark to show.
