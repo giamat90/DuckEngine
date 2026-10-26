@@ -1,9 +1,11 @@
 //! The counting allocator installed as the global allocator of this test binary.
 
-use base::alloc::{CountingAllocator, count_allocations, current_counts};
+use base::alloc::{AllocCounts, CountingAllocator, count_allocations, current_counts};
 use base::log::{Level, Logger, MemorySink, NullSink};
 use std::alloc::System;
 use std::hint::black_box;
+use std::sync::Barrier;
+use std::thread;
 
 #[global_allocator]
 static ALLOCATOR: CountingAllocator<System> = CountingAllocator::new(System);
@@ -104,4 +106,60 @@ fn logging_to_a_memory_sink_does_allocate() {
         log.log(Level::Info, "frame", format_args!("frame {}", 1));
     });
     assert!(counts.allocations > 0);
+}
+
+/// Allocates `blocks` one-byte boxes in a `Vec` with reserved capacity (so exactly `blocks + 1`
+/// allocations), grows the `Vec` by one slot (one reallocation), waits at `meeting` so that two threads are inside their measurement at the same
+/// time, frees everything and returns what this thread's counters saw.
+fn allocate_and_meet(blocks: usize, meeting: &Barrier) -> AllocCounts {
+    let ((), counts) = count_allocations(|| {
+        let mut kept: Vec<Box<u8>> = Vec::with_capacity(blocks);
+        for _ in 0..blocks {
+            kept.push(black_box(Box::new(1_u8)));
+        }
+        kept.reserve_exact(1);
+        meeting.wait();
+        drop(kept);
+    });
+    counts
+}
+
+/// What a thread that ran `allocate_and_meet(blocks, ..)` must have counted, all four counters.
+fn expected_counts(blocks: usize) -> AllocCounts {
+    let blocks = blocks as u64;
+    let slot = size_of::<Box<u8>>() as u64;
+    AllocCounts {
+        allocations: blocks + 1,
+        reallocations: 1,
+        deallocations: blocks + 1,
+        // the boxes, the list, and the list again at its grown size
+        bytes_requested: blocks + blocks * slot + (blocks + 1) * slot,
+    }
+}
+
+#[test]
+fn each_thread_counts_only_its_own_allocations_while_both_run_at_once() {
+    const MAIN_BLOCKS: usize = 3;
+    const WORKER_BLOCKS: usize = 50;
+    let meeting = Barrier::new(2);
+    let (main_seen, worker_seen) = thread::scope(|scope| {
+        let worker = scope.spawn(|| allocate_and_meet(WORKER_BLOCKS, &meeting));
+        let main_seen = allocate_and_meet(MAIN_BLOCKS, &meeting);
+        (main_seen, worker.join().unwrap_or_default())
+    });
+    assert_eq!(main_seen, expected_counts(MAIN_BLOCKS));
+    assert_eq!(worker_seen, expected_counts(WORKER_BLOCKS));
+}
+
+#[test]
+fn a_new_thread_starts_counting_from_zero() {
+    // This thread has allocated before, so a counter shared with the new thread would not be zero.
+    let _earlier = black_box(Box::new(0_u8));
+    let seen = thread::scope(|scope| scope.spawn(current_counts).join().unwrap_or_default());
+    // Deallocations are not asserted: std hands the new thread blocks made by its parent and the
+    // new thread frees them, which is counted there (and is std's business, not ours).
+    assert_eq!(
+        (seen.allocations, seen.reallocations, seen.bytes_requested),
+        (0, 0, 0)
+    );
 }

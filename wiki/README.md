@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.20 (2026-10-26).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.21 (2026-10-26).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.21** - Cross-thread isolation of the counting allocator is now tested ([core-runtime](architecture/core-runtime.md) note updated). Task 1-6.
 > - **v0.20** - Owner decision: threads may be created in test-only code of L0-L2 crates (`#[cfg(test)]` items, `tests/` folder); production code stays banned. New optional key `allow_in_tests` of a `[[banned_use]]` rule in `gates/architecture.toml`, set on the thread rule only ([ports-and-adapters](architecture/ports-and-adapters.md), [overview](architecture/overview.md), [core-runtime](architecture/core-runtime.md)). Task 1-4.
 > - **v0.19** - Owner rule: every task card has an id `<phase>-<n>` from the moment it is created, found by checking board, branches, reviews and open PRs ([workflow/board-management §3](workflow/board-management.md), digest §11). Task 1-5.
 > - **v0.18** - New page [spikes/allocator-spike](spikes/allocator-spike.md): results of the allocator spike (arena, pool, reused `Vec`, counting allocator, mimalloc; Windows). Owner asked to apply its proposals 1-5: order of preference for allocation tools, per-thread counting allocator, arena scope and the global-allocator benchmark task in phase 1, ADR-0022 (proposed), risk R-22 ([core-runtime §2](architecture/core-runtime.md), [roadmap](workflow/roadmap.md), digest §4). Task 1-0 (card 1-2 stays the counting-allocator code card named in the 1-1 design note).
