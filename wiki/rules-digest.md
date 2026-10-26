@@ -1,6 +1,6 @@
 # Rules digest (the short version agents load)
 
-Status: derived from the wiki on 2026-10-24 (v0.12); section 9 updated for the GitHub Free plan. The wiki pages are canonical; if this digest and a page disagree, the page wins and the digest is fixed. A CI check (phase 0a) compares the numbers below with the gate configuration. `CLAUDE.md` imports this file and nothing else from the wiki by default.
+Status: derived from the wiki on 2026-10-24 (v0.12); section 9 updated for the GitHub Free plan; section 4 updated for the allocator spike (v0.18). The wiki pages are canonical; if this digest and a page disagree, the page wins and the digest is fixed. A CI check (phase 0a) compares the numbers below with the gate configuration. `CLAUDE.md` imports this file and nothing else from the wiki by default.
 
 ## 1. Mission and priorities
 
@@ -28,7 +28,8 @@ DuckEngine: a game engine written from scratch in **Rust**. Defining properties:
 - `unsafe` only in allowlisted modules with a per-module budget; every block has a `// SAFETY:` comment; the count is a metric.
 - No `unwrap`/`expect` in engine code; errors are values; `panic = abort`; no panics across module boundaries.
 - `std` containers by default; own containers only where they do not fit or a benchmark shows a win (arena-backed containers are own code).
-- Zero heap allocations per frame on hot paths (counting allocator in tests).
+- Zero heap allocations per frame on hot paths (counting allocator with **per-thread counters** in tests).
+- Allocation tools in this order: design the allocation away, reuse capacity (`clear()`, `with_capacity`), arena (per-frame or per-job scratch), pool + handles (long-lived objects with churn), then the general allocator. An arena has fixed capacity, holds only types without drop glue, resets with `reset(&mut self)` and reports failure as a value. The global allocator is one `#[global_allocator]` line in L4, chosen by the phase-1 benchmark on Windows and Linux (the default allocator until then); a third-party allocator needs an owner decision (ADR-0022 defines its tier: L4, no port) and a `THIRD_PARTY.md` entry with the default as exit plan.
 - Measurable clean-code limits only (see gate config): function length warn > 60, cyclomatic warn > 10 / fail > 15, cognitive fail > 20, nesting <= 3, parameters warn > 3 / fail > 5, duplication <= 3%, no dead code, no magic numbers, rustfmt, Clippy clean. A deviation in a hot path needs a `PERF:` comment naming an existing benchmark (counted and reported).
 
 ## 5. Determinism (simulation code)

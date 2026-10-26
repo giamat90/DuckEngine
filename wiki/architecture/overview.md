@@ -128,7 +128,7 @@ Gate: nothing in this section is allowed to add work to phases 0-7 beyond the li
 
 - **Handles, not pointers** across module boundaries (32-bit index + generation). Benefits: serialisable, relocatable storage, safe stale detection, fewer double-frees (Box2D v3 reasoning [S](https://box2d.org/posts/2024/08/releasing-box2d-3.0)).
 - **Error handling:** no panics in runtime layers (`panic = abort`, errors are values); `Result<T, Error>`-style returns and assertions with a debug/release policy [P].
-- **Allocation:** hot paths take an arena/allocator explicitly; no hidden heap allocation per frame (counting allocator in tests).
+- **Allocation:** hot paths take an arena/allocator explicitly; no hidden heap allocation per frame (counting allocator in tests). Order of preference and evidence: [core-runtime §2](core-runtime.md).
 - **Threading:** one injectable job system; subsystems never spawn raw threads (except the audio device thread owned by its adapter).
 - **Determinism:** simulation modules take an explicit fixed `dt` and seed; no hidden clocks or global RNG.
 - **Public ABI:** ordinary Rust (generics, traits) between modules; a **C ABI** (`#[repr(C)]` plain data, free functions, versioned) only at plug-in boundaries (N-11), as in Box2D and The Machinery.
