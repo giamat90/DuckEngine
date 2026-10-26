@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.27 (2026-10-26).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.28 (2026-10-26).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.28** - Handle size: the conventions page said "32-bit index + generation by default" while `Handle` is 8 bytes (32-bit index + 32-bit generation, exact stale detection). The owner confirmed 8 bytes; conventions, core-runtime and overview now say so. Task 1-15.
 > - **v0.27** - Doc-ambiguity check after the D2 withdrawal: the replay-hash test compares hashes within one run (twice, and at 1 and N threads, one machine); a stored golden hash of simulation state is dropped, because a CPU-dispatched libm can change it between hosts of the same image and D0 is "same machine". Task 1-14.
 > - **v0.26** - `gates/architecture.toml`: the two libm float-function bans (`sin`, `cos`, `exp`, ... in `physics` and `base`) were removed, following the withdrawal of D2 (v0.25). The `HashMap`/`HashSet` and unstable-sort bans stay (they serve D0/D1). The arch-check tests keep their coverage with a fixture. Task 1-13.
 > - **v0.25** - Owner decision (option C): D2, identical results across platforms, is no longer a goal; ARM64 is only a portability proof. D0 and D1 stay required. Withdrawn: own deterministic libm, the cross-platform replay-hash gate and ARM64 replay gate (N-10), the D2 cost report (D-10), risk R-21. Updated: [physics section 3](architecture/physics.md) (with a levels diagram), ADR-0007, Q9, Q16, roadmap phases 1 and 4, quality metrics, digest sections 5 and 7. The arch-check libm bans are unchanged (owner to decide). Task 1-12.

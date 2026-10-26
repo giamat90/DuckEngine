@@ -18,7 +18,7 @@
 - **Math:** own vector/matrix/quaternion types, **generic over dimension** (`Vec2/Vec3/Vec4`, `Mat3/Mat4`, scalar-angle rotation for 2D, quaternion for 3D) so physics, scene and rendering share a skeleton for 2D and 3D (Q3, [physics §4](physics.md)). **Transcendental functions** (`sin`, `cos`, `exp`, ...) come from `std`: own deterministic versions were planned for D2 (Q16, v0.7) and are withdrawn because cross-platform identical results are not pursued (v0.25). Details in [physics §3](physics.md).
 - **SIMD:** a `simd` abstraction in L0 (scalar reference + SSE/AVX/NEON adapters); engine code never touches intrinsics.
 - **Threads/atomics:** use `std` threads and atomics; the job system is still injectable (`IScheduler`) so tests can run a deterministic single-thread scheduler. Memory-ordering rules documented once, in L0.
-- **Handles** (index + generation, 32 or 64 bit) address all long-lived resources.
+- **Handles** (a `u32` index plus a `u32` generation, 8 bytes; [conventions](conventions.md)) address all long-lived resources.
 
 ## 3. Job system (ADR-0004)
 
@@ -251,7 +251,7 @@ Decisions of card 1-3 (arena):
 
 Decisions of card 1-9 (handles and pool):
 
-- **Handle size: 8 bytes, not 4.** [conventions](conventions.md) says "32-bit index + generation by default". A 4-byte handle would leave 8 bits of generation, which wraps after 256 reuses of one slot and then accepts a stale handle; for a pool with churn that is a silent wrong object, not a rare edge. So `Handle` is a `u32` index plus a `u32` generation. A packed 4-byte variant can be added when a profile shows the size matters; the owner may overrule this.
+- **Handle size: 8 bytes, not 4.** [conventions](conventions.md) records this size. A 4-byte handle would leave 8 bits of generation, which wraps after 256 reuses of one slot and then accepts a stale handle; for a pool with churn that is a silent wrong object, not a rare edge. So `Handle` is a `u32` index plus a `u32` generation. A packed 4-byte variant can be added when a profile shows the size matters. The owner confirmed the 8-byte size (card 1-15).
 - **Stale handles are detected exactly.** A slot whose generation cannot advance (`u32::MAX` reached) is retired: it is never put back on the free list, so no handle can ever match it again. Cost: one slot of capacity per 2^32 reuses of that slot.
 - **Fixed capacity, failure as a value.** The capacity is a `u32` given to `with_capacity`; there is no growth, so there is no hidden allocation or move of live objects. A full pool returns `Err(value)` from `insert`, and the value is not lost.
 - **Deterministic reuse.** Fresh slots are issued in index order; freed slots go on a stack and the last freed is reused first. No hash map, no iteration over holes.
