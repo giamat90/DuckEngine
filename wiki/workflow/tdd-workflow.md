@@ -26,7 +26,7 @@ Rules:
 
 ## 2. Two loops (double-loop TDD)
 
-- **Outer loop (acceptance):** a headless scenario test using Null adapters, e.g. "spawn 1,000 bodies, step 600 frames, state hash equals golden" or "render scene X produces command stream Y". It stays red while the inner loop builds the parts.
+- **Outer loop (acceptance):** a headless scenario test using Null adapters, e.g. "spawn 1,000 bodies, step 600 frames, state hash is equal in two runs and at 1 and N threads" or "render scene X produces command stream Y". It stays red while the inner loop builds the parts.
 - **Inner loop (unit):** the classic red-green-refactor on individual functions/classes.
 
 ## 3. Test taxonomy (test pyramid adapted to an engine)
@@ -37,7 +37,7 @@ Rules:
 | Property-based / fuzz | invariants (no NaN, SIMD == scalar, allocator never overlaps) | no | every commit (short), nightly (long) |
 | Component / acceptance | module with Null adapters, deterministic scheduler | no | every commit |
 | **Contract** | one suite per port, run against every adapter | adapters need device (GPU/audio) | CI where available; Null always |
-| Golden / replay | command streams, physics state hashes, audio buffers | no | every commit |
+| Golden / replay | golden: command streams, audio buffers; replay: physics state hashes compared within one run, never stored | no | every commit |
 | Image / audio-fidelity | offscreen render vs reference; spectral checks | GPU | nightly / per backend |
 | Performance | micro + scene benchmarks | stable machine | nightly + on-demand PR bot |
 | Sanitizer / UB builds | full suite under ASan (nightly toolchain), Miri on `unsafe` modules, TSan | no | every PR (ASan; Miri on changed `unsafe`), nightly (TSan) |

@@ -276,7 +276,7 @@ flowchart TB
   GC --> SS["Soft Step solver: substeps, relax, restitution"]
   SS --> Int["integrate (SIMD, bit-identical to scalar)"]
   Int --> Out["outputs: transforms, contact events (sorted deterministically)"]
-  Out --> Hash["replay hash compared against this platform's own golden hash (D0, D1)"]
+  Out --> Hash["replay hashes of two runs and of 1 and N threads compared with each other (D0, D1)"]
   subgraph Jobs["executed on the job system"]
     BP
     NP

@@ -40,7 +40,7 @@ Levels, each with its own test:
 flowchart LR
   D0["D0 same machine, same thread count: required"] --> D1["D1 any thread count: required"]
   D1 -.->|"withdrawn v0.25"| D2["D2 any platform: not pursued"]
-  D0 --- T0["replay hash, per platform"]
+  D0 --- T0["replay hash, within one run, per platform"]
   D1 --- T1["same hash at 1, 2, N threads"]
   D2 --- T2["own libm, no FMA, cross-OS golden hash: not built"]
 ```
@@ -53,16 +53,34 @@ Jolt documents determinism with explicit limits [S aggregator](https://github.co
 2. **SIMD matches scalar bit for bit on the same platform:** property test compares SIMD to scalar bitwise. This keeps the SIMD path testable; it is not a cross-platform promise.
 3. **Own containers where order matters:** no `std` `HashMap`/`HashSet` iteration in simulation (Rust's default hasher is randomly seeded per process, which breaks even D0), no unstable sort on equal keys; use a deterministic hash map, stable `sort`/`sort_by` with a total order, and ordered iteration.
 4. **Own seeded RNG**; no time- or address-dependent values; no pointer-ordering.
-5. **Replay-hash test on every supported platform**: the same scene is run twice and at 1 and N threads, and the hashes must be equal. A stored golden hash is allowed only per platform and runner image, and is regenerated when the image or the toolchain changes (a platform libm update can change a result without any code change). Hashes are not compared between platforms.
+5. **Replay-hash test on every supported platform, within one run:** the same scene is run twice and at 1 and N threads, in the same process on the same machine, and the hashes must be equal. There is **no stored golden hash of simulation state**: a libm picked at run time by CPU features, or a libm update, can change a result between two machines of the same image, and the stored value would then fail with no code change. Hashes are not compared between platforms or between machines. Golden files remain allowed for outputs that do not depend on libm or the CPU (render command streams, for example).
 6. **Control registers and enforcement (N-1):** set and assert the floating-point control state (rounding mode, FTZ/DAZ) at the start of every simulation job, because drivers and audio libraries loaded in-process (OpenGL, GLFW, miniaudio) can change it and that would break even D0 `[K]`. Clippy `disallowed-methods`/`disallowed-types` ban the functions and types listed in [ports-and-adapters](ports-and-adapters.md) from the simulation crates.
+
+```mermaid
+flowchart LR
+  Scene["same scene, same inputs"] --> R1["run A, 1 thread"]
+  Scene --> R2["run B, 1 thread"]
+  Scene --> R3["run C, N threads"]
+  R1 --> H1["hash A"]
+  R2 --> H2["hash B"]
+  R3 --> H3["hash C"]
+  H1 --> Eq{"A = B = C ?"}
+  H2 --> Eq
+  H3 --> Eq
+  Eq -->|"yes"| Pass["test passes (D0 and D1)"]
+  Eq -->|"no"| Fail["test fails"]
+  Store["stored golden hash of simulation state"] -.-x Eq
+```
+
+The replay test reads no stored value: all hashes are produced in the same process on the same machine, so a libm chosen at run time by CPU features cannot change the verdict.
 
 **Consequences of dropping D2 (v0.25):**
 
-- D0 means the same binary on the same machine. A libm picked at run time by CPU features (for example an FMA code path) could differ between two machines of the same OS, so replay files and saves are not guaranteed to replay on another machine, and lockstep or rollback netcode between different machines is not supported by this decision. A server-authoritative design with state snapshots is unaffected.
+- D0 means the same binary on the same machine. A libm picked at run time by CPU features (for example an FMA code path) could differ between two machines of the same OS, so lockstep or rollback netcode between different machines is not supported by this decision. A server-authoritative design with state snapshots is unaffected.
 - A SIMD backend chosen at run time (for example SSE2 versus AVX2) must still be bit-identical to the scalar reference on that machine.
-- Replay-critical paths should avoid libm calls, or record the libm version with any stored golden hash.
+- A replay or save file is valid only on the machine and build that wrote it. A replay-critical path that must survive a machine change has to avoid libm calls, and that is a separate owner decision.
 
-**Withdrawn with D2 (v0.25):** own `sin/cos/tan/atan2/exp/log/pow` (platform libm is allowed in simulation code), the ban on FMA and reciprocal or rsqrt estimates as a cross-ISA rule, the cross-platform golden hash, the ARM64 replay gate (N-10) and the D2 cost report (D-10). The arch-check bans on libm functions in the `physics` and `base` crates were removed from `gates/architecture.toml` in card 1-13; the bans that serve D0 and D1 (`HashMap`/`HashSet`, unstable sort) stay.
+**Withdrawn with D2 (v0.25):** own `sin/cos/tan/atan2/exp/log/pow` (platform libm is allowed in simulation code), the ban on FMA and reciprocal or rsqrt estimates as a cross-ISA rule, the cross-platform golden hash (and, since v0.27, any stored golden hash of simulation state), the ARM64 replay gate (N-10) and the D2 cost report (D-10). The arch-check bans on libm functions in the `physics` and `base` crates were removed from `gates/architecture.toml` in card 1-13; the bans that serve D0 and D1 (`HashMap`/`HashSet`, unstable sort) stay.
 
 ## 4. Dimensionality: 2D and 3D, 2D first (Q3 answered; option B accepted by owner as the default, Q20; the ADR-0018 spike may revert to C)
 
@@ -98,7 +116,7 @@ Owner decision: **both 2D and 3D**; start with 2D physics + 2D graphics, ideally
 | Geometry | GJK/SAT vs brute-force oracle; distance/closest-point; ray cast |
 | Property-based | random scenes: no NaN, no tunnelling beyond epsilon, energy never increases without input, SIMD == scalar |
 | Stability scenes | stacking pyramid / long chain / high mass ratio must stay settled (Soft Step targets these [S](https://box2d.org/posts/2024/08/releasing-box2d-3.0)) |
-| Determinism | replay N steps, hash state per step, compare to golden and across thread counts |
+| Determinism | replay N steps twice and at 1 and N threads in one run, hash state per step, compare the hashes with each other (no stored golden) |
 | Concurrency | TSan job: concurrent queries during `Step` |
 | Benchmarks | N-body/stack/pyramid scenes, CSV output compared with main (Box2D practice) |
 

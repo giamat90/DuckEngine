@@ -115,7 +115,7 @@ Owner stance (Q21c): *"I don't care about the code generated, only its effect on
 
 **Product view contents** (generated, per milestone and in nightly reports):
 
-- Headless **replay result** (state hash matches golden or not).
+- Headless **replay result** (state hashes of repeated runs and thread counts equal or not).
 - **Rendered frames of reference scenes** from every real backend, side by side, plus the diff image versus reference.
 - **Audio render summary** of reference sounds (waveform/spectrogram, loudness, clipping).
 - **Frame-time and memory charts** against the budget, per reference scene.
