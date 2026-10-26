@@ -42,7 +42,32 @@ Adapter kinds: **native** (we write directly against the OS/vendor API - the goa
 | **Denied in L0-L2** | `std::fs`, `std::net`, `std::env`, `std::process`, `std::os::*`, `std::io`, direct clock reads, direct thread spawning (also behind a rename of any module called `thread`, such as `use std::thread as th` or `use self::thread as th`; `thread::sleep`, `current`, `yield_now` and similar are not thread creation and stay allowed when imported without a rename), anything OS-specific (`std::ffi` only in `platform`); `extern` blocks and `#[link]`; `std::arch`, `core::arch` and `asm!` outside `base`; reached only through ports or inside adapters/tools |
 | **Denied in simulation crates (physics, math used by it)** | `HashMap`/`HashSet`, `slice::sort_unstable*`, `Instant::now`, `SystemTime`, any unseeded RNG, implicit FMA contraction and fast-math (Rust has neither; a flag or intrinsic that adds them must not be added; there is no scanner rule for it, review and the protected toolchain and cargo config cover it). An explicit `f32::mul_add` is allowed (rule 1 in [physics](physics.md) section 3). Platform libm functions (`sin`, `cos`, `exp`, `powf`, ...) are allowed: their ban was removed with D2 (card 1-13) |
 
-Enforced by the **banned-import check** (crate graph + `use` scan, the Rust form of the old "banned-import" check) and by Clippy `disallowed-methods` / `disallowed-types` configured per crate in `clippy.toml` `[K, verify V5]`.
+Enforced today by the **banned-import check** (crate graph + `use` scan from `gates/architecture.toml`, the Rust form of the old "banned-import" check): the OS-facing `std` modules, thread creation and clocks (L0-L2, outside the crates that own them), and in the `physics` crate only `HashMap`/`HashSet` (tests included) and unstable sort. Math code that lives in `base` is not covered by the `physics` rules and relies on review. Not scanned: unseeded RNG and implicit FMA or fast-math (review and the protected toolchain and cargo config), and the floating-point control state (a runtime assertion in each simulation job). Clippy `disallowed-methods` / `disallowed-types` is **not configured yet**; it is planned as a second line, per crate in a `clippy.toml`, when the first simulation crate exists (phase 4) `[K, verify V5]`.
+
+```mermaid
+flowchart LR
+  subgraph Bans["bans for simulation code"]
+    B1["HashMap and HashSet"]
+    B2["unstable sort and selection"]
+    B3["clocks: Instant, SystemTime (all of L0-L2)"]
+    B4["unseeded RNG"]
+    B5["implicit FMA and fast-math"]
+    B6["floating-point control state"]
+  end
+  Arch["arch-check scan, gates/architecture.toml: enforced today"]
+  Rev["review and the protected toolchain and cargo config"]
+  Test["runtime assertion at the start of each simulation job, tested"]
+  Clippy["Clippy disallowed-methods: planned with the physics crate, phase 4, same bans"]
+  B1 --> Arch
+  B2 --> Arch
+  B3 --> Arch
+  B4 --> Rev
+  B5 --> Rev
+  B6 --> Test
+  B1 -.-> Clippy
+  B2 -.-> Clippy
+  B3 -.-> Clippy
+```
 
 `THIRD_PARTY.md` (phase 0) lists every external thing the repository touches - including each OS API family and each external crate - with tier, license, version, port, replacement plan. CI fails if something external appears that is not listed.
 

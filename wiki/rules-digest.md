@@ -1,6 +1,6 @@
 # Rules digest (the short version agents load)
 
-Status: derived from the wiki on 2026-10-24 (v0.12); section 9 updated for the GitHub Free plan; section 4 updated for the allocator spike (v0.18); section 11 updated for card ids (v0.19); section 6 updated for the UML rule (v0.23); sections 5 and 7 updated for the withdrawal of D2 (v0.25); section 5 updated for the within-run replay hash (v0.27). The wiki pages are canonical; if this digest and a page disagree, the page wins and the digest is fixed. A CI check (phase 0a) compares the numbers below with the gate configuration. `CLAUDE.md` imports this file and nothing else from the wiki by default.
+Status: derived from the wiki on 2026-10-24 (v0.12); section 9 updated for the GitHub Free plan; section 4 updated for the allocator spike (v0.18); section 11 updated for card ids (v0.19); section 6 updated for the UML rule (v0.23); sections 5 and 7 updated for the withdrawal of D2 (v0.25); section 5 updated for the within-run replay hash (v0.27) and for who enforces the bans (v0.30). The wiki pages are canonical; if this digest and a page disagree, the page wins and the digest is fixed. A CI check (phase 0a) compares the numbers below with the gate configuration. `CLAUDE.md` imports this file and nothing else from the wiki by default.
 
 ## 1. Mission and priorities
 
@@ -34,7 +34,7 @@ DuckEngine: a game engine written from scratch in **Rust**. Defining properties:
 
 ## 5. Determinism (simulation code)
 
-D0 same machine and thread count, D1 across thread counts (both required); **D2 identical across platforms is not pursued (owner, v0.25)**. Rules: strict IEEE (Rust default: no fast-math, no implicit FMA); SIMD bit-identical to scalar on the same platform; no `HashMap`/`HashSet` iteration, no unstable sort on equal keys; own seeded RNG; floating-point control registers set and asserted at the start of each simulation job; Clippy `disallowed-methods` enforces the bans; replay hash compared within one run (twice, and at 1 and N threads) on one machine, with no stored golden hash of simulation state and never between platforms. Own `sin/cos/exp/...` are not required.
+D0 same machine and thread count, D1 across thread counts (both required); **D2 identical across platforms is not pursued (owner, v0.25)**. Rules: strict IEEE (Rust default: no fast-math, no implicit FMA); SIMD bit-identical to scalar on the same platform; no `HashMap`/`HashSet` iteration, no unstable sort on equal keys; own seeded RNG; floating-point control registers set and asserted at the start of each simulation job; the arch-check scan enforces the bans a scanner can see (`HashMap`/`HashSet`, unstable sort, clocks), Clippy `disallowed-methods` is planned for the physics crate (phase 4) and is not configured yet; replay hash compared within one run (twice, and at 1 and N threads) on one machine, with no stored golden hash of simulation state and never between platforms. Own `sin/cos/exp/...` are not required.
 
 ## 6. TDD and review
 
