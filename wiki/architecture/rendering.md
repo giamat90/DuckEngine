@@ -92,3 +92,31 @@ Both frontends are tested the same way (golden command streams, contract tests);
 ## 8. Out of scope for v1
 
 Ray tracing, mesh shaders, virtualized geometry, advanced GI. The port reserves room (capabilities) but nothing is built before the basics are measured.
+
+## 9. Can the graphics APIs be avoided? (feasibility, owner question 2026-10-26)
+
+Question: is it possible to avoid OpenGL, Vulkan and D3D12? Answer: the GPU interface cannot be avoided, the third-party code around it can, and a CPU fallback is possible but is not a replacement. **The plan of section 5 is kept unchanged** (owner, 2026-10-26).
+
+```mermaid
+flowchart TB
+  P[IRenderDevice port, ours] --> A1[GPU adapters: OpenGL 4.5, Vulkan, D3D12]
+  P --> A2[Null adapter]
+  P -.->|optional, not planned| A3[Software rasterizer, CPU, reference only]
+  A1 --> B{Declarations and loader}
+  B -->|option 1, pinned binding crate, T1-bindings| C1[Third-party binding crate]
+  B -->|option 2, own generated declarations| C2[Own FFI + runtime DLL loading]
+  C1 --> D[Vendor driver]
+  C2 --> D
+  A3 --> W[OS window: present pixels only]
+```
+
+| Option | Verdict | Why |
+|---|---|---|
+| **Avoid the GPU APIs altogether** | Not feasible | They are the interface the drivers expose; the alternative is writing a vendor GPU driver (proprietary, undocumented, kernel privileges). |
+| **Avoid third-party binding crates** (own FFI declarations, `vulkan-1.dll`, `d3d12.dll`, `opengl32.dll` loaded at run time) | Feasible, moderate cost (weeks per backend) | Removes a dependency, not the API. Vulkan: declarations generated from Khronos `vk.xml` by a dev-time tool (tier T2). OpenGL: own function loader. D3D12: heaviest, it is COM (vtables hand-declared or generated from Microsoft metadata). Nothing above `IRenderDevice` changes. |
+| **Software rasterizer in plain Rust** | Feasible as a reference or test backend only | No graphics API needed (only a way to show pixels); deterministic and bit-exact, good for golden images and for proving the port is not shaped around one API. Far slower than a GPU for real 3D, so it conflicts with the Performance goal as a replacement. |
+
+**Decision (owner, 2026-10-26): keep the plan** (Null -> OpenGL 4.5 -> Vulkan -> D3D12, Metal later; external graphics code stays behind `IRenderDevice` per [ports-and-adapters](ports-and-adapters.md)). Two points stay open and are decided later, not now:
+
+- **Declarations source** (pinned binding crates vs own generated declarations): decided at the first real backend (OpenGL 4.5); both fit the tiers in [ports-and-adapters](ports-and-adapters.md). Own declarations are cleaner against lock-in, crates are faster to start.
+- **Software reference backend**: not in the plan; it needs a new card if the owner wants it.
