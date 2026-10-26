@@ -62,7 +62,7 @@ Jolt documents determinism with explicit limits [S aggregator](https://github.co
 - A SIMD backend chosen at run time (for example SSE2 versus AVX2) must still be bit-identical to the scalar reference on that machine.
 - Replay-critical paths should avoid libm calls, or record the libm version with any stored golden hash.
 
-**Withdrawn with D2 (v0.25):** own `sin/cos/tan/atan2/exp/log/pow` (platform libm is allowed in simulation code), the ban on FMA and reciprocal or rsqrt estimates as a cross-ISA rule, the cross-platform golden hash, the ARM64 replay gate (N-10) and the D2 cost report (D-10). The arch-check bans on libm functions in the `physics` and `base` crates (`gates/architecture.toml`) are governance configuration and were not changed by this decision; the owner decides whether to relax them, before phase 4 starts, because physics code that calls `sin` or `cos` would otherwise fail the architecture check.
+**Withdrawn with D2 (v0.25):** own `sin/cos/tan/atan2/exp/log/pow` (platform libm is allowed in simulation code), the ban on FMA and reciprocal or rsqrt estimates as a cross-ISA rule, the cross-platform golden hash, the ARM64 replay gate (N-10) and the D2 cost report (D-10). The arch-check bans on libm functions in the `physics` and `base` crates were removed from `gates/architecture.toml` in card 1-13; the bans that serve D0 and D1 (`HashMap`/`HashSet`, unstable sort) stay.
 
 ## 4. Dimensionality: 2D and 3D, 2D first (Q3 answered; option B accepted by owner as the default, Q20; the ADR-0018 spike may revert to C)
 

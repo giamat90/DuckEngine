@@ -405,6 +405,21 @@ class Config(unittest.TestCase):
 
 REAL = (REPO / "gates" / "architecture.toml").read_text(encoding="utf-8")
 
+# The libm bans were removed from the real config (D2 withdrawn, card 1-13). The patterns stay here as a
+# fixture, so the scan is still tested against every spelling of a method-form and a path-form float ban.
+# It is appended to the real config, so it must not collide with a future real rule that matches the same text.
+LIBM_FIXTURE = r"""
+[[banned_use]]
+pattern = '\.\s*(?:sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|sin_cos|exp|exp2|exp_m1|ln|ln_1p|log|log2|log10|powf|powi|hypot|cbrt|mul_add)\s*\('
+reason = "libm fixture, method form"
+crates = ["physics"]
+
+[[banned_use]]
+pattern = '\b(?:f32|f64)\s*::\s*(?:sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|sin_cos|exp|exp2|exp_m1|ln|ln_1p|log|log2|log10|powf|powi|hypot|cbrt|mul_add)\b'
+reason = "libm fixture, path form"
+crates = ["physics", "base"]
+"""
+
 
 def banned(test, text, crate="base", name="lib.rs"):
     return rules(make(test, {crate: ([], {name: text})}, REAL))
@@ -434,11 +449,18 @@ class EvasionOfBannedUse(unittest.TestCase):
     def test_the_job_system_may_spawn_threads(self):
         self.assertEqual([], banned(self, "std::thread::spawn(f);", crate="jobs"))
 
-    def test_libm_floats_in_every_spelling_are_caught_in_a_simulation_crate(self):
+    def test_libm_floats_in_every_spelling_are_caught_by_a_float_ban_rule(self):
         for text in ("x.asin()", "x.sin_cos()", "x.tanh()", "x.log2()", "x.exp2()", "x.cbrt()", "f32::sin(x)", "x.sin ()", "x\n    .sin\n    ()",
                      "x.atan()", "x.ln_1p()", "f64::powf(a, b)"):
             with self.subTest(text=text):
-                self.assertEqual(["banned-use"], banned(self, text, crate="physics"))
+                self.assertEqual(["banned-use"], rules(make(self, {"physics": ([], {"lib.rs": text})}, REAL + LIBM_FIXTURE)))
+
+    def test_libm_floats_are_allowed_in_the_real_config_since_d2_was_withdrawn(self):
+        for text in ("x.sin()", "x.exp()", "f32::cos(x)", "f64::powf(a, b)", "x.mul_add(a, b)"):
+            with self.subTest(text=text):
+                self.assertEqual([], banned(self, text, crate="physics"))
+                self.assertEqual([], banned(self, text, crate="base"))
+                self.assertEqual([], banned(self, text, crate="render"))
 
     def test_exact_float_operations_are_allowed_in_a_simulation_crate(self):
         self.assertEqual([], banned(self, "x.sqrt() + x.abs() + x.floor() + x.min(y)", crate="physics"))
@@ -576,10 +598,11 @@ class ForeignCodeAndDeterminism(unittest.TestCase):
     def test_other_core_modules_stay_allowed(self):
         self.assertEqual([], banned(self, "use core::mem; use core::sync::atomic::AtomicU32;", crate="render"))
 
-    def test_libm_free_functions_are_refused_in_base_because_the_math_facade_lives_there(self):
+    def test_a_float_ban_rule_scoped_to_base_catches_the_path_form_only(self):
         for text in ("f32::cos(x)", "f64::powf(x, y)"):
             with self.subTest(text=text):
-                self.assertEqual(["banned-use"], banned(self, text, crate="base"))
+                self.assertEqual(["banned-use"], rules(make(self, {"base": ([], {"lib.rs": text})}, REAL + LIBM_FIXTURE)))
+        self.assertEqual([], rules(make(self, {"base": ([], {"lib.rs": "x.sin()"})}, REAL + LIBM_FIXTURE)))
 
     def test_base_may_use_methods_named_like_libm_ones_exact_floats_and_hash_containers(self):
         text = "logger.log(Level::Info); self.exp(1); x.sqrt() + x.abs(); let m: HashMap<u32, u32> = HashMap::new(); v.sort_unstable();"
