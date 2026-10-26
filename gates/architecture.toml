@@ -77,8 +77,8 @@ reason = "std imported as a whole, aliased or by glob; name the std items so the
 allow_in = ["platform"]
 
 [[banned_use]]
-pattern = '\bthread\s*::\s*(?:spawn|scope|Builder|\*)|\bstd\s*::\s*thread\s*::\s*\*'
-reason = "direct thread creation; only the job system and platform may spawn threads (test-only code may)"
+pattern = '\bthread\s*::\s*(?:spawn|scope|Builder|\*)|\bstd\s*::\s*thread\s*::\s*\*|\bthread\s+as\b'
+reason = "direct thread creation, or a rename of a module called thread that hides it; only the job system and platform may spawn threads (test-only code may)"
 allow_in = ["jobs", "platform"]
 allow_in_tests = true
 

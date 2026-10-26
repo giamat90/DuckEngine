@@ -325,6 +325,66 @@ class AllowInTests(unittest.TestCase):
         self.assertIn("lib.rs:4", ws.check(THREAD_CONFIG)[0].message)
 
 
+class RealThreadRule(unittest.TestCase):
+    """Card 1-7: the thread rule of the real gate configuration, including module aliases."""
+
+    CALL = "fn run() { th::spawn(|| {}); }\n"
+
+    def found(self, text):
+        config = ac.load_config((REPO / "gates" / "architecture.toml").read_text(encoding="utf-8"))
+        ws = Workspace(self, {"base": ([], {"lib.rs": text})})
+        return rules(ac.check(ws.metadata, config))
+
+    def test_a_module_alias_of_std_thread_is_refused(self):
+        for use in ("use std::thread as th;", "use std::thread::{self as th};", "use std::{thread as th};",
+                    "use ::std::thread as th;", "pub use std::thread as th;",
+                    "use std::{sync::Arc, thread::{self as th}};", "use  std :: thread  as  th ;"):
+            self.assertEqual(["banned-use"], self.found(use + "\n" + self.CALL), use)
+
+    def test_a_rename_of_any_module_called_thread_is_refused(self):
+        for text in ("use std::thread;\nuse self::thread as th;\n" + self.CALL, "use thread as th;\n" + self.CALL,
+                     "use super::thread as th;\n", "use crate::thread as th;\n", "use thread::{self as th};\n",
+                     "mod m { pub use std::thread; }\nuse m::thread as th;\n" + self.CALL):
+            self.assertEqual(["banned-use"], self.found(text), text)
+
+    def test_raw_identifiers_do_not_hide_a_thread(self):
+        for text in ("use std::r#thread as th;\n" + self.CALL, "fn f() { std::thread::r#spawn(|| {}); }",
+                     "fn f() { std::r#thread::spawn(|| {}); }", "use std::thread::r#spawn as go;\n",
+                     "fn f() { std::thread::r#Builder::new(); }"):
+            self.assertEqual(["banned-use"], self.found(text), text)
+
+    def test_a_raw_identifier_does_not_hide_another_banned_module_either(self):
+        self.assertEqual(["banned-use"], self.found("fn f() { std::r#fs::read(p); }"))
+
+    def test_raw_strings_are_still_blanked_and_raw_identifiers_elsewhere_are_harmless(self):
+        self.assertEqual([], self.found('const S: &str = r#"std::thread::spawn"#;\nfn f() { let r#type = 1; }\n'))
+
+    def test_the_module_alias_case_with_nothing_else_banned_in_the_line(self):
+        self.assertEqual(["banned-use"], self.found("use std::{sync::Arc, thread as th};\n" + self.CALL))
+
+    def test_an_alias_of_a_thread_creation_item_is_refused(self):
+        for use in ("use std::thread::spawn as go;", "use std::thread::Builder as B;", "use std::thread::scope as s;",
+                    "use std::thread::{self, spawn as go};"):
+            self.assertEqual(["banned-use"], self.found(use + "\n"), use)
+
+    def test_plain_thread_creation_is_still_refused(self):
+        for text in ("fn r() { std::thread::spawn(|| {}); }", "use std::thread;\nfn r() { thread::spawn(|| {}); }",
+                     "use std::thread::*;"):
+            self.assertEqual(["banned-use"], self.found(text), text)
+
+    def test_the_harmless_thread_items_stay_allowed(self):
+        for text in ("use std::thread;\nfn r() { thread::sleep(d); }", "use std::thread::{sleep, current, yield_now};",
+                     "use std::thread::sleep as nap;", "use std::thread::available_parallelism as cores;",
+                     "fn r() { std::thread::yield_now(); }"):
+            self.assertEqual([], self.found(text), text)
+
+    def test_an_unrelated_module_called_th_is_allowed(self):
+        self.assertEqual([], self.found("mod th { pub fn spawn() {} }\n" + self.CALL))
+
+    def test_a_module_alias_in_test_code_is_allowed(self):
+        self.assertEqual([], self.found("#[cfg(test)]\nmod tests {\n    use std::thread as th;\n    fn t() { th::spawn(|| {}); }\n}\n"))
+
+
 class Config(unittest.TestCase):
     def test_a_layer_outside_0_to_4_is_refused(self):
         with self.assertRaises(ValueError):

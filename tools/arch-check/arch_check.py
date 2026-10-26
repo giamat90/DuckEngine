@@ -16,7 +16,7 @@ file pulled in by a macro other than `include!` escapes it (`#[path]`, also insi
 are refused outright in layers 0-2, as are extern blocks, `#[link]`, and `arch`/`asm!` outside
 `base`; a target whose source file is outside the crate folder is the finding `src-outside`).
 A `path =` key of any other attribute, such as `#[cfg(path = "x")]`, is refused too, and `]` inside
-an attribute ends the attribute match early. A rule with `allow_in_tests = true` (card 1-4) skips `#[cfg(test)]`
+an attribute ends the attribute match early. A type alias of a primitive (`type F = f32; F::sin(x)`) escapes the float-function rule. A rule with `allow_in_tests = true` (card 1-4) skips `#[cfg(test)]`
 items, a `#![cfg(test)]` that is an inner attribute of the file itself (not one inside a module or a macro body) and the crate's `tests/` folder (except a file that a non-test cargo target builds, e.g. a `[lib] path`); the exemption is by character position, so production code on the same line as a test item is still checked; the match is textual and exact (`cfg(not(test))` and
 `cfg(any(test, ..))` are not tests; an out-of-line `#[cfg(test)] mod x;` file is still scanned; the exempt part ends at the item's closing brace or at the first `;` or `,` outside brackets, so a `#[cfg(test)]` item with a comma in generics such as `fn f<A, B>()` is cut short, which is the safe direction). Dev-dependencies are exempt from the layer,
 allowlist and cycle rules (a test may use a null adapter) but not from the
@@ -228,8 +228,12 @@ def _token_end(text, match):
     return match.end()
 
 
+_RAW_IDENT = re.compile(r"(?<![A-Za-z0-9_])r#(?=[A-Za-z_])")
+
+
 def strip_noncode(text):
-    """The text with comments and string or char literals blanked; line numbers are kept."""
+    """The text with comments and string or char literals blanked and raw-identifier prefixes (`r#fs` is `fs`)
+    removed; line numbers are kept."""
     out, pos = [], 0
     while match := _TOKEN.search(text, pos):
         end = _token_end(text, match)
@@ -237,7 +241,7 @@ def strip_noncode(text):
         out.append(re.sub(r"[^\n]", " ", text[match.start():end]))
         pos = end
     out.append(text[pos:])
-    return "".join(out)
+    return _RAW_IDENT.sub("", "".join(out))
 
 
 def _crate_folder(package):
