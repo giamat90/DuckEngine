@@ -7,5 +7,21 @@ publish.workspace = true
 license-file.workspace = true
 description = "Layer 0 base crate: deterministic RNG, logging and assertions (std only, no OS access)."
 
-[lints]
-workspace = true
+# Not `workspace = true`: the workspace forbids unsafe code. This crate denies
+# it instead and allows it in exactly one module (`alloc`), with every block
+# documented (same pattern as `skeleton-unsafe`). The rest repeats the
+# workspace lints.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+too_many_lines = "warn"
+too_many_arguments = "deny"
+cognitive_complexity = "deny"
+excessive_nesting = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"
