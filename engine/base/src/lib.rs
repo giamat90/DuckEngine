@@ -2,6 +2,7 @@
 //! Standard library only, no OS access.
 
 pub mod alloc;
+pub mod arena;
 pub mod assert;
 pub mod log;
 pub mod rng;
