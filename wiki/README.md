@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.18 (2026-10-26).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.19 (2026-10-26).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.19** - Owner rule: every task card has an id `<phase>-<n>` from the moment it is created, found by checking board, branches, reviews and open PRs ([workflow/board-management §3](workflow/board-management.md), digest §11). Task 1-5.
 > - **v0.18** - New page [spikes/allocator-spike](spikes/allocator-spike.md): results of the allocator spike (arena, pool, reused `Vec`, counting allocator, mimalloc; Windows). Owner asked to apply its proposals 1-5: order of preference for allocation tools, per-thread counting allocator, arena scope and the global-allocator benchmark task in phase 1, ADR-0022 (proposed), risk R-22 ([core-runtime §2](architecture/core-runtime.md), [roadmap](workflow/roadmap.md), digest §4). Task 1-0 (card 1-2 stays the counting-allocator code card named in the 1-1 design note).
 > - **v0.17** - New page [workflow/ci-diagrams](workflow/ci-diagrams.md): seven UML views (Mermaid) of how CI, the trusted PR gates and the release work.
 > - **v0.16** - New page [workflow/board-management](workflow/board-management.md): the DuckEngine Trello board is the work queue, agents move cards, create subtasks and propose next tasks on request (owner decision). Rules-digest §11 added.

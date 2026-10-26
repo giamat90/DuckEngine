@@ -1,6 +1,6 @@
 # Rules digest (the short version agents load)
 
-Status: derived from the wiki on 2026-10-24 (v0.12); section 9 updated for the GitHub Free plan; section 4 updated for the allocator spike (v0.18). The wiki pages are canonical; if this digest and a page disagree, the page wins and the digest is fixed. A CI check (phase 0a) compares the numbers below with the gate configuration. `CLAUDE.md` imports this file and nothing else from the wiki by default.
+Status: derived from the wiki on 2026-10-24 (v0.12); section 9 updated for the GitHub Free plan; section 4 updated for the allocator spike (v0.18); section 11 updated for card ids (v0.19). The wiki pages are canonical; if this digest and a page disagree, the page wins and the digest is fixed. A CI check (phase 0a) compares the numbers below with the gate configuration. `CLAUDE.md` imports this file and nothing else from the wiki by default.
 
 ## 1. Mission and priorities
 
@@ -58,4 +58,4 @@ Work inside `DuckEngine/` only. Never read, print or commit `Api-keys.txt`, `Gia
 
 ## 11. Work board
 
-The Trello board DuckEngine is the work queue; git and the wiki are canonical. Agents move cards by the column rules in [board-management](workflow/board-management.md), create subtasks (checklist item, or a separate card when it needs its own PR), propose next tasks only when asked and wait for the owner's pick, never delete (archive only), never touch other boards, never put secrets on cards. If Trello is unreachable, pending card updates are an ASAP to-do, applied before the next task.
+The Trello board DuckEngine is the work queue; git and the wiki are canonical. Agents move cards by the column rules in [board-management](workflow/board-management.md), create subtasks (checklist item, or a separate card when it needs its own PR), propose next tasks only when asked and wait for the owner's pick, never delete (archive only), never touch other boards, never put secrets on cards. Every task card has an id `<phase>-<n>` from the moment it is created; the same id names its branch and review file (rule and how to find the next free number: board-management §3). If Trello is unreachable, pending card updates are an ASAP to-do, applied before the next task.

@@ -25,6 +25,7 @@ Backward moves are allowed and need a comment saying why (a failed gate, a chang
 ## 3. Card format
 
 - **Title:** `<phase>-<n> short imperative title`, for example `0a-1 Verify GitHub plan features (V1)`.
+- **Id (owner decision 2026-10-26: every ticket always has an id):** a task card gets its id **when it is created**, in any column, including Backlog and ideas. There is no card without an id and no "id to be assigned later". The next free `n` of the phase is found by checking the board (all columns, archived cards included), local and remote `agent/*` branches, the `reviews/` folder and open PRs, and taking the highest used number + 1. The same id names the branch (`agent/<id>-<slug>`), the review report (`reviews/<id>.md`) and appears in the PR title and the commit subject. An id is never reused or renumbered once it appears in a branch, review, commit or PR. The description starts with `Task id: <id>`. Phase cards in Backlog are epics identified by `Phase <p>`; they are not task cards and hold no work of their own.
 - **Description:** goal, acceptance criteria (measurable where possible), links to the wiki pages and ADRs, change class once the classifier has run.
 - **Checklist:** the test list (TDD step 1) and the review steps R1-R8 as items, ticked as they happen.
 - **Comments:** short status notes by the agent: started, blocked, report ready, PR link, release version. Never secrets, tokens or content from outside `DuckEngine/`.
