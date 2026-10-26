@@ -26,7 +26,7 @@ fixed dt -> [broadphase update] -> [narrowphase pairs] -> [contact/constraint bu
 | CCD | hybrid speculative + time-of-impact | Box2D v3 [S](https://box2d.org/posts/2024/08/releasing-box2d-3.0) |
 | Large worlds | precision-aware algorithms; document the usable world size, recentre or switch to double beyond it | Box2D v3 notes ~20 km usable [S](https://box2d.org/posts/2024/08/releasing-box2d-3.0) |
 
-## 3. Determinism (ADR-0007; owner: D0 and D1 required, D2 is a goal since v0.7)
+## 3. Determinism (ADR-0007; owner: D0 and D1 required, D2 not pursued since v0.25)
 
 Levels, each with its own test:
 
@@ -34,21 +34,35 @@ Levels, each with its own test:
 |---|---|---|
 | **D0** Same binary, same machine, same inputs -> same state | replay hash test, fixed dt, ordered iteration, no data-race-dependent results | low; **required** |
 | **D1** Same binary across runs with different thread counts | deterministic constraint ordering (coloring is deterministic), reduction order fixed | medium; **required** |
-| **D2** Across compilers/CPUs/platforms | rules below | high; **goal (owner, v0.7)**, CI gate from phase 4 |
+| **D2** Across compilers/CPUs/platforms | would need own math functions, no FMA or estimate instructions, and a golden hash shared by Windows, Linux and ARM64 | high; **not pursued (owner, v0.25, card 1-12)**. It was a goal from v0.7 to v0.24. ARM64 is a portability proof only. A new owner decision can bring it back |
+
+```mermaid
+flowchart LR
+  D0["D0 same machine, same thread count: required"] --> D1["D1 any thread count: required"]
+  D1 -.->|"withdrawn v0.25"| D2["D2 any platform: not pursued"]
+  D0 --- T0["replay hash, per platform"]
+  D1 --- T1["same hash at 1, 2, N threads"]
+  D2 --- T2["own libm, no FMA, cross-OS golden hash: not built"]
+```
 
 Jolt documents determinism with explicit limits [S aggregator](https://github.com/hyv1001/JoltPhysics); we do the same: the limits are part of the spec, and tested by a **state-hash replay test** in CI.
 
-**Rules that make D2 achievable (simulation code only; everything else may use `std`)**
+**Rules that keep D0 and D1 (simulation code only; everything else may use `std`)**
 
-1. **Strict IEEE float:** no fast-math, no FMA contraction (`-ffp-contract=off` or equivalent), no x87, fixed rounding mode and denormal policy. Rust has no implicit contraction or fast-math by default, which helps.
-2. **Own math functions** for `sin/cos/tan/atan2/exp/log/pow` (platform libm results differ); `+ - * / sqrt` are exactly specified by IEEE and may use hardware.
-3. **SIMD must match scalar bit for bit** on every ISA: no reciprocal or rsqrt estimate instructions (x86 and ARM differ), no FMA, fixed lane-reduction order; property test compares SIMD to scalar bitwise.
-4. **Own containers where order matters:** no `std` `HashMap`/`HashSet` iteration in simulation (Rust's default hasher is randomly seeded per process, which breaks even D0), no unstable sort on equal keys; use a deterministic hash map, stable `sort`/`sort_by` with a total order, and ordered iteration.
-5. **Own seeded RNG**; no time- or address-dependent values; no pointer-ordering.
-6. **Replay-hash test on every supported platform** compared against one golden hash; a mismatch fails CI.
-7. **Control registers and enforcement (N-1):** set and assert the floating-point control state (rounding mode, FTZ/DAZ) at the start of every simulation job, because drivers and audio libraries loaded in-process (OpenGL, GLFW, miniaudio) can change it and that would break even D0 `[K]`. Clippy `disallowed-methods`/`disallowed-types` ban the functions and types listed in [ports-and-adapters](ports-and-adapters.md) from the simulation crates.
+1. **Strict IEEE float by default:** Rust has no fast-math and no implicit FMA contraction; keep it that way (no `fast-math`-style intrinsics, no x87, fixed rounding mode).
+2. **SIMD matches scalar bit for bit on the same platform:** property test compares SIMD to scalar bitwise. This keeps the SIMD path testable; it is not a cross-platform promise.
+3. **Own containers where order matters:** no `std` `HashMap`/`HashSet` iteration in simulation (Rust's default hasher is randomly seeded per process, which breaks even D0), no unstable sort on equal keys; use a deterministic hash map, stable `sort`/`sort_by` with a total order, and ordered iteration.
+4. **Own seeded RNG**; no time- or address-dependent values; no pointer-ordering.
+5. **Replay-hash test on every supported platform**: the same scene is run twice and at 1 and N threads, and the hashes must be equal. A stored golden hash is allowed only per platform and runner image, and is regenerated when the image or the toolchain changes (a platform libm update can change a result without any code change). Hashes are not compared between platforms.
+6. **Control registers and enforcement (N-1):** set and assert the floating-point control state (rounding mode, FTZ/DAZ) at the start of every simulation job, because drivers and audio libraries loaded in-process (OpenGL, GLFW, miniaudio) can change it and that would break even D0 `[K]`. Clippy `disallowed-methods`/`disallowed-types` ban the functions and types listed in [ports-and-adapters](ports-and-adapters.md) from the simulation crates.
 
-**Cost to measure early (phase 1):** the D2 rules forbid FMA and reciprocal-estimate instructions in simulation code, which costs some solver throughput; the benchmark of the phase-1 `simd` and math work must report that cost, and D2 applies to simulation code only (rendering and audio may use FMA).
+**Consequences of dropping D2 (v0.25):**
+
+- D0 means the same binary on the same machine. A libm picked at run time by CPU features (for example an FMA code path) could differ between two machines of the same OS, so replay files and saves are not guaranteed to replay on another machine, and lockstep or rollback netcode between different machines is not supported by this decision. A server-authoritative design with state snapshots is unaffected.
+- A SIMD backend chosen at run time (for example SSE2 versus AVX2) must still be bit-identical to the scalar reference on that machine.
+- Replay-critical paths should avoid libm calls, or record the libm version with any stored golden hash.
+
+**Withdrawn with D2 (v0.25):** own `sin/cos/tan/atan2/exp/log/pow` (platform libm is allowed in simulation code), the ban on FMA and reciprocal or rsqrt estimates as a cross-ISA rule, the cross-platform golden hash, the ARM64 replay gate (N-10) and the D2 cost report (D-10). The arch-check bans on libm functions in the `physics` and `base` crates (`gates/architecture.toml`) are governance configuration and were not changed by this decision; the owner decides whether to relax them, before phase 4 starts, because physics code that calls `sin` or `cos` would otherwise fail the architecture check.
 
 ## 4. Dimensionality: 2D and 3D, 2D first (Q3 answered; option B accepted by owner as the default, Q20; the ADR-0018 spike may revert to C)
 

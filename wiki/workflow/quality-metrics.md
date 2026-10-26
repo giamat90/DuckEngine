@@ -51,7 +51,7 @@ Why mutation score: coverage says code *ran*; mutation testing says tests would 
 |---|---|---|
 | **Dependency-rule violations** | include/link-graph checker ([ports-and-adapters §5](../architecture/ports-and-adapters.md)) | 0 |
 | **Banned-import violations** (OS, vendor, third-party headers in L0-L2) | denylist scan | 0 |
-| **Cross-platform replay hash** (D2) | CI job compares simulation state hashes on Windows x86-64, Linux x86-64 and Linux ARM64 against a golden hash (N-10) | identical |
+| **Replay hash per platform** (D0/D1) | CI job compares simulation state hashes of repeated runs and of different thread counts against that platform's own golden hash (D2, N-10, withdrawn v0.25) | identical |
 | **SIMD vs scalar bitwise mismatches** | property test | 0 |
 | Headless-only build (Null adapters + headless platform) passes full suite | CI job | must pass |
 | **Platform adapters passing contracts** | count of real OS families green in CI matrix | >= 2 (Win32 + POSIX/Linux) before platform ports are `stable` |
@@ -62,7 +62,7 @@ Why mutation score: coverage says code *ran*; mutation testing says tests would 
 | **Wiki-lint** (stale terms from removed or resolved decisions; gate numbers stated in a page must equal `gates/gates.toml`, and a comparator number no rule recognises is refused) | `tools/wiki-lint`, rules in `gates/wiki-lint.toml` (Class 3) | 0 hits outside history |
 | Adapters per port | count | >= 1 (Null) from day one; >= 2 real before port is `stable` |
 | **Swap diff** | when adding backend/platform N+1: files changed in engine and game code (port files excluded) | 0, with at most one counted port revision before `stable` (N-4) |
-| Cross-platform result equality | same replay/golden tests on every platform in the matrix | identical hashes: D1 across thread counts on one platform, D2 across all platforms |
+| Result equality | same replay/golden tests on every platform in the matrix | identical hashes: D0 across runs and D1 across thread counts on each platform (not compared between platforms) |
 | Port-call frequency | profiler counter: port calls per frame | tracked; budget per port |
 
 ### 2.4 Performance

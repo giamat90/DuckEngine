@@ -266,7 +266,7 @@ flowchart LR
 
 ## 7. Physics pipeline (Soft Step shape)
 
-Source: [physics](physics.md). Standalone and handle-based, with a dimension-generic core (2D is the D = 2 instance). Determinism rules D0/D1 required, D2 goal.
+Source: [physics](physics.md). Standalone and handle-based, with a dimension-generic core (2D is the D = 2 instance). Determinism rules D0/D1 required, D2 not pursued (v0.25).
 
 ```mermaid
 flowchart TB
@@ -276,7 +276,7 @@ flowchart TB
   GC --> SS["Soft Step solver: substeps, relax, restitution"]
   SS --> Int["integrate (SIMD, bit-identical to scalar)"]
   Int --> Out["outputs: transforms, contact events (sorted deterministically)"]
-  Out --> Hash["replay hash compared on Windows x86-64, Linux x86-64, Linux ARM64"]
+  Out --> Hash["replay hash compared against this platform's own golden hash (D0, D1)"]
   subgraph Jobs["executed on the job system"]
     BP
     NP

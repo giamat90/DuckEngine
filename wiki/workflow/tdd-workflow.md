@@ -54,7 +54,7 @@ Because every port has a Null adapter, we avoid mocking frameworks in most place
 | Threads | injected `IScheduler`; a single-thread deterministic scheduler for unit tests; real scheduler for concurrency tests under TSan |
 | GPU output | test the command stream (deterministic); image tests with tolerance and per-backend references |
 | Audio | Offline adapter renders deterministically |
-| Floating point | simulation code is compared **bit-exactly** (D2); tolerance helpers (ULP + relative/absolute bounds, documented per test) only for rendering, audio DSP and other non-simulation code |
+| Floating point | simulation code is compared **bit-exactly** on one platform (D0/D1; D2 is not pursued); tolerance helpers (ULP + relative/absolute bounds, documented per test) only for rendering, audio DSP and other non-simulation code |
 | Performance | never asserted inside unit tests; benchmark pipeline compares with baseline using statistical thresholds |
 
 ## 6. Spikes (the honest exception)

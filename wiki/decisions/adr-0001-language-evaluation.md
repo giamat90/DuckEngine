@@ -104,7 +104,7 @@ Reasoning: the owner reads no code, so compiler-enforced safety and a cargo tool
 
 I changed my own earlier recommendation (C++20) because the owner's constraints changed the weighting, not because of new evidence about the languages.
 
-**v0.7 note:** the owner made cross-platform identical results a goal (D2). Rust helps here: floating-point operations are strict IEEE with no implicit contraction or fast-math, and the compiler gives no surprise reassociation. In C++ the same result needs explicit flags (`-ffp-contract=off`, no `-ffast-math`) and discipline across compilers. Both languages can reach D2; Rust has fewer ways to break it by accident.
+**v0.7 note:** the owner made cross-platform identical results a goal (D2). Rust helps here: floating-point operations are strict IEEE with no implicit contraction or fast-math, and the compiler gives no surprise reassociation. In C++ the same result needs explicit flags (`-ffp-contract=off`, no `-ffast-math`) and discipline across compilers. Both languages can reach D2; Rust has fewer ways to break it by accident. **v0.25 note:** the owner later withdrew D2 as a goal (ADR-0007); the paragraph is history, and the G4 requirement of bit-identical results on ARM64 is reduced to a portability proof.
 
 ## 6. Toolchain validation gates (Rust decided; numeric criteria, N-5)
 
