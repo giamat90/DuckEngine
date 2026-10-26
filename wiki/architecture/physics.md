@@ -49,12 +49,26 @@ Jolt documents determinism with explicit limits [S aggregator](https://github.co
 
 **Rules that keep D0 and D1 (simulation code only; everything else may use `std`)**
 
-1. **Strict IEEE float by default:** Rust has no fast-math and no implicit FMA contraction; keep it that way (no `fast-math`-style intrinsics, no x87, fixed rounding mode).
+1. **Strict IEEE float by default:** Rust has no fast-math and no implicit FMA contraction; keep it that way (no `fast-math`-style intrinsics, no x87, fixed rounding mode). An **explicit `f32::mul_add` is allowed**: it is one fused operation with a single rounding, on hardware FMA or on the libm `fma` fallback, so it is deterministic for D0 and D1. It gives different bits from `a * b + c` (two roundings), so a SIMD path and its scalar reference must use the same form, and a test must pin it. The default x86-64 target has no `fma` feature, so there it is a call to the platform's correctly rounded `fmaf`; use it where a benchmark shows a win.
 2. **SIMD matches scalar bit for bit on the same platform:** property test compares SIMD to scalar bitwise. This keeps the SIMD path testable; it is not a cross-platform promise.
 3. **Own containers where order matters:** no `std` `HashMap`/`HashSet` iteration in simulation (Rust's default hasher is randomly seeded per process, which breaks even D0), no unstable sort on equal keys; use a deterministic hash map, stable `sort`/`sort_by` with a total order, and ordered iteration.
 4. **Own seeded RNG**; no time- or address-dependent values; no pointer-ordering.
 5. **Replay-hash test on every supported platform, within one run:** the same scene is run twice and at 1 and N threads, in the same process on the same machine, and the hashes must be equal. There is **no stored golden hash of simulation state**: a libm picked at run time by CPU features, or a libm update, can change a result between two machines of the same image, and the stored value would then fail with no code change. Hashes are not compared between platforms or between machines. Golden files remain allowed for outputs that do not depend on libm or the CPU (render command streams, for example).
 6. **Control registers and enforcement (N-1):** set and assert the floating-point control state (rounding mode, FTZ/DAZ) at the start of every simulation job, because drivers and audio libraries loaded in-process (OpenGL, GLFW, miniaudio) can change it and that would break even D0 `[K]`. Clippy `disallowed-methods`/`disallowed-types` ban the functions and types listed in [ports-and-adapters](ports-and-adapters.md) from the simulation crates.
+
+FMA rule of point 1:
+
+```mermaid
+flowchart TD
+  Src["simulation code"] --> Imp["a * b + c"]
+  Src --> Exp["f32::mul_add(a, b, c)"]
+  Src --> Fast["fast-math flag or intrinsic"]
+  Imp --> Two["two roundings, no hidden contraction"]
+  Exp --> One["one rounding, hardware FMA or libm fma, same bits"]
+  Fast --> Denied["denied"]
+  Two --> Pair["a SIMD path and its scalar reference use the same form"]
+  One --> Pair
+```
 
 ```mermaid
 flowchart LR
@@ -76,7 +90,7 @@ The replay test reads no stored value: all hashes are produced in the same proce
 
 **Consequences of dropping D2 (v0.25):**
 
-- D0 means the same binary on the same machine. A libm picked at run time by CPU features (for example an FMA code path) could differ between two machines of the same OS, so lockstep or rollback netcode between different machines is not supported by this decision. A server-authoritative design with state snapshots is unaffected.
+- D0 means the same binary on the same machine. A libm picked at run time by CPU features (for example a `sin` or `exp` variant that uses FMA inside) could differ between two machines of the same OS, so lockstep or rollback netcode between different machines is not supported by this decision. A server-authoritative design with state snapshots is unaffected.
 - A SIMD backend chosen at run time (for example SSE2 versus AVX2) must still be bit-identical to the scalar reference on that machine.
 - A replay or save file is valid only on the machine and build that wrote it. A replay-critical path that must survive a machine change has to avoid libm calls, and that is a separate owner decision.
 
