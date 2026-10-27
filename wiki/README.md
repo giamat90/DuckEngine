@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.45 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.46 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.46** - G4 decision recorded (owner): option A (2x against the opaque scalar loop), with option D (re-measure with a real consumer in phase 4) watched; no gate or ADR change. Card 1-34.
 > - **v0.45** - New page [spikes/simd-benchmark](spikes/simd-benchmark.md) and dev crate `engine/tools_simd_bench` (card 1-33): gate G4 measured, report only; the kernel equals the auto-vectorised plain loop and is 3.3 to 11 times faster than an opaque scalar loop; the choice of what G4 compares is left to the owner; core-runtime simd note updated.
 > - **v0.44** - Unsafe budget checker (gate G3): new tool `tools/unsafe-budget` and `gates/unsafe-budget.toml` (5% ratio, allowlist with per-file line budgets, SAFETY comments); unit tests in the `ci` build job; the trusted-job step follows in card 1-32; core-runtime section 8 updated. Governance task 1-31.
 > - **v0.43** - Allocator wiring: new L4 crate `engine/app_runtime` owns the one `#[global_allocator]` line (mimalloc, feature `mimalloc`, default on); the `ci` workflow also tests it with `--no-default-features`; digest section 4, core-runtime section 2, `THIRD_PARTY.md` status and ADR-0022 follow-ups updated. Governance task 1-30.
@@ -88,7 +89,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 24 | [spikes/container-competitors](spikes/container-competitors.md) | Competitor survey: containers, iteration order and determinism statements of Box2D, Jolt, Rapier, Bevy, Godot, Unreal, Unity, EnTT |
 | 25 | [spikes/allocator-benchmark](spikes/allocator-benchmark.md) | Allocator benchmark (Windows and Linux in WSL2): default allocator vs mimalloc; pass criterion applied; nothing adopted |
 | 26 | [decisions/adr-0022-global-allocator](decisions/adr-0022-global-allocator.md) | ADR-0022 (decided): mimalloc as the global allocator of application builds |
-| 27 | [spikes/simd-benchmark](spikes/simd-benchmark.md) | SIMD benchmark (gate G4, Windows and Linux in WSL2): 8-lane kernel vs plain and opaque scalar loops; report only, threshold left to the owner |
+| 27 | [spikes/simd-benchmark](spikes/simd-benchmark.md) | SIMD benchmark (gate G4, Windows and Linux in WSL2): 8-lane kernel vs plain and opaque scalar loops; owner chose option A, watching D |
 
 ## Confidence legend used in this wiki
 

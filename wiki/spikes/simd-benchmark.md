@@ -50,14 +50,16 @@ Assembly of the release build (`cargo rustc --release -- --emit asm`, Windows, p
 - No consumer exists yet (the gate text asks for a kernel and a consumer); this is a micro-benchmark.
 - Timing noise of about 10-25% between single runs (one run gave 0.77 for `add` at 1,024 elements where the median of three gives 1.16); read the plain / kernel ratios as "about 1, between 0.8 and 1.2", not as a ranking.
 
-## 6. Decision needed from the owner (not taken here)
+## 6. Decision (owner, 2026-10-27, card 1-34): option A, with an eye on option D
+
+The owner chose **A**: G4 stays as written in ADR-0001, a 2x speedup against a scalar loop the compiler does not vectorise (the opaque loop), which the kernel meets (3.3 to 11, an upper bound). **D is watched:** when a real consumer exists (physics, phase 4) the kernel is measured there against the plain loop, and G4 is revisited if the abstraction does not pay. Not done by this record: no CI check for A is built and no gate configuration or ADR text changes; either would be a separate governance task if the owner asks. Until then G4 is verified by running `tools_simd_bench` by hand.
 
 | option | what G4 would mean | consequence |
 |---|---|---|
-| A | Keep 2x against the opaque loop | passes (3.3 to 11, an upper bound), but compares with code nobody would write |
+| **A (chosen)** | Keep 2x against the opaque loop | passes (3.3 to 11, an upper bound), but compares with code nobody would write |
 | B | 2x against the plain loop | fails today (0.92 to 1.21); the abstraction would not justify itself by speed |
 | C | Replace speed by a guarantee: the kernel is vector code in every build (checked by a test on the assembly or on `target-cpu` changes) and equal to scalar in bits | matches what the evidence shows the abstraction gives |
-| D | Revisit G4 when a real consumer exists (physics, phase 4) and measure there | no change now |
+| **D (watched)** | Revisit G4 when a real consumer exists (physics, phase 4) and measure there | no change now |
 
 ```mermaid
 flowchart LR
@@ -68,5 +70,5 @@ flowchart LR
   P --> R
   O --> R
   R --> T["ratios: plain / kernel about 1.0, opaque / kernel 3.3 to 11"]
-  T --> D["owner decides what G4 compares (section 6)"]
+  T --> D["A chosen: 2x vs opaque loop, met; D watched: measure again with a real consumer (phase 4)"]
 ```
