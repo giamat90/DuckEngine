@@ -1,8 +1,8 @@
 name: governance-guard
 
 # A PR that changes a protected path (gates/protected-paths.txt) must declare a
-# governance task in its description. The tool and the list come from the base
-# commit; the PR tree is checked out as data only and never executed.
+# governance task in its description. The tool and the list come from main (also
+# for a PR into a phase branch); the PR tree is checked out as data only and never executed.
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize]
@@ -18,7 +18,7 @@ jobs:
       # actions/checkout v7.0.1, pinned by commit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: main
           path: base
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

@@ -173,7 +173,7 @@ flowchart TB
   p(["push to main"]) --> plan["plan the version from the last tag to this commit"]
   plan --> skip{"commit already tagged (a re-run)?"}
   skip -- "yes" --> end1(["stop"])
-  skip -- "no" --> sq["check: the commit subject equals the PR title (else the run fails); a Release-Phase footer bumps the minor number"]
+  skip -- "no" --> sq["check: the commit subject equals the PR title (else the run fails); the Release-Phase footer is present exactly when the head branch is phase/<n>, and bumps the minor number"]
   sq --> mk["changelog from git log, build assets (source workspace, tools, samples)"]
   mk --> old["delete a draft left by a failed attempt (a published Release is never touched)"]
   old --> dr["create a draft Release at the merge commit"]

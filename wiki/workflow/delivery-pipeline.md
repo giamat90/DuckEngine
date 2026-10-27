@@ -21,7 +21,7 @@ Measured cost before this change: one `ci` run bills about 15 minutes (Windows c
 2. **Governance cards go to `main` first**, by their own PR, with one `ci` run started by hand on the commit to approve (`gh workflow run ci.yml --ref <branch>`, then `gh run watch`). Reason: the gate tools and configuration come from `main`, so a change to them must already be on `main` when the phase PR is judged. A card that touches a protected path is a governance card. After it merges, `phase/<n>` merges `main` in (no CI run on that push).
 3. **Checkpoints.** About every 10 cards, and before the phase PR, the agent starts `ci` by hand on `phase/<n>` and fixes what is red, so a failure is small to find.
 4. **The phase ends** with one PR `phase/<n>` -> `main`: title `feat(phase-<n>): <summary>`, the full CI on the head commit, the owner's approval against the diff hash of the phase (the card approvals are the manifest, listed in the PR body), merged with a **merge commit** (history of the cards stays): `gh pr merge N --merge --subject "<PR title> (#N)" --body "Release-Phase: <n>" --match-head-commit <sha>`. The footer `Release-Phase: <n>` makes the release workflow bump the **minor** number once for the phase (`next_version.py`); every governance PR merged to `main` in between still gets its patch number. The release notes list all cards of the phase.
-5. **Known gaps (accepted, follow-up card):** nothing yet fails a phase merge that forgets the `Release-Phase` footer (the phase would release as a patch; the agent checks the planned version with `next_version.py` before merging); for PRs into `phase/<n>` `governance-guard` and `pr-title` take their tools from the phase branch, which stays trustworthy only because governance cards reach it by merging `main` in; the approval report of a dispatched run on a branch computes the hash against `main`, so a per-card hash is checked locally with `diff_hash.py` (base `origin/phase/<n>`). For an ordinary card, "after green checks" in the steps below means: cheap checks green and local gates green.
+5. **Gaps closed by card 1-40:** `pr-title` fails a PR from `phase/<n>` whose description lacks exactly one line `Release-Phase: <n>`; the `release` workflow fails (before building anything) if the merge of a `phase/<n>` PR does not carry that footer, or if any other merge carries it; `governance-guard` and `pr-title` take their tools from `main`, also for PRs into a phase branch. The phase PR description must itself contain the line `Release-Phase: <n>` (the merge body is passed with `--body`; the PR check reads the description as its proxy). No other commit may start a line with `Release-Phase:` (the version tool reads every commit since the last tag, so a card squash body that does would bump the minor number or fail the release); card squashes use `--body ""`. Still true: the approval report of a dispatched run on a branch computes the hash against `main`, so a per-card hash is checked locally with `diff_hash.py` (base `origin/phase/<n>`). For an ordinary card, "after green checks" in the steps below means: cheap checks green and local gates green.
 6. **Not weakened:** no push to `main`, the owner's approval against a diff hash for every card and for the phase, a red check is a stop, governance diffs are read by the owner. **Weakened and said so:** an ordinary card is no longer checked by CI before its merge into the phase branch; the first independent run is the checkpoint or the phase PR.
 
 ```mermaid
@@ -39,11 +39,24 @@ flowchart TD
   R --> M
 ```
 
+```mermaid
+flowchart LR
+  PR[PR from phase/n into main] --> T{pr-title: body has exactly one line Release-Phase: n?}
+  T -- no --> RED[check fails, no merge]
+  T -- yes --> MG[merge commit, body Release-Phase: n]
+  MG --> RL{release: head branch is phase/n and footer is n?}
+  OTHER[any other merge] --> RL2{release: no footer?}
+  RL -- no --> STOP[release fails before building]
+  RL -- yes --> BUMP[one minor bump]
+  RL2 -- yes --> PATCH[patch bump as before]
+  RL2 -- no --> STOP
+```
+
 The task lifecycle below is the mechanics of one card. Where it says "push branch; CI on the branch" read: ordinary card = local gates are the evidence; governance card = one dispatched CI run on the commit to approve.
 
 ### Local gates (card 1-39)
 
-`python tools/local-gates/local_gates.py [--base origin/phase/<n>] [--wsl]` runs, in one go and without stopping at the first failure: Rust format, Clippy, build and tests (also `app_runtime` without the mimalloc feature), the gate tools on the working tree (architecture, unsafe budget, wiki lint, digest), the diff hash, the unit tests of every Python tool (found by scanning `tools/*` and `acceptance/` for `test_*.py`, so a new tool is picked up without editing the script), cargo-deny when installed, and with `--wsl` the Linux test run. Exit code 1 if a step failed; the summary lists what is **not** run locally (Miri, coverage, mutation, benchmarks, metrics): those wait for the checkpoint or the phase PR. The gate tools run from the working tree, not from a trusted checkout of `main`; that guarantee stays with `ci`. The unit tests of the script itself are not yet in `ci` (the workflow is a protected path; follow-up in card 1-40).
+`python tools/local-gates/local_gates.py [--base origin/phase/<n>] [--wsl]` runs, in one go and without stopping at the first failure: Rust format, Clippy, build and tests (also `app_runtime` without the mimalloc feature), the gate tools on the working tree (architecture, unsafe budget, wiki lint, digest), the diff hash, the unit tests of every Python tool (found by scanning `tools/*` and `acceptance/` for `test_*.py`, so a new tool is picked up without editing the script), cargo-deny when installed, and with `--wsl` the Linux test run. Exit code 1 if a step failed; the summary lists what is **not** run locally (Miri, coverage, mutation, benchmarks, metrics): those wait for the checkpoint or the phase PR. The gate tools run from the working tree, not from a trusted checkout of `main`; that guarantee stays with `ci`. Its unit tests run in `ci` (card 1-40).
 
 ```mermaid
 flowchart LR

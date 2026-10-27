@@ -1,7 +1,7 @@
 name: pr-title
 
 # The PR title becomes the squash commit message, which decides the release
-# version. Runs trusted code from the base commit, never the PR tree.
+# version. Runs trusted code from main (also for a PR into a phase branch), never the PR tree.
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize]
@@ -17,7 +17,7 @@ jobs:
       # actions/checkout v7.0.1, pinned by commit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: main
           persist-credentials: false
       - name: Check the PR title
         env:
@@ -29,3 +29,11 @@ jobs:
             exit 0
           fi
           python tools/release/check_pr_title.py --title "$PR_TITLE"
+      - name: Check the release footer of a phase PR
+        if: startsWith(github.event.pull_request.head.ref, 'phase/')
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          # The merge command passes this body as the merge commit body (delivery-pipeline, card 1-38).
+          python tools/release/check_squash_subject.py footer --phase-only --head-ref="$HEAD_REF" --message="$PR_BODY"

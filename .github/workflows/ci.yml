@@ -78,6 +78,9 @@ jobs:
       - name: Test the clean-code lint profile
         run: python -m unittest -q test_lint_profile
         working-directory: tools/lint-profile
+      - name: Test the local gate script
+        run: python -m unittest -q test_local_gates
+        working-directory: tools/local-gates
       - name: Test the diff-hash tool
         run: python -m unittest -q test_diff_hash
         working-directory: tools/diff-hash

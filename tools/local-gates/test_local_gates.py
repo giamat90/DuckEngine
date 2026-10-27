@@ -94,6 +94,8 @@ class Run(unittest.TestCase):
 class Resolve(unittest.TestCase):
     def test_the_program_is_looked_up_on_the_search_path_given_not_the_parents(self):
         bin_dir = tree(self, ["fake-tool.exe", "fake-tool"])
+        for fake in bin_dir.iterdir():  # `which` wants the executable bit on Linux
+            fake.chmod(0o755)
         argv = lg.resolve(["fake-tool", "--x"], str(bin_dir))
         self.assertEqual("--x", argv[1])
         self.assertTrue(Path(argv[0]).is_file())

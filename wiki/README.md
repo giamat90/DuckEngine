@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.49 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.50 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.50** - Phase-branch gaps closed (card 1-40): the `Release-Phase` footer is enforced in `pr-title` (phase PRs) and `release` (every merge), `governance-guard` and `pr-title` take their tools from `main`, the local-gates tests run in `ci`. Governance task 1-40.
 > - **v0.49** - Local gate script `tools/local-gates/local_gates.py` (card 1-39): one command for the local gates that replace branch CI; section added to delivery-pipeline.
 > - **v0.48** - Phase-branch workflow (owner decision, CI budget): work in `phase/<n>`, ordinary card PRs target it, `ci` runs only on `main` and by hand, governance cards still go to `main` first, one minor release per phase through the `Release-Phase: <n>` footer. delivery-pipeline, board-management, tooling-and-ci, ci-diagrams, github-plan-findings, digest section 9 and CLAUDE.md updated. Governance task 1-38.
 > - **v0.47** - Gate G3 enforced: the `ci` job "gates from main" runs `tools/unsafe-budget` (tool and `gates/unsafe-budget.toml` from `main`); digest section 8, ci-diagrams and core-runtime updated. Governance task 1-32.

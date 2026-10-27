@@ -51,6 +51,14 @@ class Release(unittest.TestCase):
         # pull-requests: read is only for the squash-subject check (card 0b-8).
         self.assertRegex(RELEASE, r"(?m)^permissions:\n  contents: write\n  pull-requests: read\n(?!  )")
 
+    def test_a_phase_merge_is_checked_for_its_footer_before_anything_is_built(self):
+        footer = RELEASE.find("check_squash_subject.py footer")
+        self.assertGreater(footer, -1)
+        self.assertLess(footer, RELEASE.find("make_assets.py"))
+        self.assertIn("head.ref", RELEASE)
+        self.assertIn('--message="$(git log -1 --format=%B)"', RELEASE)
+        self.assertIn("steps.plan.outputs.skip != 'true'", RELEASE[RELEASE.rfind("- name", 0, footer):footer])
+
     def test_squash_subject_is_checked_before_anything_is_built_or_published(self):
         check = RELEASE.find("check_squash_subject.py")
         self.assertGreater(check, -1)
@@ -106,8 +114,17 @@ class PullRequestTitle(unittest.TestCase):
     def test_title_is_checked_again_after_an_edit(self):
         self.assertIn("edited", PR_TITLE)
 
-    def test_checks_out_the_base_commit_not_the_pr_tree(self):
-        self.assertIn("ref: ${{ github.event.pull_request.base.sha }}", PR_TITLE)
+    def test_checks_out_main_not_the_pr_tree_and_not_a_phase_branch_base(self):
+        self.assertRegex(PR_TITLE, r"(?m)^          ref: main$")
+        self.assertNotIn("pull_request.base", PR_TITLE)
+        self.assertNotIn("pull_request.head.sha", PR_TITLE)
+
+    def test_a_phase_pr_is_checked_for_its_release_footer(self):
+        self.assertIn("startsWith(github.event.pull_request.head.ref, 'phase/')", PR_TITLE)
+        self.assertIn("check_squash_subject.py footer --phase-only", PR_TITLE)
+        self.assertIn("HEAD_REF: ${{ github.event.pull_request.head.ref }}", PR_TITLE)
+        for block in run_blocks(PR_TITLE):
+            self.assertNotIn("${{", block)
 
     def test_title_reaches_the_script_through_the_environment(self):
         self.assertIn("PR_TITLE: ${{ github.event.pull_request.title }}", PR_TITLE)
@@ -127,8 +144,9 @@ class GovernanceGuard(unittest.TestCase):
     def test_runs_again_after_a_description_edit(self):
         self.assertIn("edited", GUARD)
 
-    def test_the_tool_runs_from_the_base_commit_and_the_pr_tree_is_only_data(self):
-        self.assertIn("ref: ${{ github.event.pull_request.base.sha }}", GUARD)
+    def test_the_tool_runs_from_main_and_the_pr_tree_is_only_data(self):
+        self.assertRegex(GUARD, r"(?m)^          ref: main\n          path: base$")
+        self.assertNotIn("ref: ${{ github.event.pull_request.base.sha }}", GUARD)
         self.assertIn("ref: ${{ github.event.pull_request.head.sha }}", GUARD)
         self.assertIn("python base/tools/gate-check/governance_guard.py", GUARD)
         self.assertIn("--paths base/gates/protected-paths.txt", GUARD)
@@ -231,6 +249,7 @@ class Ci(unittest.TestCase):
 
     def test_ci_runs_the_tests_of_every_tool_folder(self):
         for folder, module in (("tools/templates", "test_templates"), ("tools/token-probe", "test_probe"),
+                               ("tools/local-gates", "test_local_gates"),
                                ("tools/gate-check", "test_governance_guard"),
                                ("tools/gate-check", "test_pr_gates"),
                                ("tools/gate-check", "test_protected_paths"),
