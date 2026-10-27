@@ -32,6 +32,7 @@ This file is a governance file (Class 3): its structure changes only in a task t
 | `llvm-tools` rustup component | T2 | Apache-2.0 WITH LLVM-exception | follows the pinned toolchain 1.94.1 | none | use a system LLVM `llvm-cov` | in tree |
 | GitHub-hosted runner images (`windows-latest`, `ubuntu-latest`) | T2 | n/a (service) | floating labels, not pinned | none | self-hosted or other CI runner | in tree |
 | RustSec advisory database (fetched by cargo-deny at run time) | T2 | CC0-1.0 | unpinned, always current | none | vendor a pinned copy and fetch on a schedule | in tree |
+| mimalloc (crate `mimalloc` and its C library, used only by `tools/alloc-bench`) | T2 | MIT | =0.1.52 (`tools/alloc-bench/Cargo.lock`) | none (dev-time benchmark; not linked into any engine crate) | delete `tools/alloc-bench`; the engine keeps the default allocator | in tree |
 
 ## Planned (allowed by the owner, not yet added)
 

@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.40 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.41 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.41** - Added the allocator benchmark [spike page](spikes/allocator-benchmark.md): default allocator vs mimalloc on Windows and Linux (WSL2), with the pass criterion applied; nothing adopted. Risk R-22 updated. Task 1-27 (governance task limited to one `THIRD_PARTY.md` row).
 > - **v0.40** - arch-check accepts a dev-tool crate listed in `standalone_tools` (`gates/architecture.toml`) whose manifest has its own `[workspace]`; any other crate outside the workspace is still `unlisted-crate` ([ports-and-adapters](architecture/ports-and-adapters.md) section 5). Governance task 1-28.
 > - **v0.39** - Implemented `base::ring`: `Ring` (core-runtime section 8, decisions of card 1-26); the spike's ring speed ratio is corrected to the measured 1.3 to 1.6 times. Task 1-26.
 > - **v0.38** - Implemented `base::sparse`: `SparseSet`, `InsertError` (core-runtime section 8, decisions of card 1-25). Task 1-25.
@@ -81,6 +82,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 22 | [spikes/allocator-spike](spikes/allocator-spike.md) | Allocator spike (Windows): arena, pool, reused Vec, counting allocator, mimalloc; evidence for ADR-0022 |
 | 23 | [spikes/container-spike](spikes/container-spike.md) | Container spike (Windows): deterministic containers vs std (hash map, sparse set, sort, ring buffer); recommendation for the owner |
 | 24 | [spikes/container-competitors](spikes/container-competitors.md) | Competitor survey: containers, iteration order and determinism statements of Box2D, Jolt, Rapier, Bevy, Godot, Unreal, Unity, EnTT |
+| 25 | [spikes/allocator-benchmark](spikes/allocator-benchmark.md) | Allocator benchmark (Windows and Linux in WSL2): default allocator vs mimalloc; pass criterion applied; nothing adopted |
 
 ## Confidence legend used in this wiki
 
