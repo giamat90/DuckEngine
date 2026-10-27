@@ -41,6 +41,20 @@ flowchart TD
 
 The task lifecycle below is the mechanics of one card. Where it says "push branch; CI on the branch" read: ordinary card = local gates are the evidence; governance card = one dispatched CI run on the commit to approve.
 
+### Local gates (card 1-39)
+
+`python tools/local-gates/local_gates.py [--base origin/phase/<n>] [--wsl]` runs, in one go and without stopping at the first failure: Rust format, Clippy, build and tests (also `app_runtime` without the mimalloc feature), the gate tools on the working tree (architecture, unsafe budget, wiki lint, digest), the diff hash, the unit tests of every Python tool (found by scanning `tools/*` and `acceptance/` for `test_*.py`, so a new tool is picked up without editing the script), cargo-deny when installed, and with `--wsl` the Linux test run. Exit code 1 if a step failed; the summary lists what is **not** run locally (Miri, coverage, mutation, benchmarks, metrics): those wait for the checkpoint or the phase PR. The gate tools run from the working tree, not from a trusted checkout of `main`; that guarantee stays with `ci`. The unit tests of the script itself are not yet in `ci` (the workflow is a protected path; follow-up in card 1-40).
+
+```mermaid
+flowchart LR
+  A[local_gates.py] --> R[Rust: fmt, clippy, build, test]
+  A --> G[gate tools and diff hash]
+  A --> P[unittest per tool directory]
+  A --> D[cargo-deny if installed]
+  A -. --wsl .-> W[Linux tests through WSL]
+  R & G & P & D & W --> S[summary, exit 1 on any FAIL, list of what was not run]
+```
+
 ## 1. Task lifecycle
 
 ```mermaid
