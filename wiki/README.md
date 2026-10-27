@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.42 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.43 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.43** - Allocator wiring: new L4 crate `engine/app_runtime` owns the one `#[global_allocator]` line (mimalloc, feature `mimalloc`, default on); the `ci` workflow also tests it with `--no-default-features`; digest section 4, core-runtime section 2, `THIRD_PARTY.md` status and ADR-0022 follow-ups updated. Governance task 1-30.
 > - **v0.42** - New page [decisions/adr-0022-global-allocator](decisions/adr-0022-global-allocator.md): ADR-0022 decided by the owner, mimalloc as the global allocator of application builds (L4, no port, exit plan = default allocator); core-runtime section 2, decision index and `THIRD_PARTY.md` entry updated; the `#[global_allocator]` line and CI job are a follow-up. Governance task 1-29.
 > - **v0.41** - Added the allocator benchmark [spike page](spikes/allocator-benchmark.md): default allocator vs mimalloc on Windows and Linux (WSL2), with the pass criterion applied; nothing adopted. Risk R-22 updated. Task 1-27 (governance task limited to one `THIRD_PARTY.md` row).
 > - **v0.40** - arch-check accepts a dev-tool crate listed in `standalone_tools` (`gates/architecture.toml`) whose manifest has its own `[workspace]`; any other crate outside the workspace is still `unlisted-crate` ([ports-and-adapters](architecture/ports-and-adapters.md) section 5). Governance task 1-28.

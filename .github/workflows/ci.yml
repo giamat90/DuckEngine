@@ -42,6 +42,11 @@ jobs:
         run: cargo build --workspace --locked
       - name: Test
         run: cargo test --workspace --locked
+      # ADR-0022 exit plan: the application crate must build and pass its tests with the default allocator.
+      - name: Lint the application crate without the mimalloc feature
+        run: cargo clippy -p app_runtime --no-default-features --all-targets --locked -- -D warnings
+      - name: Test the application crate without the mimalloc feature
+        run: cargo test -p app_runtime --no-default-features --locked
       - name: Test the metrics tool
         run: |
           python -m unittest -q test_report

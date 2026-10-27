@@ -1,6 +1,6 @@
 # ADR-0022 Allocation strategy and global allocator `[S]`
 
-Status: **DECIDED by owner (2026-10-27): adopt mimalloc as the `#[global_allocator]` of application builds; the default `std` allocator is the exit plan.** This record decides the allocator and its tier. It does **not** add the `#[global_allocator]` line or the CI job that builds with and without it; those are a separate card (see section 6).
+Status: **DECIDED by owner (2026-10-27): adopt mimalloc as the `#[global_allocator]` of application builds; the default `std` allocator is the exit plan.** This record decides the allocator and its tier. The `#[global_allocator]` line and the CI step that builds with and without it were added in card 1-30 (section 6).
 
 ## 1. Context
 
@@ -37,19 +37,19 @@ Faster in 14 of 14 cases on Windows and 13 of 14 on Linux. Full tables, method a
 ## 5. Consequences
 
 - **Good:** large gain for small allocations on the real platform; one line to remove; no engine code or port depends on it.
-- **Bad:** mimalloc is C code compiled by the `cc` crate, so application builds and CI runners need a C compiler (not yet verified on the runner images). One more third-party component to keep current. A small loss on Linux `Vec` growth.
+- **Bad:** mimalloc is C code compiled by the `cc` crate, so application builds and CI runners need a C compiler (verified in card 1-30: the `windows-latest` and `ubuntu-latest` runner images build it). One more third-party component to keep current. A small loss on Linux `Vec` growth.
 - **Unmeasured (risks kept open):** memory use and fragmentation, native Linux (WSL2 is a virtual machine), ARM64. They do not block this decision, and they are follow-ups below.
 - **Determinism:** the allocator does not change simulation results; simulation code must not depend on addresses (no hash of pointers), as before.
 
 ## 6. Follow-ups (not part of this record)
 
-1. Add the `#[global_allocator]` line to an application crate, and a CI job that builds and tests with and without it (switching back must compile and pass every test).
+1. Done in card 1-30: the `#[global_allocator]` line is in `engine/app_runtime` behind the feature `mimalloc` (default on), and the `ci` workflow tests the crate with `--no-default-features` on both operating systems (switching back must compile and pass every test).
 2. Native Linux run of `tools/alloc-bench` and a memory-use measurement; if either contradicts this decision, supersede this ADR.
-3. Check that the CI runner images have a C compiler.
+3. Done in card 1-30: the CI run of PR 69 built mimalloc on both runner images.
 
 ## 7. Validation
 
-Benchmark gate on instruction counts for hot paths ([rules-digest](../rules-digest.md) section 7), allocations per frame counted in tests (per-thread counters), and the with/without CI job of follow-up 1.
+Benchmark gate on instruction counts for hot paths ([rules-digest](../rules-digest.md) section 7), allocations per frame counted in tests (per-thread counters), and the with/without CI steps added in card 1-30 (clippy and tests of `app_runtime` with `--no-default-features`).
 
 ```mermaid
 flowchart TD
