@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.51 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.52 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.52** - Phase 1 scope decisions (card 1-37, owner): toolchain shim dropped, debug allocators deferred, D-9 closed as own arena code (no benchmark against a crate); roadmap, overview, vision, open questions and core-runtime updated.
 > - **v0.51** - Profiling hook in `base` (card 1-35): `profile_scope!` macro (feature `profiling`, zero cost off) in front of one global `ProfileSink` installed by layer 4; section added to core-runtime. First card on the `phase/1` branch.
 > - **v0.50** - Phase-branch gaps closed (card 1-40): the `Release-Phase` footer is enforced in `pr-title` (phase PRs) and `release` (every merge), `governance-guard` and `pr-title` take their tools from `main`, the local-gates tests run in `ci`. Governance task 1-40.
 > - **v0.49** - Local gate script `tools/local-gates/local_gates.py` (card 1-39): one command for the local gates that replace branch CI; section added to delivery-pipeline.

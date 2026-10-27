@@ -7,7 +7,7 @@
 ## 2. Memory
 
 - **Memory (v0.6):** allocation uses the standard allocator by default (`malloc`/`new`, Rust global allocator) behind a small `IAllocator` interface so counting, tracking and arenas can be layered on top. `IVirtualMemory` stays an optional platform port for page-level reserve/commit where needed (arenas, strict memory budgets); it is no longer the mandatory root.
-- Allocator interface + concrete allocators: **linear/arena** (per-frame, per-job), **pool** (fixed-size objects), **stack**, **general-purpose** fallback, plus debug allocators (tracking, guard pages, poisoning).
+- Allocator interface + concrete allocators: **linear/arena** (per-frame, per-job), **pool** (fixed-size objects), **stack**, **general-purpose** fallback, plus debug allocators (tracking, guard pages, poisoning), deferred (see Phase 1 scope decisions, card 1-37).
 - **Per-frame arena** reset each frame; scratch arenas per job.
 - **Steady state = zero heap allocations per frame** in hot systems; enforced by a counting allocator in tests ([R1](../00-vision-and-requirements.md)). The counting allocator uses **per-thread counters** and the assertion is per thread or per job ("this job made 0 allocator calls"): in the spike a shared atomic counter cost +29% single-threaded and made 8 threads 5.9x slower, per-thread counters cost +4% and +2% ([allocator spike](../spikes/allocator-spike.md) S7).
 - **Containers:** use `std` containers by default. Write own containers (`SparseSet`, `RingBuffer`, handle pools, fixed-capacity variants) where the standard ones do not fit or a benchmark shows a win. **Arena-backed containers are own code:** stable Rust `Vec`/`HashMap` use only the global allocator `[K, verify]`, so per-frame/per-job arenas need small own containers (default: own small arena containers; a pinned third-party arena crate behind a facade is the alternative; chosen in phase 1 by benchmark, D-9). `#[global_allocator]` counting is used for the zero-allocation tests.
@@ -633,4 +633,27 @@ flowchart LR
   App["layer 4: install_sink(&SINK)"] --> Load
   Sink["sink in layer 4: timestamp, thread id, output"] --- Enter
   Sink --- Exit
+```
+
+## Phase 1 scope decisions (card 1-37)
+
+Three roadmap phase 1 items had no code and no explicit decision. Owner picks, 2026-10-27:
+
+| Item | Decision | Why | Revisit when |
+|---|---|---|---|
+| Toolchain shim (compiler/ISA differences) | **Dropped** | There is one compiler, `rustc`, pinned by `rust-toolchain.toml`; ISA differences are already the `simd` module. A shim would be API without a user. | A second compiler or codegen backend is supported. |
+| Debug allocators (tracking, guard pages, poisoning) | **Deferred**: tracking and poisoning with the first long-lived subsystems, guard pages with `IVirtualMemory` | The counting allocator, Miri and the sanitizers in CI cover phase 1. Guard pages need the virtual-memory port, which comes with the platform work. | The first subsystem with long-lived allocations, and the platform phase. |
+| D-9 arena containers: own code vs a pinned crate | **Closed: own code** (`Arena`, `ArenaBox`, `ArenaVec`, card 1-3) | The allocator spike, Miri-clean `unsafe` inside its budget, no new dependency, and the zero-allocation and determinism rules. **No head-to-head benchmark against an arena crate was run**, although D-9 asked for one; this is the owner's call. | A benchmark or a defect shows a crate is better; the exit is a pinned crate behind the same API. |
+
+```mermaid
+flowchart TD
+  R[roadmap phase 1 items without code] --> A[toolchain shim]
+  R --> B[debug allocators]
+  R --> C[D-9 arena containers]
+  A -->|one compiler, ISA is simd| A1[dropped]
+  B -->|counting allocator, Miri, sanitizers suffice| B1[deferred: tracking with long-lived subsystems, guard pages with IVirtualMemory]
+  C -->|Arena and ArenaVec built and verified in 1-3| C1[closed: own code, exit = pinned crate behind the same API]
+  A1 --> U[roadmap, overview, vision, open questions updated]
+  B1 --> U
+  C1 --> U
 ```
