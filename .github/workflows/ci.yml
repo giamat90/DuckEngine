@@ -125,6 +125,8 @@ jobs:
         working-directory: head
       - name: Check the architecture rules
         run: python trusted/tools/arch-check/arch_check.py --config trusted/gates/architecture.toml --repo head
+      - name: Check the unsafe budget
+        run: python trusted/tools/unsafe-budget/unsafe_budget.py --config trusted/gates/unsafe-budget.toml --architecture trusted/gates/architecture.toml --repo head
       - name: Lint the wiki
         run: python trusted/tools/wiki-lint/wiki_lint.py --config trusted/gates/wiki-lint.toml --gates trusted/gates/gates.toml --repo head
       - name: Digest matches the gate configuration

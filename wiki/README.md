@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.46 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.47 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.47** - Gate G3 enforced: the `ci` job "gates from main" runs `tools/unsafe-budget` (tool and `gates/unsafe-budget.toml` from `main`); digest section 8, ci-diagrams and core-runtime updated. Governance task 1-32.
 > - **v0.46** - G4 decision recorded (owner): option A (2x against the opaque scalar loop), with option D (re-measure with a real consumer in phase 4) watched; no gate or ADR change. Card 1-34.
 > - **v0.45** - New page [spikes/simd-benchmark](spikes/simd-benchmark.md) and dev crate `engine/tools_simd_bench` (card 1-33): gate G4 measured, report only; the kernel equals the auto-vectorised plain loop and is 3.3 to 11 times faster than an opaque scalar loop; the choice of what G4 compares is left to the owner; core-runtime simd note updated.
 > - **v0.44** - Unsafe budget checker (gate G3): new tool `tools/unsafe-budget` and `gates/unsafe-budget.toml` (5% ratio, allowlist with per-file line budgets, SAFETY comments); unit tests in the `ci` build job; the trusted-job step follows in card 1-32; core-runtime section 8 updated. Governance task 1-31.

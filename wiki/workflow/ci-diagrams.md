@@ -59,7 +59,8 @@ flowchart TB
   subgraph gates["gates from main (Ubuntu; the approval report is skipped on main and tags)"]
     direction TB
     b1["checkout main as trusted/, the push as head/"] --> b2["architecture check"]
-    b2 --> b3["wiki lint"]
+    b2 --> b2b["unsafe budget (gate G3)"]
+    b2b --> b3["wiki lint"]
     b3 --> b4["digest equals gate configuration"]
     b4 --> b5["approval report into the run summary<br/>(branches only, report, never fails the job)"]
   end
