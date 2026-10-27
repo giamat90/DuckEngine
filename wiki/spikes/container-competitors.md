@@ -80,6 +80,8 @@ flowchart TD
 
 ## 6. Decisions for the owner
 
+**Decided by the owner on 2026-10-27:** point 1 accepted (done in card 1-24), point 2 as decided in [container-spike](container-spike.md) section 8, point 3 not taken.
+
 1. **Accept the refinement:** when the dense-ordered map is built, use a stronger mixing function (MurmurHash3 64-bit finalizer or equivalent) and keep the high-bits skew test as a required test.
 2. **Do the 1-21 decisions** (map, sparse set, sort rule, ring) as listed in [container-spike](container-spike.md) section 8; this survey did not change them.
 3. **Optional follow-up:** a second reading pass on Flecs and on Bevy's and Unity DOTS's ordering, if the ECS storage spike (phase 7) wants it.

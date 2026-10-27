@@ -69,11 +69,12 @@ audio thread (callback driven, decoupled)     --> mixes from a lock-free command
 | `alloc` | `CountingAllocator<A: GlobalAlloc>`, `AllocCounts`, `count_allocations`, `current_counts` | Counters are per thread, in a `const`-initialised thread-local `Cell` without a destructor: reading them never allocates and registers no thread-exit hook, so they are safe inside the allocator. `alloc` and `alloc_zeroed` count as allocations, `realloc` as a reallocation (a growing `Vec` makes these), `dealloc` as a deallocation; `calls()` adds the three. `count_allocations(f)` returns the calling thread's delta, so another thread's allocations are not counted by construction (a thread-local), and a job asserts on its own worker thread. Install the allocator with `#[global_allocator]` in a test binary or the application (L4). |
 | `arena` | `Arena`, `ArenaBox<'a, T>`, `ArenaVec<'a, T>` | Fixed-capacity bump arena: one heap allocation in `with_capacity` (or `try_with_capacity`, which returns `None` instead of aborting), one free in `Drop`, and every allocation in between is a pointer bump with no allocator call (integration test `arena_allocations`). `alloc`, `alloc_slice_with` and `vec_with_capacity` return `Option`; `ArenaVec::push` hands the value back as `Err(value)` when full. `reset(&mut self)` makes the block reusable and the borrow checker proves no reference survives (compile_fail doc test). Types with drop glue are rejected at compile time (`const` assertion on `needs_drop`; compile_fail doc test). The block is 64-byte aligned and padding is computed from the offset with checked arithmetic, so what fits and what `used()` reports never depend on where the allocator put the block (determinism); types aligned above 64 are rejected at compile time, and huge lengths return `None` instead of overflowing. Zero-sized values and empty slices take no space. The closure of `alloc_slice_with` may allocate from the same arena (space is reserved first). Not `Sync` (a `Cell` offset) and not `Send` (raw block; handing arenas to workers is for the job-system card). |
 | `pool` | `Handle<T>`, `Pool<T>` | Generational handles and a fixed-capacity pool, safe code only. `Handle<T>` is a slot index plus a generation (two `u32`, 8 bytes), `Copy`, `Eq`, `Hash` for every `T`, and typed: a `Handle<A>` does not compile where a `Pool<B>` is expected (`compile_fail` doc test). `Pool::with_capacity` makes two heap allocations (slots and free list); `insert`, `remove`, `get`, `get_mut` and `contains` make none (integration test `pool_allocations`). `insert` hands the value back as `Err(value)` when full. `remove` bumps the slot generation, so every older handle to the slot is stale and answers `None` (a slot whose generation is already `u32::MAX` is retired instead). Free slots are reused last freed first and new slots are issued in index order, so the handles a sequence of operations produces are the same on every run. |
+| `map` | `DenseMap<K, V>`, `MapKey`, `hash64` | Fixed-capacity hash map whose iteration order depends only on the operations done (entries in a dense array in insertion order, remove swaps the last entry into the hole). Safe code, `u32` positions in a linear-probing table with at least twice the capacity in slots and no tombstones. The hash is the `MurmurHash3` 64-bit finalizer (integer arithmetic only). `MapKey` is implemented for `u32`, `u64` and `Handle<T>`. Built for simulation code, where the standard maps are banned (card 1-24) |
 | `simd` | `scalar::F32x4`, `sse2::F32x4`, `F32x4` (the build target's backend) | Four `f32` lanes with `splat`, `from_array`, `to_array`, `+ - * /`, unary `-`, `sqrt`, `min`, `max`, `abs` and `horizontal_sum`. `scalar` is the reference and is always built; `sse2` (x86-64) gives the same bits for every operation, checked by property tests over 20,000 random and special-value cases per operation (D2). Each operation is one IEEE-754 operation per lane (or a sign-bit mask, or the fixed add sequence of `horizontal_sum`): no FMA, no `rcpps` or `rsqrtps`. `min` and `max` are defined as `a < b ? a : b` and `a > b ? a : b` (the x86 rule: `other` when equal or unordered), `horizontal_sum` as `(l0 + l1) + (l2 + l3)`. NaN payloads are unspecified; simulation code must not produce NaN. 13 `unsafe` blocks in `sse2`, all single intrinsic calls with a `// SAFETY:` comment. |
 | `math` | `Scalar`, `Vec2`, `Vec3`, `Vec4`, `Mat3`, `Mat4`, `Quat` | `Scalar` is `f32` (one alias, [conventions](conventions.md)). The vectors are `repr(C)` plain data with fields `x`, `y`, `z`, `w`, alignment of one scalar. Constants `ZERO`, `ONE` and the axes, `splat`, `from_array`, `to_array`, operators `+ - neg`, scalar `*` and `/`, `dot`, `length_squared`, `length`, `distance`, `normalized` (an `Option`), `min`, `max`, `abs`, `lerp`; `Vec2::perp` and `cross`, `Vec3::cross`, `extend` and `truncate`. The order of every operation is fixed and nothing is fused, so results repeat bit for bit. Safe code only. `Mat3` and `Mat4` are column-major `repr(C)` plain data holding their columns (`cols`), column vectors, `M * v` ([conventions](conventions.md)). `IDENTITY`, `ZERO`, `from_cols`, `from_cols_array`, `to_cols_array`, `transpose`, `determinant`, `inverse` (an `Option`), `is_finite`, the operators `Mat * Vec` and `Mat * Mat`, `from_scale` and `from_rotation_x`, `_y`, `_z` (radians, counter-clockwise); `Mat4` adds `from_translation`, `from_mat3`, `transform_point3` and `transform_vector3`. `Quat` is a `repr(C)` quaternion `x, y, z, w` (Hamilton, `w` last, identity `(0, 0, 0, 1)`), a rotation when it has unit length: `IDENTITY`, `from_axis_angle` (an `Option`), `*` (the Hamilton product, the right factor applies first), `conjugate`, `inverse` and `normalized` (both `Option`), `dot`, `length`, `rotate`, `to_mat3`, `to_mat4`, `nlerp` and `slerp` (both `Option`, shorter arc). |
 | `assert` | `duck_assert!`, `duck_debug_assert!` | Always-on and debug-only assertion. A failure panics with the condition or message; under `panic = "abort"` that ends the process, so nothing unwinds across a module boundary. |
 
-UML view of crate `base` as implemented (cards 1-1 to 1-3, 1-9, 1-11, 1-18, 1-19 and 1-20). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
+UML view of crate `base` as implemented (cards 1-1 to 1-3, 1-9, 1-11, 1-18, 1-19, 1-20 and 1-24). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
 
 ```mermaid
 classDiagram
@@ -181,6 +182,30 @@ classDiagram
     }
   }
 
+  namespace map {
+    class MapKey {
+      <<trait>>
+      +hash_key() u64
+    }
+    class DenseMap {
+      +with_capacity(capacity) DenseMap
+      +insert(key, value) Result
+      +get(key) Option~ref V~
+      +get_mut(key) Option~mut ref V~
+      +contains_key(key) bool
+      +remove(key) Option~V~
+      +clear()
+      +iter() pairs in dense order
+      +iter_mut()
+      +len() usize
+      +capacity() usize
+    }
+    class hash64 {
+      <<function>>
+      MurmurHash3 finalizer
+    }
+  }
+
   namespace simd {
     class ScalarF32x4 {
       <<reference>>
@@ -279,6 +304,9 @@ classDiagram
   Arena ..> GlobalAlloc : calls the global allocator once to get and once to free the block
   Pool *-- Slot : fixed number, allocated once
   Pool ..> Handle : issues and checks
+  DenseMap ..> MapKey : hashes keys with
+  MapKey ..> hash64 : u32 and u64 call
+  Handle ..|> MapKey : implements
   Sse2F32x4 ..> ScalarF32x4 : must match bit for bit
   F32x4 ..> Sse2F32x4 : x86-64 with sse2
   F32x4 ..> ScalarF32x4 : any other target
@@ -405,3 +433,41 @@ Decisions of card 1-20 (`math`, part 3: `Quat`):
 - **`PartialEq` only, no `Eq` or `Hash`, as for the vectors.** `q` and `-q` are the same rotation but not equal; compare rotations through `rotate` or `to_mat3`.
 - **Checks.** 49 tests (the properties use the seeded `Pcg32`), mutation 213 caught, 0 missed, 6 unviable (219 mutants), line coverage of `quaternion.rs` 100%, Miri clean, release profile green. Safe code only.
 - **Not measured: speed.** No benchmark and no consumer exist yet.
+
+Decisions of card 1-24 (deterministic map; owner decisions of 2026-10-27 after the spikes [container-spike](../spikes/container-spike.md) and [container-competitors](../spikes/container-competitors.md)):
+
+- **Own dense-ordered map, not a standard map with a fixed hasher.** The `physics` crate's arch-check scan rejects `HashMap`/`HashSet`, and a standard map's order depends on the capacity hint. `DenseMap` keeps entries in a dense array, so iteration order is a function of the operation sequence only. It is not insertion order after a removal: `remove` swaps the last entry into the hole (container-spike section 8, decided 2026-10-27; Godot's map keeps order across an erase, this one does not), and the order is still independent of the capacity.
+- **Fixed capacity, failure as a value** (assumption, same as `Pool`: no growth, no hidden allocation). `insert` of a new key into a full map returns `Err((key, value))`; replacing the value of an existing key always works and keeps the key's place. The map and its table are two allocations in `with_capacity` (one when the capacity is 0) and none afterwards (integration test `map_allocations`, capacity 128 and 64, the same method as for the pool; these tests were written after the code, not red first). Capacity is a `u32` and is cut to `u32::MAX - 1` (conservative: `u32::MAX` would also fit; the cut is not testable, it would need 32 GB). `clear` costs one pass over the table.
+- **Table.** Linear probing over `u32` positions, at least twice the capacity in slots (a power of two, so load is at most 0.5 and a probe always ends), removal by shifting the following chain back instead of tombstones. No `unsafe`.
+- **Hash: the `MurmurHash3` 64-bit finalizer** (container-spike section 8, decided 2026-10-27, after the Box2D finding of the competitor survey). Tested against published vectors for 0, 1, 2 and `0xdeadbeef`. Skew tests, required for this map: 10,000 keys `i << 32` give a longest probe of 9 and 12,089 probes in total (mean 1.21) at load 0.3, with limits of 16 and 1.5; strides 1, 2^8, 2^16 and 2^32 on 4,096 keys at load 0.5 give a longest probe of 19 for stride 1 (about what random hashing gives), with a limit of 40. A mutant with an identity hash fails three tests (the vectors and both skew tests).
+- **Order is checked against a model.** A random run of 20,000 inserts, replacements, removals and lookups (seeded `Pcg32`) is compared with a vector that uses `swap_remove`: same order, same values, same answers. The same operations at capacities 40, 64 and 1000 give the same order. There is no stored hash of the order: the hash is integer arithmetic only, so the order is the same on every platform by construction, and the vector model is the definition.
+- **Determinism does not depend on the hash.** The order comes from the dense array only; the hash decides speed. `MapKey` requires equal keys to have equal hashes; a poor hash cannot change the order or loop forever (the table always has an empty slot).
+- **Keys.** `MapKey` (`Copy + Eq`, a 64-bit hash) is implemented for `u32`, `u64` and `Handle<T>`. A stale handle is a different key from the new handle of the same slot. Other key types are added when a module needs them.
+- **Not in this card.** `keys()`/`values()` iterators, lookup by borrowed key, removal while iterating, growth, a hasher parameter. The `Pool` still has no iteration.
+- **Known limits.** Capacity is fixed. The order changes at a removal (the last entry moves). Memory is `(K, V)` per unit of capacity plus 8 to 16 bytes of table (2 to 4 slots of 4 bytes per unit of capacity; a half-full map has twice as many slots per entry).
+- **Speed (measured, not a gate; one machine, Windows 11, i7-12700H, Rust 1.94.1, release, `u64` keys and values, best of 7, differences below about 20% are noise; the benchmark program is throwaway and outside the repository).** Against `std::HashMap` with the Fx hasher, ns per operation, ratio = std / `DenseMap` (above 1 means `DenseMap` is faster):
+
+| keys | n | insert | get present | get absent | iterate | remove + insert |
+|---|---|---|---|---|---|---|
+| random | 1,000 | 1.7 vs 3.6 (2.11) | 1.5 vs 1.4 (0.96) | 1.5 vs 1.2 (0.77) | 0.1 vs 0.5 (4.44) | 12.2 vs 12.4 (1.02) |
+| random | 10,000 | 7.2 vs 7.1 (0.98) | 2.7 vs 1.5 (0.57) | 2.8 vs 1.6 (0.56) | 0.2 vs 0.6 (2.85) | 16.0 vs 12.6 (0.78) |
+| random | 100,000 | 10.7 vs 11.6 (1.09) | 6.2 vs 2.4 (0.38) | 8.4 vs 4.3 (0.52) | 0.3 vs 1.0 (3.78) | 33.1 vs 21.7 (0.65) |
+| random | 1,000,000 | 17.1 vs 20.0 (1.17) | 12.1 vs 9.8 (0.81) | 18.2 vs 2.9 (0.16) | 0.3 vs 2.1 (6.97) | 76.6 vs 38.9 (0.51) |
+| `i << 32` | 1,000 | 1.9 vs 47.6 (24.9) | 1.5 vs 33.8 (23.0) | 1.5 vs 0.9 (0.61) | 0.1 vs 0.5 (5.09) | 12.3 vs 137.8 (11.2) |
+| `i << 32` | 10,000 | 3.0 vs 333.3 (110.4) | 2.8 vs 272.9 (99.0) | 3.5 vs 1.2 (0.35) | 0.2 vs 0.6 (2.90) | 16.5 vs 994.8 (60.3) |
+
+  Reading: on random keys the map is on par for insert, 3 to 7 times faster to iterate, up to 2.6 times slower on present keys and up to 6 times slower on absent keys at 1,000,000 entries, and up to 2 times slower on churn. On keys that differ only in the high bits the Fx hasher collapses and the map is 11 to 110 times faster; absent-key lookups of that fixed hasher look fast only because the probes miss early. Same order of magnitude as the spike (present keys 1.2 to 2.6x slower here; absent keys 1.8 to 6x slower here against 2.5 to 8x there). The explanation that the fixed hasher's absent lookups are fast because probes miss early is an interpretation, not measured. Not measured: other key or value sizes, Linux, ARM64.
+
+```mermaid
+flowchart TD
+  Ins["insert(key, value)"] --> Loc{"key in the table?"}
+  Loc -->|"yes"| Rep["replace the value, keep the place, return the old value"]
+  Loc -->|"no"| Full{"len = capacity?"}
+  Full -->|"yes"| Err["return Err((key, value))"]
+  Full -->|"no"| Push["push the entry at the end, store its position in the first empty slot of the chain"]
+  Rem["remove(key)"] --> Find{"key in the table?"}
+  Find -->|"no"| None["return None"]
+  Find -->|"yes"| Gap["empty its slot, shift the rest of the chain back"]
+  Gap --> Swap["swap_remove the entry: the last entry takes the hole"]
+  Swap --> Fix["point the moved entry's slot at its new position"]
+```
