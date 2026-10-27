@@ -37,7 +37,7 @@ Rules:
 | Property-based / fuzz | invariants (no NaN, SIMD == scalar, allocator never overlaps) | no | every commit (short), nightly (long) |
 | Component / acceptance | module with Null adapters, deterministic scheduler | no | every commit |
 | **Contract** | one suite per port, run against every adapter | adapters need device (GPU/audio) | CI where available; Null always |
-| Golden / replay | golden: command streams, audio buffers; replay: physics state hashes compared within one run, never stored | no | every commit |
+| Golden / replay | golden: command streams, audio buffers; replay: physics state hashes compared within one run; with the D2 feature on, also against the stored golden hash of `gates/golden/` | no | every commit |
 | Image / audio-fidelity | offscreen render vs reference; spectral checks | GPU | nightly / per backend |
 | Performance | micro + scene benchmarks | stable machine | nightly + on-demand PR bot |
 | Sanitizer / UB builds | full suite under ASan (nightly toolchain), Miri on `unsafe` modules, TSan | no | every PR (ASan; Miri on changed `unsafe`), nightly (TSan) |
@@ -54,7 +54,7 @@ Because every port has a Null adapter, we avoid mocking frameworks in most place
 | Threads | injected `IScheduler`; a single-thread deterministic scheduler for unit tests; real scheduler for concurrency tests under TSan |
 | GPU output | test the command stream (deterministic); image tests with tolerance and per-backend references |
 | Audio | Offline adapter renders deterministically |
-| Floating point | simulation code is compared **bit-exactly** on one platform (D0/D1; D2 is not pursued); tolerance helpers (ULP + relative/absolute bounds, documented per test) only for rendering, audio DSP and other non-simulation code |
+| Floating point | simulation code is compared **bit-exactly** on one platform (D0/D1; D2 for physics, opt-in, compares across Windows and Linux x86-64); tolerance helpers (ULP + relative/absolute bounds, documented per test) only for rendering, audio DSP and other non-simulation code |
 | Performance | never asserted inside unit tests; benchmark pipeline compares with baseline using statistical thresholds |
 
 ## 6. Spikes (the honest exception)

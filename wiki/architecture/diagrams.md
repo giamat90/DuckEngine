@@ -266,7 +266,7 @@ flowchart LR
 
 ## 7. Physics pipeline (Soft Step shape)
 
-Source: [physics](physics.md). Standalone and handle-based, with a dimension-generic core (2D is the D = 2 instance). Determinism rules D0/D1 required, D2 not pursued (v0.25).
+Source: [physics](physics.md). Standalone and handle-based, with a dimension-generic core (2D is the D = 2 instance). Determinism rules D0/D1 required, D2 opt-in for physics only (v0.36).
 
 ```mermaid
 flowchart TB
