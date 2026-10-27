@@ -1,0 +1,17 @@
+# Unsafe budget (gate G3, card 1-31; checked by tools/unsafe-budget). A protected path.
+# Ratio: unsafe lines are at most max_percent of the code lines of the L0-L2 crates.
+# Only the files listed here may hold `unsafe`; each has a line budget (the count when it was
+# listed; lower it when the code shrinks, raise it only in a governance task).
+max_percent = 5
+
+[[modules]]
+path = "engine/base/src/alloc.rs"
+max_unsafe_lines = 29
+
+[[modules]]
+path = "engine/base/src/arena.rs"
+max_unsafe_lines = 10
+
+[[modules]]
+path = "engine/base/src/simd/sse2.rs"
+max_unsafe_lines = 16

@@ -376,7 +376,7 @@ Not yet covered, by design: the profiling hook; more `simd` types and ISAs, vect
 Decisions of card 1-2 (counting allocator):
 
 - **No `IAllocator` trait yet.** Stable Rust has no allocator trait other than `GlobalAlloc`, which is the seam: the counting allocator wraps any `GlobalAlloc`, and arenas stay concrete types used directly (card 1-3). A trait is added when a second consumer needs one.
-- **`unsafe` budget.** `base` leaves the workspace lint table (which forbids `unsafe`) and repeats it with `unsafe_code = "deny"` and `undocumented_unsafe_blocks = "deny"`, the pattern of `skeleton-unsafe`; the only module that allows `unsafe` is `alloc`. Count: one `unsafe impl` and four `unsafe` blocks (the four forwarding calls), each with a `// SAFETY:` comment, plus one `unsafe` block in a unit test. Counters saturate and the allocator never panics (unwinding out of a global allocator is undefined behaviour). No mechanism checks the per-module budget yet (`docs/gates/phase-0a-toolchain-gates.md`); the lint-profile check covers only `skeleton-unsafe`, so the repeated table in `base/Cargo.toml` is not compared with the workspace one. Both gaps are for a governance task.
+- **`unsafe` budget.** `base` leaves the workspace lint table (which forbids `unsafe`) and repeats it with `unsafe_code = "deny"` and `undocumented_unsafe_blocks = "deny"`, the pattern of `skeleton-unsafe`; the only module that allows `unsafe` is `alloc`. Count: one `unsafe impl` and four `unsafe` blocks (the four forwarding calls), each with a `// SAFETY:` comment, plus one `unsafe` block in a unit test. Counters saturate and the allocator never panics (unwinding out of a global allocator is undefined behaviour). The per-module budget is checked by `tools/unsafe-budget` (card 1-31, see the section at the end of this page); the lint-profile check covers only `skeleton-unsafe`, so the repeated table in `base/Cargo.toml` is not compared with the workspace one. The lint-profile gap is for a governance task.
 - **Miri.** Clean on `x86_64-unknown-linux-gnu` (nightly, `cargo miri test -p base`). On the Windows host target Miri reports undefined behaviour inside the standard library's own Windows allocator (`sys/alloc/windows.rs`, header read for over-aligned blocks, hit by the test harness's cache-padded channel), under both Stacked and Tree Borrows. The wrapper forwards the pointer unchanged and the unit tests that allocate with 8-byte alignment are Miri clean on the host; the integration test binary is not run under Miri on Windows. Command for the clean run: `RUSTUP_TOOLCHAIN=nightly cargo miri test -p base --target x86_64-unknown-linux-gnu`.
 - **Zero-allocation proof for logging.** `Logger<NullSink>` logging makes no allocator call; `Logger<MemorySink>` does (integration test `alloc_counting`). This closes the item left open in card 1-1.
 - **Cross-thread isolation is tested (card 1-6).** At the time of card 1-1 the architecture rules forbade creating threads anywhere in `base`, so the test could not live here and no waiver was added. Card 1-4 let test-only code create threads (`allow_in_tests` in `gates/architecture.toml`); card 1-6 added two integration tests in `tests/alloc_counting.rs`: two threads inside a measurement at the same time (held together by a barrier) each see exactly their own allocations, and a new thread starts from zero. The first test compares all four counters of each thread, including one reallocation. Checked by mutation: sharing any one of `allocations`, `reallocations`, `deallocations` or `bytes_requested` across threads makes it fail; sharing `allocations` or `bytes_requested` also fails the second test (the second does not look at deallocations, because std makes the new thread free blocks its parent allocated).
@@ -384,7 +384,7 @@ Decisions of card 1-2 (counting allocator):
 Decisions of card 1-3 (arena):
 
 - **Wrapper types instead of `&mut T`.** `alloc(&self, ..)` cannot return `&mut T` without tripping `clippy::mut_from_ref`, and silencing it would be a counted waiver. `ArenaBox` and `ArenaVec` hold a `NonNull` plus `PhantomData<&'a mut _>`, so the lifetime still ties them to the arena and no lint fires. `ArenaBox` and `ArenaVec` dereference to `T` and `[T]`.
-- **`unsafe` budget.** Module `arena` allows `unsafe` through `#![expect(unsafe_code, reason = ..)]`: 10 `unsafe` blocks, each with a `// SAFETY:` comment (block creation and free 2, reservation 2, writes 2, shared and exclusive views of box and vec 4). Together with `alloc` the crate has two allowed modules; the budget is still unchecked by tooling (see card 1-2).
+- **`unsafe` budget.** Module `arena` allows `unsafe` through `#![expect(unsafe_code, reason = ..)]`: 10 `unsafe` blocks, each with a `// SAFETY:` comment (block creation and free 2, reservation 2, writes 2, shared and exclusive views of box and vec 4). Together with `alloc` the crate has two allowed modules; the budget is checked by `tools/unsafe-budget` (card 1-31).
 - **The block is allocated with a fixed 64-byte alignment** (`std::alloc::alloc` with an explicit `Layout`), found by the independent review (F1): with an alignment-1 block, whether an over-aligned value fit depended on the address the allocator returned, which would make `None`/`Some` and `used()` differ between allocators and runs. Now padding depends only on the sequence of allocations. `used()` includes padding.
 - **Construction.** `with_capacity` aborts (`handle_alloc_error`) when the block cannot be provided, like `Vec::with_capacity`; `try_with_capacity` returns `None` (also for sizes above `isize::MAX`). Every later operation reports failure as a value.
 - **Known limits.** The drop-glue check is evaluated when the code is built (post-monomorphisation), so `cargo check` alone does not report it; `ManuallyDrop` values pass it and are leaked on `reset`. `alloc_slice_with` runs the closure `len` times even for zero-sized elements, so a huge `len` of them takes that long.
@@ -421,7 +421,7 @@ Decisions of card 1-11 (`simd` v0, and the N-6 spike):
 - **NaN payloads are not part of the contract.** The tests treat any two NaN results as equal, except for `abs` and `neg`, which are compared strictly. Simulation code must not produce NaN.
 - **Subnormals.** Equivalence is tested under the default floating-point control state. Simulation jobs set and assert the control registers (digest section 5); the NEON backend must use the same flush-to-zero setting.
 - **Inlining.** The small methods carry `#[inline]`; whether they inline across crates without LTO is for the first benchmark to show.
-- **`unsafe`.** `std::arch` intrinsics are `unsafe fn` to call, even for SSE2 which is in the x86-64 baseline, so `sse2` carries `#![expect(unsafe_code, ..)]`: 13 blocks, each one intrinsic call with a `// SAFETY:` comment. The module is compiled only when the target has `sse2`, which makes the comment true by construction. Third allowed module (with `alloc` and `arena`); the per-module budget is still unchecked by tooling.
+- **`unsafe`.** `std::arch` intrinsics are `unsafe fn` to call, even for SSE2 which is in the x86-64 baseline, so `sse2` carries `#![expect(unsafe_code, ..)]`: 13 blocks, each one intrinsic call with a `// SAFETY:` comment. The module is compiled only when the target has `sse2`, which makes the comment true by construction. Third allowed module (with `alloc` and `arena`); the per-module budget is checked by `tools/unsafe-budget` (card 1-31).
 - **Miri** is clean on the host target for all `simd` tests (case count reduced under Miri).
 - **Not measured: speedup.** Gate G4 (SIMD speedup) needs a benchmark and a consumer; neither exists yet. The D2 cost report (feature on versus off) is measured with the physics crate in phase 4 (v0.36). This card proves equivalence, not speed.
 - **On x86-64 the scalar and SSE2 code both compile to SSE instructions**, so the equivalence tests cannot fail by an ISA difference here; they pin the contract for the NEON backend (phase 2), which is where scalar and vector code can differ.
@@ -578,4 +578,32 @@ flowchart TD
   Pop["pop()"] --> Any{"len = 0?"}
   Any -->|"yes"| None["return None"]
   Any -->|"no"| Take["value = items[head], head = (head + 1) & mask, len - 1"]
+```
+
+### Unsafe budget checker (gate G3, card 1-31)
+
+`tools/unsafe-budget/unsafe_budget.py` enforces the `unsafe` rules of the digest (section 4) and gate G3 of ADR-0001 section 6. It reads `gates/unsafe-budget.toml` (a protected path: `max_percent = 5` and an allowlist of files, each with a line budget) and the layers of `gates/architecture.toml`, and scans every `.rs` file of the layer 0-2 crates (exempt crates and layers 3-4 are skipped; a crate with no layer is a finding). Comments and strings are blanked first, so `unsafe_code` and text in comments do not count.
+
+- **Count.** An `unsafe` span runs from the keyword to the closing brace of its block (or the `;` of a declaration); the budget counts the non-blank lines of the union of spans. Ratio = unsafe lines / code lines of all checked crates.
+- **Findings.** `unsafe-outside-allowlist` (a file with `unsafe` that is not listed), `missing-safety` (a block or impl without a `// SAFETY:` comment on its line or in the comment run directly above; an `unsafe fn` needs a `# Safety` doc section or a SAFETY comment, except inside an `unsafe impl`, where the trait states the contract), `module-budget` (more unsafe lines than the file's budget), `unsafe-ratio` (more than `max_percent`), `stale-allowlist` (a listed file is missing), `unmapped`.
+- **Today:** 55 unsafe lines of 5,459 code lines (1.01%): `alloc.rs` 29, `arena.rs` 10, `simd/sse2.rs` 16 (the budgets).
+- **Where it runs.** This card adds the tool and its unit tests to the `ci` build job. Running it in the trusted "gates from main" job is card 1-32, because that job takes tools from `main`. Miri on changed `unsafe` is a separate gate and is not part of this tool.
+- **Scope of the count.** All `.rs` files of the crates, including `tests/`, `benches/` and `#[cfg(test)]` code, in both the numerator and the denominator; the budgets are line counts, not block counts (the blocks per module are in the module notes above).
+- **Known gaps.** A `{` inside generics of an `unsafe fn` header ends the span early (undercount); a stray `)` such as an `unsafe fn(u8)` pointer type, or `#[unsafe(no_mangle)]`, makes the span swallow the next block (overcount, fails closed); a `/* */` SAFETY comment or one above a statement whose `unsafe` is on a later line is not seen (fails closed); a `SAFETY:` anywhere in the comment run is accepted. The scan is textual: `unsafe` produced by a macro, a file pulled in by `include!`, or a SAFETY comment that is present but wrong are not detected (the review phase R6 reads them).
+
+```mermaid
+flowchart TD
+  Meta["cargo metadata --no-deps"] --> Pick["crates of layers 0-2 (architecture.toml)"]
+  Pick --> Scan["strip comments and strings, find each unsafe span"]
+  Scan --> Safety{"SAFETY note?"}
+  Scan --> Listed{"file on the allowlist?"}
+  Scan --> Budget{"lines within the file budget?"}
+  Scan --> Ratio{"unsafe ratio within the limit?"}
+  Safety -->|no| V["VIOLATION, exit 1"]
+  Listed -->|no| V
+  Budget -->|no| V
+  Ratio -->|no| V
+  Config["gates/unsafe-budget.toml"] --> Listed
+  Config --> Budget
+  Config --> Ratio
 ```
