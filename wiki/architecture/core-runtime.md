@@ -371,7 +371,7 @@ Reading the diagram: nothing in `base` knows the OS; the outward seams are `LogS
 
 Complexity: `next_u32` is O(1); `below` is O(1) expected (fewer than 2 draws on average, worst case unbounded but with probability halving each draw). Logging cost is one level comparison when the record is filtered out.
 
-Not yet covered, by design: the profiling hook; more `simd` types and ISAs, vectors backed by SIMD, further containers (later phase 1 cards).
+Not yet covered, by design: more `simd` types and ISAs, vectors backed by SIMD, further containers (later phase 1 cards).
 
 Decisions of card 1-2 (counting allocator):
 
@@ -606,4 +606,31 @@ flowchart TD
   Config["gates/unsafe-budget.toml"] --> Listed
   Config --> Budget
   Config --> Ratio
+```
+
+## Profiling hook (card 1-35)
+
+Decided by the owner (2026-10-27): a **feature-gated macro in front of one global sink**, name-only events.
+
+- **API.** `base::profile`: trait `ProfileSink: Sync` with `enter(&self, name: &'static str)` and `exit(&self, name)`; `install_sink(&'static dyn ProfileSink)` sets the process-wide sink once (a second call returns `SinkAlreadyInstalled`, the first stays); `scope(name)` returns a `ScopeGuard` whose drop reports the exit; `profile_scope!("name")` opens a scope for the rest of the block.
+- **Zero cost when off.** `profile_scope!` expands to nothing unless the `profiling` feature of `base` is on, so the name expression is not even evaluated (test `profile_off`). With the feature on and no sink installed a scope is one atomic load. `scope` itself is always compiled, so layer 4 code that installs a sink builds with or without the feature.
+- **No clock in `base`.** The hook only says "entered / left `name`". The sink, written in layer 4 (or a dev adapter such as Tracy), takes the timestamp and the thread id. This keeps the clock ban of layers 0-2 and keeps simulation code deterministic.
+- **No allocation per scope** (test `profile_allocations`: 100 nested scope pairs, 0 allocator calls, with and without a sink). The guard remembers the sink it entered, so an exit always pairs with its enter even if the sink is installed while the scope is open (test `profile_late_install`). The guard is `!Send`, so `enter` and `exit` come from one thread (compile-time test).
+- **Global state, on purpose.** The log interface has no global; scopes sit in deep hot code where passing a profiler through every call is too heavy, and the wiki already says "profiling macros expanding to a hook" ([overview](overview.md)). The global is a safe `OnceLock`, no `unsafe`.
+- **Known limits.** One sink per process; the sink must be thread-safe (`Sync`) and must itself not allocate or lock if it is to be used in a hot path; events carry the name only (a category can be added later, additive). CI does not yet build `base` with the feature on (the workflow is a protected path; card 1-41); `tools/local-gates` does.
+- **Usage.** `profile_scope!("name");` as a statement (it expands to a `let`, so not as a block tail or match arm); `let _ = scope("x")` drops the guard at once. A sink is observe-only, tolerates unbalanced events and opens no scope itself.
+- **Checks.** 5 integration test files (each its own process, because the sink is global) and 2 unit tests plus a compile-time `!Send` check, run with and without the feature; line coverage of `profile.rs` 100%; Clippy clean in both modes; safe code only.
+
+```mermaid
+flowchart LR
+  Code["engine code: profile_scope!(name)"] -->|feature off| Nothing["expands to nothing"]
+  Code -->|feature on| Scope["scope(name)"]
+  Scope --> Load{"sink installed? one atomic load"}
+  Load -->|no| Noop["no event"]
+  Load -->|yes| Enter["sink.enter(name)"]
+  Enter --> Guard["ScopeGuard keeps the sink"]
+  Guard -->|drop at end of block| Exit["sink.exit(name)"]
+  App["layer 4: install_sink(&SINK)"] --> Load
+  Sink["sink in layer 4: timestamp, thread id, output"] --- Enter
+  Sink --- Exit
 ```

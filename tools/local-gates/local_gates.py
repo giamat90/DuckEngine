@@ -50,6 +50,8 @@ def rust_steps():
         _cargo("test", "test", "--workspace", "--locked"),
         _cargo("clippy app_runtime without mimalloc", "clippy", "-p", "app_runtime", "--no-default-features", "--all-targets", "--locked", "--", "-D", "warnings"),
         _cargo("test app_runtime without mimalloc", "test", "-p", "app_runtime", "--no-default-features", "--locked"),
+        _cargo("clippy base with profiling", "clippy", "-p", "base", "--features", "profiling", "--all-targets", "--locked", "--", "-D", "warnings"),
+        _cargo("test base with profiling", "test", "-p", "base", "--features", "profiling", "--locked"),
     ]
 
 
