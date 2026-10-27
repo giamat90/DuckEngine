@@ -71,11 +71,12 @@ audio thread (callback driven, decoupled)     --> mixes from a lock-free command
 | `pool` | `Handle<T>`, `Pool<T>` | Generational handles and a fixed-capacity pool, safe code only. `Handle<T>` is a slot index plus a generation (two `u32`, 8 bytes), `Copy`, `Eq`, `Hash` for every `T`, and typed: a `Handle<A>` does not compile where a `Pool<B>` is expected (`compile_fail` doc test). `Pool::with_capacity` makes two heap allocations (slots and free list); `insert`, `remove`, `get`, `get_mut` and `contains` make none (integration test `pool_allocations`). `insert` hands the value back as `Err(value)` when full. `remove` bumps the slot generation, so every older handle to the slot is stale and answers `None` (a slot whose generation is already `u32::MAX` is retired instead). Free slots are reused last freed first and new slots are issued in index order, so the handles a sequence of operations produces are the same on every run. |
 | `map` | `DenseMap<K, V>`, `MapKey`, `hash64` | Fixed-capacity hash map whose iteration order depends only on the operations done (entries in a dense array in insertion order, remove swaps the last entry into the hole). Safe code, `u32` positions in a linear-probing table with at least twice the capacity in slots and no tombstones. The hash is the `MurmurHash3` 64-bit finalizer (integer arithmetic only). `MapKey` is implemented for `u32`, `u64` and `Handle<T>`. Built for simulation code, where the standard maps are banned (card 1-24) |
 | `sparse` | `SparseSet<V>`, `InsertError<V>` | Fixed-capacity map from a small integer id (below an id bound) to a value, with the same iteration order rule as `map`: dense array in insertion order, remove swaps the last entry into the hole. A table with one `u32` position per possible id finds an entry; the dense array confirms it, so the table is never cleared. Safe code. Built for data keyed by a bounded id (component-style data), where iteration dominates (card 1-25) |
+| `ring` | `Ring<T>` | Fixed-capacity FIFO queue of `Copy + Default` values: one array allocated at construction (length a power of two, so an index wraps with a mask), `push` at the back returns the value when the ring is full, `pop` and `peek` at the front, `get` and `iter` in FIFO order. Safe code, no drop glue to run. Built for queues on hot paths where the no-allocation rule applies (card 1-26) |
 | `simd` | `scalar::F32x4`, `sse2::F32x4`, `F32x4` (the build target's backend) | Four `f32` lanes with `splat`, `from_array`, `to_array`, `+ - * /`, unary `-`, `sqrt`, `min`, `max`, `abs` and `horizontal_sum`. `scalar` is the reference and is always built; `sse2` (x86-64) gives the same bits for every operation, checked by property tests over 20,000 random and special-value cases per operation (D2). Each operation is one IEEE-754 operation per lane (or a sign-bit mask, or the fixed add sequence of `horizontal_sum`): no FMA, no `rcpps` or `rsqrtps`. `min` and `max` are defined as `a < b ? a : b` and `a > b ? a : b` (the x86 rule: `other` when equal or unordered), `horizontal_sum` as `(l0 + l1) + (l2 + l3)`. NaN payloads are unspecified; simulation code must not produce NaN. 13 `unsafe` blocks in `sse2`, all single intrinsic calls with a `// SAFETY:` comment. |
 | `math` | `Scalar`, `Vec2`, `Vec3`, `Vec4`, `Mat3`, `Mat4`, `Quat` | `Scalar` is `f32` (one alias, [conventions](conventions.md)). The vectors are `repr(C)` plain data with fields `x`, `y`, `z`, `w`, alignment of one scalar. Constants `ZERO`, `ONE` and the axes, `splat`, `from_array`, `to_array`, operators `+ - neg`, scalar `*` and `/`, `dot`, `length_squared`, `length`, `distance`, `normalized` (an `Option`), `min`, `max`, `abs`, `lerp`; `Vec2::perp` and `cross`, `Vec3::cross`, `extend` and `truncate`. The order of every operation is fixed and nothing is fused, so results repeat bit for bit. Safe code only. `Mat3` and `Mat4` are column-major `repr(C)` plain data holding their columns (`cols`), column vectors, `M * v` ([conventions](conventions.md)). `IDENTITY`, `ZERO`, `from_cols`, `from_cols_array`, `to_cols_array`, `transpose`, `determinant`, `inverse` (an `Option`), `is_finite`, the operators `Mat * Vec` and `Mat * Mat`, `from_scale` and `from_rotation_x`, `_y`, `_z` (radians, counter-clockwise); `Mat4` adds `from_translation`, `from_mat3`, `transform_point3` and `transform_vector3`. `Quat` is a `repr(C)` quaternion `x, y, z, w` (Hamilton, `w` last, identity `(0, 0, 0, 1)`), a rotation when it has unit length: `IDENTITY`, `from_axis_angle` (an `Option`), `*` (the Hamilton product, the right factor applies first), `conjugate`, `inverse` and `normalized` (both `Option`), `dot`, `length`, `rotate`, `to_mat3`, `to_mat4`, `nlerp` and `slerp` (both `Option`, shorter arc). |
 | `assert` | `duck_assert!`, `duck_debug_assert!` | Always-on and debug-only assertion. A failure panics with the condition or message; under `panic = "abort"` that ends the process, so nothing unwinds across a module boundary. |
 
-UML view of crate `base` as implemented (cards 1-1 to 1-3, 1-9, 1-11, 1-18, 1-19, 1-20, 1-24 and 1-25). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
+UML view of crate `base` as implemented (cards 1-1 to 1-3, 1-9, 1-11, 1-18, 1-19, 1-20, 1-24, 1-25 and 1-26). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
 
 ```mermaid
 classDiagram
@@ -226,6 +227,22 @@ classDiagram
       <<enum>>
       IdOutOfBound
       Full
+    }
+  }
+
+  namespace ring {
+    class Ring {
+      +with_capacity(capacity) Ring
+      +push(value) Result
+      +pop() Option~T~
+      +peek() Option~ref T~
+      +get(index) Option~ref T~
+      +iter() values front to back
+      +clear()
+      +len() usize
+      +capacity() usize
+      +is_empty() bool
+      +is_full() bool
     }
   }
 
@@ -533,4 +550,32 @@ flowchart TD
   Find -->|"no"| None["return None"]
   Find -->|"yes"| Swap["swap_remove the entry: the last entry takes the hole"]
   Swap --> Fix["table[moved id] = hole position"]
+```
+
+Decisions of card 1-26 (fixed ring; decided by the owner on 2026-10-27, see section 8 of the spike [container-spike](../spikes/container-spike.md)):
+
+- **Only `Copy + Default` values.** A ring of plain values has no drop glue, which is the digest's rule for arena-style storage, and needs no `unsafe`: the array is filled once with `T::default()` and a slot is overwritten when it is reused. Commands and events of the render and input streams are expected to be of this kind (they do not exist yet). `Default` costs a dummy value per slot and excludes types with no natural default, such as `Handle<T>` (a wrapper would be needed). A ring of values with drop glue would need `unsafe` (`MaybeUninit`) or an `Option` per slot; neither is built here.
+- **FIFO only.** `push` at the back, `pop` and `peek` at the front, `get` and `iter` from the front, `clear`. No push at the front, no pop at the back (it is not a deque; use `VecDeque` outside simulation code if that is wanted). The order is by construction first in, first out, and does not depend on the capacity.
+- **Fixed capacity, failure as a value.** `push` into a full ring returns `Err(value)`; there is no growth and no panic. The ring holds exactly `capacity` values even when the array behind it is longer (the length is the next power of two, so a capacity of 1,000 uses 1,024 slots and 1,025 uses 2,048, up to twice as many; every slot is filled with `T::default()` at construction, so building is O(slots); capacity 0 holds nothing). Like `vec!`, building aborts or panics when the storage cannot be provided (a capacity near `u32::MAX` asks for 2^32 slots; not tested).
+- **Allocation.** One allocation in `with_capacity`, none afterwards, one deallocation on drop (integration test `ring_allocations`; written after the code, not red first). Tests run on a `u32` ring (unit tests, including a 20,000-step random run against `VecDeque` at capacity 13) and a `u64` ring (allocation test); other value sizes are not tested.
+- **Mutants.** Two hand-made mutants (the head never advances; the full check replaced by `len > capacity`) fail 6 and 4 of the 9 unit tests. Three more mutants are equivalent and survive: replacing the mask by a modulo of the capacity (the same ring, slower), dropping `head = 0` in `clear` (the ring works from any head) and `==` to `>=` in `is_full`.
+- **Not in this card.** Values with drop glue, a deque, iteration with `iter_mut`, bulk push or pop, a growable ring.
+- **Speed (measured, not a gate; one machine, Windows 11, i7-12700H, Rust 1.94.1, release, `u64` values, capacity 1,024, 20 million operations per run, best of 7; the benchmark program is throwaway and outside the repository).** ns per push+pop (iteration: per value). `VecDeque` is built with `with_capacity(1024)`:
+
+| shape | `Ring` | `VecDeque` | `VecDeque` / `Ring` |
+|---|---|---|---|
+| steady, 1,023 live, one push and one pop per step | 0.61 | 0.99 | 1.63 |
+| bursts, push 1,024 then pop 1,024 | 0.77 | 1.07 | 1.40 |
+| iterate 1,024 values | 0.07 | 0.42 | 6.30 |
+
+  The ratios come from unrounded timings. A second run gave 1.62, 1.25 and 6.33. **The spike's 3.3 to 3.8 times for push+pop was not reproduced**: here the ring is 1.3 to 1.6 times faster, and both are below one nanosecond per operation, so the gain is small and the reason to use the ring remains its contract (no allocation, a full queue is a value). The iteration gap is larger (about 6 times) and has not been investigated; a plausible cause (not checked) is that `VecDeque` iterates two slices. Not measured: other value sizes, other capacities, Linux, ARM64.
+
+```mermaid
+flowchart TD
+  Push["push(value)"] --> Full{"len = capacity?"}
+  Full -->|"yes"| Err["return Err(value)"]
+  Full -->|"no"| Put["items[(head + len) & mask] = value, len + 1"]
+  Pop["pop()"] --> Any{"len = 0?"}
+  Any -->|"yes"| None["return None"]
+  Any -->|"no"| Take["value = items[head], head = (head + 1) & mask, len - 1"]
 ```

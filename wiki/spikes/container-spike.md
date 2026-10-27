@@ -285,7 +285,7 @@ The fixed hasher multiplies, and a multiplication never moves information down i
 | std VecDeque | 1.15 | 1.42 |
 | own fixed-capacity ring | 0.35 | 0.37 |
 
-**Reading.** `VecDeque` is a FIFO, so its order is deterministic. The own ring is 3.3-3.8x faster per push+pop, but both are at or near one nanosecond; a million queue operations per frame would be the difference between 1.1 ms and 0.35 ms. The speed ratio itself is unverified: the own ring has a constant, power-of-two capacity in a tight loop, which the compiler may specialise in a way it cannot for `VecDeque`, and the assembly was not inspected. The reason to write the own ring is the contract (fixed capacity, no allocation after creation, a full queue is an `Err`), which fits the rule "zero allocations per frame on hot paths" and the arena style, not speed.
+**Reading.** `VecDeque` is a FIFO, so its order is deterministic. The own ring is 3.3-3.8x faster per push+pop, but both are at or near one nanosecond; a million queue operations per frame would be the difference between 1.1 ms and 0.35 ms. The speed ratio itself is unverified (card 1-26 later measured 1.3 to 1.6 times instead; see core-runtime section 8): the own ring has a constant, power-of-two capacity in a tight loop, which the compiler may specialise in a way it cannot for `VecDeque`, and the assembly was not inspected. The reason to write the own ring is the contract (fixed capacity, no allocation after creation, a full queue is an `Err`), which fits the rule "zero allocations per frame on hot paths" and the arena style, not speed.
 
 ## 7. Limits and what was not measured
 
@@ -301,7 +301,7 @@ The fixed hasher multiplies, and a multiplication never moves information down i
 
 ## 8. Decisions for the owner
 
-**Decided by the owner on 2026-10-27:** all four are accepted as recommended, plus the stronger hash of the competitor survey and the `swap_remove` order after a delete. Cards: 1-24 (map, hash, skew test; implemented, see [core-runtime](../architecture/core-runtime.md) section 8), 1-25 (`SparseSet`; implemented, see core-runtime section 8), 1-26 (fixed ring). No separate sort card (point 3).
+**Decided by the owner on 2026-10-27:** all four are accepted as recommended, plus the stronger hash of the competitor survey and the `swap_remove` order after a delete. Cards: 1-24 (map, hash, skew test; implemented, see [core-runtime](../architecture/core-runtime.md) section 8), 1-25 (`SparseSet`; implemented, see core-runtime section 8), 1-26 (fixed ring; implemented, see core-runtime section 8: the ring measured 1.3 to 1.6 times faster than `VecDeque`, not the 3.3 to 3.8 times of this spike). No separate sort card (point 3).
 
 1. **Hash map in simulation code: build the own dense-ordered map?** (recommended) Or allow the standard map with a fixed hasher where it is never iterated: faster lookups (about 2x on present keys, 2.5-8x on absent keys from 10,000 entries), but the `physics` crate's arch-check scan rejects the identifiers `HashMap` and `HashSet` outright, so this needs a governance task to change the scanner, and the hasher must be built and tested.
 2. **Build `SparseSet`?** (recommended, for component-style data where iteration dominates and ids are bounded.)

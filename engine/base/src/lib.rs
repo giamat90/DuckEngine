@@ -8,6 +8,7 @@ pub mod log;
 pub mod map;
 pub mod math;
 pub mod pool;
+pub mod ring;
 pub mod rng;
 pub mod simd;
 pub mod sparse;
