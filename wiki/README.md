@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.41 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.42 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.42** - New page [decisions/adr-0022-global-allocator](decisions/adr-0022-global-allocator.md): ADR-0022 decided by the owner, mimalloc as the global allocator of application builds (L4, no port, exit plan = default allocator); core-runtime section 2, decision index and `THIRD_PARTY.md` entry updated; the `#[global_allocator]` line and CI job are a follow-up. Governance task 1-29.
 > - **v0.41** - Added the allocator benchmark [spike page](spikes/allocator-benchmark.md): default allocator vs mimalloc on Windows and Linux (WSL2), with the pass criterion applied; nothing adopted. Risk R-22 updated. Task 1-27 (governance task limited to one `THIRD_PARTY.md` row).
 > - **v0.40** - arch-check accepts a dev-tool crate listed in `standalone_tools` (`gates/architecture.toml`) whose manifest has its own `[workspace]`; any other crate outside the workspace is still `unlisted-crate` ([ports-and-adapters](architecture/ports-and-adapters.md) section 5). Governance task 1-28.
 > - **v0.39** - Implemented `base::ring`: `Ring` (core-runtime section 8, decisions of card 1-26); the spike's ring speed ratio is corrected to the measured 1.3 to 1.6 times. Task 1-26.
@@ -83,6 +84,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 23 | [spikes/container-spike](spikes/container-spike.md) | Container spike (Windows): deterministic containers vs std (hash map, sparse set, sort, ring buffer); recommendation for the owner |
 | 24 | [spikes/container-competitors](spikes/container-competitors.md) | Competitor survey: containers, iteration order and determinism statements of Box2D, Jolt, Rapier, Bevy, Godot, Unreal, Unity, EnTT |
 | 25 | [spikes/allocator-benchmark](spikes/allocator-benchmark.md) | Allocator benchmark (Windows and Linux in WSL2): default allocator vs mimalloc; pass criterion applied; nothing adopted |
+| 26 | [decisions/adr-0022-global-allocator](decisions/adr-0022-global-allocator.md) | ADR-0022 (decided): mimalloc as the global allocator of application builds |
 
 ## Confidence legend used in this wiki
 
