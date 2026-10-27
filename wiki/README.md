@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.34 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.35 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.35** - New page [spikes/container-competitors](spikes/container-competitors.md): survey of what competitor engines (Box2D, Jolt, Rapier, Bevy, Godot, Unreal, Unity, EnTT) use for containers where order matters, with sources, compared with the container spike. Task 1-22.
 > - **v0.34** - New page [spikes/container-spike](spikes/container-spike.md): results of the container spike (deterministic containers vs the standard ones: hash map, sparse set, sort, ring buffer; Windows), ending in a recommendation that waits for the owner's decision. Task 1-21.
 > - **v0.33** - Implemented `base::math` part 3: `Quat` (core-runtime section 8, decisions of card 1-20). Task 1-20.
 > - **v0.32** - Implemented `base::math` part 2: `Mat3` and `Mat4` (core-runtime section 8, decisions of card 1-19). Task 1-19.
@@ -74,6 +75,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 21 | [workflow/ci-diagrams](workflow/ci-diagrams.md) | UML (Mermaid): how the five workflows, the trusted gates and the release work |
 | 22 | [spikes/allocator-spike](spikes/allocator-spike.md) | Allocator spike (Windows): arena, pool, reused Vec, counting allocator, mimalloc; evidence for ADR-0022 |
 | 23 | [spikes/container-spike](spikes/container-spike.md) | Container spike (Windows): deterministic containers vs std (hash map, sparse set, sort, ring buffer); recommendation for the owner |
+| 24 | [spikes/container-competitors](spikes/container-competitors.md) | Competitor survey: containers, iteration order and determinism statements of Box2D, Jolt, Rapier, Bevy, Godot, Unreal, Unity, EnTT |
 
 ## Confidence legend used in this wiki
 
