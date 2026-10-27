@@ -50,6 +50,11 @@ jobs:
         run: cargo clippy -p app_runtime --no-default-features --all-targets --locked -- -D warnings
       - name: Test the application crate without the mimalloc feature
         run: cargo test -p app_runtime --no-default-features --locked
+      # Card 1-41: the profiling hook (`profile_scope!`) compiles to nothing with the feature off, so the default run never sees it.
+      - name: Lint base with the profiling feature
+        run: cargo clippy -p base --features profiling --all-targets --locked -- -D warnings
+      - name: Test base with the profiling feature
+        run: cargo test -p base --features profiling --locked
       - name: Test the metrics tool
         run: |
           python -m unittest -q test_report

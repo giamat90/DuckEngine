@@ -247,6 +247,15 @@ class Ci(unittest.TestCase):
         job = CI[CI.index("\n  metrics:"):CI.index("\n  deny:")]
         self.assertIn("if: github.ref_type == 'branch' && github.ref != 'refs/heads/main'", job)
 
+    def test_ci_lints_and_tests_base_with_the_profiling_feature_on_in_the_build_job(self):
+        # The profiling hook compiles to nothing with the feature off, so the default run never sees it (card 1-41).
+        build = CI[:CI.index("\n  gates:")]
+        lint = "cargo clippy -p base --features profiling --all-targets --locked -- -D warnings"
+        test = "cargo test -p base --features profiling --locked"
+        self.assertIn(lint, build)
+        self.assertIn(test, build)
+        self.assertLess(build.index("cargo test --workspace --locked"), build.index(test))
+
     def test_ci_runs_the_tests_of_every_tool_folder(self):
         for folder, module in (("tools/templates", "test_templates"), ("tools/token-probe", "test_probe"),
                                ("tools/local-gates", "test_local_gates"),
