@@ -75,6 +75,7 @@ class Config:
     allowed_external: tuple
     banned_crates: tuple
     banned_use: tuple
+    standalone_tools: tuple = ()
 
 
 def _pairs(rules, key):
@@ -110,6 +111,7 @@ def load_config(text):
         allowed_edges=_pairs(rules, "allowed_edges"), forbidden_edges=_pairs(rules, "forbidden_edges"),
         allowed_external=tuple(rules.get("allowed_external", ())), banned_crates=tuple(rules.get("banned_crates", ())),
         banned_use=tuple(_use_rule(entry) for entry in data.get("banned_use", [])),
+        standalone_tools=tuple(rules.get("standalone_tools", ())),
     )
 
 
@@ -400,7 +402,7 @@ def check(metadata, config):
         if package["name"] in layers:
             found += _package_findings(package, layers, config, names)
     found += _graph_findings(packages, layers, config)
-    found += _unlisted_crates(metadata)
+    found += _unlisted_crates(metadata, config)
     return sorted(set(found), key=lambda finding: (finding.rule, finding.message))
 
 
@@ -418,8 +420,22 @@ def _graph_findings(packages, layers, config):
 SKIPPED_FOLDERS = {"target", ".git", "node_modules", "mutants.out"}
 
 
-def _unlisted_crates(metadata):
-    """Cargo.toml files in the workspace folder that belong to no package (a crate the checks cannot see)."""
+def _is_standalone_tool(folder, root, config):
+    """A folder named in `standalone_tools` (path from the workspace root, with `/`) whose manifest has its own [workspace]."""
+    relative = Path(os.path.relpath(folder, root)).as_posix()
+    if relative not in config.standalone_tools:
+        return False
+    try:
+        manifest = tomllib.loads((Path(folder) / "Cargo.toml").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return "workspace" in manifest
+
+
+def _unlisted_crates(metadata, config):
+    """Cargo.toml files in the workspace folder that belong to no package (a crate the checks cannot see).
+
+    A listed standalone tool with a workspace of its own is not a finding: it is built apart from the engine."""
     root = metadata.get("workspace_root")
     if not root:
         return []
@@ -428,7 +444,7 @@ def _unlisted_crates(metadata):
     for folder, children, files in os.walk(root):
         children[:] = [child for child in children if child not in SKIPPED_FOLDERS]
         here = os.path.normcase(os.path.realpath(folder))
-        if "Cargo.toml" in files and here not in listed and Path(folder) != Path(root):
+        if "Cargo.toml" in files and here not in listed and Path(folder) != Path(root) and not _is_standalone_tool(folder, root, config):
             found.append(Finding("unlisted-crate", f"{folder} has a Cargo.toml but is not a workspace member"))
     return found
 

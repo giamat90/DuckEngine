@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.39 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.40 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.40** - arch-check accepts a dev-tool crate listed in `standalone_tools` (`gates/architecture.toml`) whose manifest has its own `[workspace]`; any other crate outside the workspace is still `unlisted-crate` ([ports-and-adapters](architecture/ports-and-adapters.md) section 5). Governance task 1-28.
 > - **v0.39** - Implemented `base::ring`: `Ring` (core-runtime section 8, decisions of card 1-26); the spike's ring speed ratio is corrected to the measured 1.3 to 1.6 times. Task 1-26.
 > - **v0.38** - Implemented `base::sparse`: `SparseSet`, `InsertError` (core-runtime section 8, decisions of card 1-25). Task 1-25.
 > - **v0.37** - Implemented `base::map`: `DenseMap`, `MapKey`, `hash64` (core-runtime section 8, decisions of card 1-24); the container spike decisions of cards 1-21 and 1-22 are recorded as decided. Task 1-24.

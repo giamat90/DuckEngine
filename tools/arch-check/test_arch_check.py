@@ -663,6 +663,32 @@ class GraphEvasion(unittest.TestCase):
         ws.metadata["workspace_root"] = str(ws.dir)
         self.assertEqual(["unlisted-crate"], rules(ws.check()))
 
+    def standalone_workspace(self, manifest):
+        ws = Workspace(self, {"base": ([], {})})
+        (ws.dir / "tools" / "bench").mkdir(parents=True)
+        (ws.dir / "tools" / "bench" / "Cargo.toml").write_text(manifest, encoding="utf-8")
+        ws.metadata["workspace_root"] = str(ws.dir)
+        return ws
+
+    def listed(self):
+        return CONFIG.replace('exempt = ["skeleton"]', 'exempt = ["skeleton"]\nstandalone_tools = ["tools/bench"]')
+
+    def test_a_listed_standalone_tool_with_its_own_workspace_is_allowed(self):
+        ws = self.standalone_workspace("[package]\nname = 'bench'\n\n[workspace]\n")
+        self.assertEqual([], ws.check(self.listed()))
+
+    def test_a_listed_tool_without_its_own_workspace_is_still_a_violation(self):
+        ws = self.standalone_workspace("[package]\nname = 'bench'\n")
+        self.assertEqual(["unlisted-crate"], rules(ws.check(self.listed())))
+
+    def test_a_tool_that_is_not_listed_is_still_a_violation(self):
+        ws = self.standalone_workspace("[package]\nname = 'bench'\n\n[workspace]\n")
+        self.assertEqual(["unlisted-crate"], rules(ws.check()))
+
+    def test_a_manifest_that_cannot_be_parsed_is_a_violation(self):
+        ws = self.standalone_workspace("[package\n")
+        self.assertEqual(["unlisted-crate"], rules(ws.check(self.listed())))
+
     def test_a_workspace_with_every_folder_listed_is_clean(self):
         ws = Workspace(self, {"base": ([], {})})
         (ws.dir / "base" / "Cargo.toml").write_text("", encoding="utf-8")

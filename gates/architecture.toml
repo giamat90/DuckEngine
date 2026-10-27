@@ -29,6 +29,12 @@ frame = 2
 # Crates that are not engine code (walking skeleton, gate controls): not checked.
 exempt = ["skeleton", "skeleton-unsafe", "g1-control"]
 
+# Dev-tool crates kept in the repository but built apart from the engine: the folder (from the
+# workspace root, with "/") must hold a Cargo.toml with its own [workspace] table, so it cannot join
+# the engine build by accident. They get none of the checks above: no engine crate may depend on them
+# and CI does not build them. Card 1-28 (owner governance decision); first user: card 1-27.
+standalone_tools = ["tools/alloc-bench"]
+
 # The only code allowed to know two domain modules (overview section 3).
 glue = ["frame", "sync_*"]
 
