@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.32 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.33 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.33** - Implemented `base::math` part 3: `Quat` (core-runtime section 8, decisions of card 1-20). Task 1-20.
 > - **v0.32** - Implemented `base::math` part 2: `Mat3` and `Mat4` (core-runtime section 8, decisions of card 1-19). Task 1-19.
 > - **v0.31** - Implemented `base::math` part 1: `Scalar` (f32 alias), `Vec2`, `Vec3`, `Vec4` (core-runtime section 8, decisions of card 1-18). Task 1-18.
 > - **v0.30** - The pages and the digest said Clippy `disallowed-methods` enforces the simulation bans, but it is not configured and no simulation crate exists. They now name the arch-check scan as the enforcer of what it can see, review and a runtime assertion for the rest, and Clippy `disallowed-methods` as planned for the physics crate (roadmap phase 4). Task 1-17.

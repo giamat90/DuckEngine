@@ -4,9 +4,11 @@
 //! right-handed Y-up, column-major) are in `wiki/architecture/conventions.md`.
 
 mod matrix;
+mod quaternion;
 mod vector;
 
 pub use matrix::{Mat3, Mat4};
+pub use quaternion::Quat;
 pub use vector::{Vec2, Vec3, Vec4};
 
 /// The scalar type of every math type. A single alias, so a later switch is mechanical.

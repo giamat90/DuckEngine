@@ -70,10 +70,10 @@ audio thread (callback driven, decoupled)     --> mixes from a lock-free command
 | `arena` | `Arena`, `ArenaBox<'a, T>`, `ArenaVec<'a, T>` | Fixed-capacity bump arena: one heap allocation in `with_capacity` (or `try_with_capacity`, which returns `None` instead of aborting), one free in `Drop`, and every allocation in between is a pointer bump with no allocator call (integration test `arena_allocations`). `alloc`, `alloc_slice_with` and `vec_with_capacity` return `Option`; `ArenaVec::push` hands the value back as `Err(value)` when full. `reset(&mut self)` makes the block reusable and the borrow checker proves no reference survives (compile_fail doc test). Types with drop glue are rejected at compile time (`const` assertion on `needs_drop`; compile_fail doc test). The block is 64-byte aligned and padding is computed from the offset with checked arithmetic, so what fits and what `used()` reports never depend on where the allocator put the block (determinism); types aligned above 64 are rejected at compile time, and huge lengths return `None` instead of overflowing. Zero-sized values and empty slices take no space. The closure of `alloc_slice_with` may allocate from the same arena (space is reserved first). Not `Sync` (a `Cell` offset) and not `Send` (raw block; handing arenas to workers is for the job-system card). |
 | `pool` | `Handle<T>`, `Pool<T>` | Generational handles and a fixed-capacity pool, safe code only. `Handle<T>` is a slot index plus a generation (two `u32`, 8 bytes), `Copy`, `Eq`, `Hash` for every `T`, and typed: a `Handle<A>` does not compile where a `Pool<B>` is expected (`compile_fail` doc test). `Pool::with_capacity` makes two heap allocations (slots and free list); `insert`, `remove`, `get`, `get_mut` and `contains` make none (integration test `pool_allocations`). `insert` hands the value back as `Err(value)` when full. `remove` bumps the slot generation, so every older handle to the slot is stale and answers `None` (a slot whose generation is already `u32::MAX` is retired instead). Free slots are reused last freed first and new slots are issued in index order, so the handles a sequence of operations produces are the same on every run. |
 | `simd` | `scalar::F32x4`, `sse2::F32x4`, `F32x4` (the build target's backend) | Four `f32` lanes with `splat`, `from_array`, `to_array`, `+ - * /`, unary `-`, `sqrt`, `min`, `max`, `abs` and `horizontal_sum`. `scalar` is the reference and is always built; `sse2` (x86-64) gives the same bits for every operation, checked by property tests over 20,000 random and special-value cases per operation (D2). Each operation is one IEEE-754 operation per lane (or a sign-bit mask, or the fixed add sequence of `horizontal_sum`): no FMA, no `rcpps` or `rsqrtps`. `min` and `max` are defined as `a < b ? a : b` and `a > b ? a : b` (the x86 rule: `other` when equal or unordered), `horizontal_sum` as `(l0 + l1) + (l2 + l3)`. NaN payloads are unspecified; simulation code must not produce NaN. 13 `unsafe` blocks in `sse2`, all single intrinsic calls with a `// SAFETY:` comment. |
-| `math` | `Scalar`, `Vec2`, `Vec3`, `Vec4`, `Mat3`, `Mat4` | `Scalar` is `f32` (one alias, [conventions](conventions.md)). The vectors are `repr(C)` plain data with fields `x`, `y`, `z`, `w`, alignment of one scalar. Constants `ZERO`, `ONE` and the axes, `splat`, `from_array`, `to_array`, operators `+ - neg`, scalar `*` and `/`, `dot`, `length_squared`, `length`, `distance`, `normalized` (an `Option`), `min`, `max`, `abs`, `lerp`; `Vec2::perp` and `cross`, `Vec3::cross`, `extend` and `truncate`. The order of every operation is fixed and nothing is fused, so results repeat bit for bit. Safe code only. `Mat3` and `Mat4` are column-major `repr(C)` plain data holding their columns (`cols`), column vectors, `M * v` ([conventions](conventions.md)). `IDENTITY`, `ZERO`, `from_cols`, `from_cols_array`, `to_cols_array`, `transpose`, `determinant`, `inverse` (an `Option`), `is_finite`, the operators `Mat * Vec` and `Mat * Mat`, `from_scale` and `from_rotation_x`, `_y`, `_z` (radians, counter-clockwise); `Mat4` adds `from_translation`, `from_mat3`, `transform_point3` and `transform_vector3`. The quaternion follows in card 1-20. |
+| `math` | `Scalar`, `Vec2`, `Vec3`, `Vec4`, `Mat3`, `Mat4`, `Quat` | `Scalar` is `f32` (one alias, [conventions](conventions.md)). The vectors are `repr(C)` plain data with fields `x`, `y`, `z`, `w`, alignment of one scalar. Constants `ZERO`, `ONE` and the axes, `splat`, `from_array`, `to_array`, operators `+ - neg`, scalar `*` and `/`, `dot`, `length_squared`, `length`, `distance`, `normalized` (an `Option`), `min`, `max`, `abs`, `lerp`; `Vec2::perp` and `cross`, `Vec3::cross`, `extend` and `truncate`. The order of every operation is fixed and nothing is fused, so results repeat bit for bit. Safe code only. `Mat3` and `Mat4` are column-major `repr(C)` plain data holding their columns (`cols`), column vectors, `M * v` ([conventions](conventions.md)). `IDENTITY`, `ZERO`, `from_cols`, `from_cols_array`, `to_cols_array`, `transpose`, `determinant`, `inverse` (an `Option`), `is_finite`, the operators `Mat * Vec` and `Mat * Mat`, `from_scale` and `from_rotation_x`, `_y`, `_z` (radians, counter-clockwise); `Mat4` adds `from_translation`, `from_mat3`, `transform_point3` and `transform_vector3`. `Quat` is a `repr(C)` quaternion `x, y, z, w` (Hamilton, `w` last, identity `(0, 0, 0, 1)`), a rotation when it has unit length: `IDENTITY`, `from_axis_angle` (an `Option`), `*` (the Hamilton product, the right factor applies first), `conjugate`, `inverse` and `normalized` (both `Option`), `dot`, `length`, `rotate`, `to_mat3`, `to_mat4`, `nlerp` and `slerp` (both `Option`, shorter arc). |
 | `assert` | `duck_assert!`, `duck_debug_assert!` | Always-on and debug-only assertion. A failure panics with the condition or message; under `panic = "abort"` that ends the process, so nothing unwinds across a module boundary. |
 
-UML view of crate `base` as implemented (cards 1-1 to 1-3, 1-9, 1-11, 1-18 and 1-19). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
+UML view of crate `base` as implemented (cards 1-1 to 1-3, 1-9, 1-11, 1-18, 1-19 and 1-20). It is a view of the table above and of `engine/base/src`; if they disagree, the code and the table win and the diagram is fixed. Arrows: `*--` owns, `..>` uses or borrows, `..|>` implements. Main operations only: constructors, accessors and the free functions `current_counts` and `count_allocations` are left out. `Logger` and `CountingAllocator` are generic over `S: LogSink` and `A: GlobalAlloc`; `Record`, `ArenaBox` and `ArenaVec` carry a lifetime.
 
 ```mermaid
 classDiagram
@@ -245,6 +245,16 @@ classDiagram
       +from_mat3 from_rotation_xyz
       +transform_point3 transform_vector3
     }
+    class Quat {
+      <<repr C>>
+      +x y z w Scalar
+      +from_axis_angle() Option
+      +mul conjugate inverse normalized
+      +rotate(Vec3) Vec3
+      +to_mat3() Mat3
+      +to_mat4() Mat4
+      +nlerp slerp Option
+    }
   }
 
   class assert {
@@ -283,13 +293,16 @@ classDiagram
   Mat4 *-- Vec4 : four columns
   Mat4 ..> Mat3 : from_mat3
   Mat4 ..> Vec3 : transform_point3
+  Quat ..> Vec3 : axis and rotate
+  Quat ..> Mat3 : to_mat3
+  Quat ..> Mat4 : to_mat4
 ```
 
 Reading the diagram: nothing in `base` knows the OS; the outward seams are `LogSink` (supplied by the caller) and `GlobalAlloc` (std). `assert` is standalone. `Pool` owns its slots and a free list of slot indices (not drawn); a `Handle` holds no reference to the pool. `ArenaBox` and `ArenaVec` borrow the arena, so `reset(&mut self)` cannot run while one is alive.
 
 Complexity: `next_u32` is O(1); `below` is O(1) expected (fewer than 2 draws on average, worst case unbounded but with probability halving each draw). Logging cost is one level comparison when the record is filtered out.
 
-Not yet covered, by design: the profiling hook; more `simd` types and ISAs, the quaternion (card 1-20), vectors backed by SIMD, further containers (later phase 1 cards).
+Not yet covered, by design: the profiling hook; more `simd` types and ISAs, vectors backed by SIMD, further containers (later phase 1 cards).
 
 Decisions of card 1-2 (counting allocator):
 
@@ -379,3 +392,16 @@ Decisions of card 1-19 (`math`, part 2: `Mat3`, `Mat4`):
 - **`Default` is the identity.** A default transform leaves things where they are (unlike the vectors, where the default is zero, as for numbers). `ZERO` is there for the other meaning.
 - **Checks.** 71 tests (a shared suite per size plus per-type tests; the properties use the seeded `Pcg32`, the determinant is compared with an `f64` Laplace expansion, the inverse with the identity on both sides). Mutation on `matrix.rs`: the first full run had 307 mutants, 294 caught, 10 unviable and 3 missed in a guard that the finiteness check made redundant; the guard was simplified, an overflow test added, and the rerun of the 178 mutants in the two `inverse` functions caught all. Line coverage of `matrix.rs` 99.91%, Miri clean, release profile green. Safe code only.
 - **Not measured: speed.** No benchmark and no consumer exist yet. The implementation converts through flat arrays and relies on the compiler to unroll them; whether a hand-written `Mat4 * Vec4` or a SIMD one pays is for a benchmark to show.
+
+Decisions of card 1-20 (`math`, part 3: `Quat`):
+
+- **Hamilton convention, `w` last.** Fields `x, y, z, w`, identity `(0, 0, 0, 1)`, the same order as the vectors and as most engines and file formats. Rotation is counter-clockwise about the axis in a right-handed system, so `from_axis_angle(Z, quarter turn)` takes +X to +Y, like `Mat3::from_rotation_z`.
+- **A quaternion is a rotation only when it has unit length, and the type does not enforce it.** `rotate`, `to_mat3`, `to_mat4` and `slerp` document that they expect a unit quaternion and do not check (checking would cost on every call in a hot path). `from_axis_angle`, `normalized`, `nlerp` and `slerp` return results of unit length within rounding (about `1e-5` in the tests). A wrapper type that guarantees it is possible later if misuse shows up.
+- **Errors are values.** `from_axis_angle` normalises the axis and returns `None` for a zero, NaN, infinite or underflowing one, and for a NaN or infinite angle. `normalized` and `inverse` return `None` when there is no usable length (zero, NaN, infinite, or a squared length that overflows or underflows). `nlerp` and `slerp` return `None` when the blend cannot be normalised, which unit inputs and a finite `t` of moderate size never cause (a NaN `t` does). `t` is not clamped: `slerp` keeps turning at the same speed outside `0..=1` (tested), `nlerp` extrapolates its blend. Nothing panics.
+- **Product order.** `*` is the Hamilton product with a fixed order of additions (bit for bit against the written-out formula); `(a * b).rotate(v)` equals `a.rotate(b.rotate(v))`, so the right factor applies first, as for `Mat3` and `Mat4`. `rotate` uses `v + w*t + u x t` with `t = 2 (u x v)`, which needs no matrix and no second product. It is tested against the matrix and against `q v q*`, with a tolerance.
+- **`nlerp` and `slerp` take the shorter arc.** If `dot(self, other)` is negative, `other` is negated (`q` and `-q` are the same rotation). `slerp` has constant angular speed (tested: a third of a quarter turn is 30 degrees, where `nlerp` gives about 29.3); when the dot product is above `0.9995` (less than 3.6 degrees of rotation apart) it uses `nlerp`, because the sine formula divides by a tiny sine there. At a dot product of exactly zero the second quaternion is used as given.
+- **`sin`, `cos` and `acos` come from `std`.** Only `from_axis_angle` and `slerp` use them; the platform libm is the same on one machine and build (D0, D1), not across platforms (D2 is not pursued). Miri changes the last bits of these functions on purpose, so the tests that compare two evaluations use a tolerance.
+- **Not in this card.** Conversion from a matrix to a quaternion, Euler angles, and `Mul<Vec3>` (use `rotate`, so the cost is visible). Add them when a consumer needs them.
+- **`PartialEq` only, no `Eq` or `Hash`, as for the vectors.** `q` and `-q` are the same rotation but not equal; compare rotations through `rotate` or `to_mat3`.
+- **Checks.** 49 tests (the properties use the seeded `Pcg32`), mutation 213 caught, 0 missed, 6 unviable (219 mutants), line coverage of `quaternion.rs` 100%, Miri clean, release profile green. Safe code only.
+- **Not measured: speed.** No benchmark and no consumer exist yet.
