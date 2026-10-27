@@ -34,7 +34,7 @@ Not checked: the exact plan name and billing page (the API needs the `user` scop
 
 ## 3. Budget (gate G5)
 
-2,000 minutes per month, Linux 1x, Windows 2x (conservative). One PR run of 15 minutes wall on Linux plus 15 on Windows bills about 45 minutes. At 20 PRs per month that is about 900 minutes, inside the allowance with room for reruns. Heavy jobs (mutation on full runs, ARM64, long benchmarks) do not fit on top of that every PR: keep them nightly or on a self-hosted runner, as [tooling-and-ci](tooling-and-ci.md) already says. This is an estimate: billed minutes round up per job.
+2,000 minutes per month, Linux 1x, Windows 2x (conservative). One PR run of 15 minutes wall on Linux plus 15 on Windows bills about 45 minutes. At 20 PRs per month that is about 900 minutes, inside the allowance with room for reruns. Heavy jobs (mutation on full runs, ARM64, long benchmarks) do not fit on top of that every PR: keep them nightly or on a self-hosted runner, as [tooling-and-ci](tooling-and-ci.md) already says. This is an estimate: billed minutes round up per job. Measured later (2026-10-27): one `ci` run bills about 15 minutes and it ran on every branch push, which used most of a month in a few days; card 1-38 moves `ci` to `main` and to manual runs, with work in phase branches ([delivery-pipeline](delivery-pipeline.md)).
 
 ## 4. Options (owner decides; current decision: stay on Free)
 

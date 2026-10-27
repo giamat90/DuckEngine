@@ -1,10 +1,13 @@
 name: ci
 
-# Runs on every push, main included: before a merge the agent waits for green (merging is
-# policy on the GitHub Free plan, no branch protection); on main it shows a broken merge result.
-# It does not gate the release.
+# Runs on pushes to main and on demand, not on every branch push (card 1-38, CI budget). Work happens
+# in a phase branch and is validated locally; before an approval the agent starts one run on the exact
+# commit (`gh workflow run ci.yml --ref <branch>`), and on the phase branch before the phase merge.
+# Merging is policy on the GitHub Free plan (no branch protection): the agent waits for green. On main it
+# shows a broken merge result. It does not gate the release.
 on:
   push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:

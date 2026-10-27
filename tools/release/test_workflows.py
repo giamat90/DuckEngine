@@ -215,6 +215,12 @@ class TrustedPrGates(unittest.TestCase):
 
 
 class Ci(unittest.TestCase):
+    def test_ci_runs_only_on_main_and_on_demand_not_on_every_branch_push(self):
+        # Phase-branch workflow (card 1-38): a branch push must not spend minutes; the agent starts
+        # one run on the exact commit to approve (`gh workflow run ci.yml --ref <branch>`).
+        self.assertRegex(CI, r"(?m)^on:\n  push:\n    branches: \[main\]\n  workflow_dispatch:\n")
+        self.assertNotIn("pull_request", CI.split("\npermissions:")[0])
+
     def test_ci_runs_on_main_too_and_does_not_cancel_runs_on_main(self):
         self.assertNotIn("branches-ignore", CI)
         self.assertIn("cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}", CI)

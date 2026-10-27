@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.47 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.48 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.48** - Phase-branch workflow (owner decision, CI budget): work in `phase/<n>`, ordinary card PRs target it, `ci` runs only on `main` and by hand, governance cards still go to `main` first, one minor release per phase through the `Release-Phase: <n>` footer. delivery-pipeline, board-management, tooling-and-ci, ci-diagrams, github-plan-findings, digest section 9 and CLAUDE.md updated. Governance task 1-38.
 > - **v0.47** - Gate G3 enforced: the `ci` job "gates from main" runs `tools/unsafe-budget` (tool and `gates/unsafe-budget.toml` from `main`); digest section 8, ci-diagrams and core-runtime updated. Governance task 1-32.
 > - **v0.46** - G4 decision recorded (owner): option A (2x against the opaque scalar loop), with option D (re-measure with a real consumer in phase 4) watched; no gate or ADR change. Card 1-34.
 > - **v0.45** - New page [spikes/simd-benchmark](spikes/simd-benchmark.md) and dev crate `engine/tools_simd_bench` (card 1-33): gate G4 measured, report only; the kernel equals the auto-vectorised plain loop and is 3.3 to 11 times faster than an opaque scalar loop; the choice of what G4 compares is left to the owner; core-runtime simd note updated.

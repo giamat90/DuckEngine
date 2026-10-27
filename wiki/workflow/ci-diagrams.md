@@ -12,10 +12,10 @@ Source: `.github/workflows/`, [tooling-and-ci](tooling-and-ci.md), [delivery-pip
 
 ```mermaid
 flowchart LR
-  push["push to any branch or tag"]
+  push["push to main"]
   pr["pull request opened, edited, reopened, synchronized"]
   prt["pull_request_target into main"]
-  main["push to main (squash merge)"]
+  main["push to main (squash merge of a governance card, or the merge commit of a phase)"]
   manual["workflow_dispatch"]
 
   push --> ci
@@ -32,7 +32,7 @@ flowchart LR
 
 | Workflow | Tools come from | Gates the merge? | Gates the release? |
 |---|---|---|---|
-| `ci` | the pushed commit; its `gates` job uses the tools of `main` | by policy: the agent waits for green | no |
+| `ci` | runs on push to `main` and by hand (`workflow_dispatch`, on a branch before an approval or a phase merge); the pushed commit; its `gates` job uses the tools of `main` | by policy: the agent waits for green | no |
 | `pr-title` | the base commit (the workflow file itself is the PR's own) | by policy | no |
 | `governance-guard` | the base commit (the workflow file itself is the PR's own) | by policy | no |
 | `trusted-pr-gates` | the base commit, and the workflow file too (`pull_request_target`) | by policy | no |
@@ -42,7 +42,7 @@ flowchart LR
 
 ## 2. Jobs of the `ci` workflow
 
-Source: `.github/workflows/ci.yml`. Four independent jobs run in parallel. A new push to the same branch cancels the run in progress; a run on `main` is never cancelled.
+Source: `.github/workflows/ci.yml`. Four independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
 
 ```mermaid
 flowchart TB
@@ -127,7 +127,7 @@ sequenceDiagram
 
   Agent->>Agent: TDD, review phase R1-R8, review report
   Agent->>GH: push branch, open PR (title = Conventional Commit, governance line if protected paths)
-  GH->>CI: ci on the branch push; pr-title, governance-guard, trusted-pr-gates on the PR
+  GH->>CI: pr-title, governance-guard on every PR; trusted-pr-gates on a PR into main; ci only by hand (governance card, phase checkpoint, phase PR)
   CI-->>Agent: results per commit (gh run list --commit)
   Agent->>Owner: PR link, diff hash, metric report
   Owner-->>Agent: "I approve" (in the session)
@@ -173,7 +173,7 @@ flowchart TB
   p(["push to main"]) --> plan["plan the version from the last tag to this commit"]
   plan --> skip{"commit already tagged (a re-run)?"}
   skip -- "yes" --> end1(["stop"])
-  skip -- "no" --> sq["check: the squash subject equals the PR title (else the run fails)"]
+  skip -- "no" --> sq["check: the commit subject equals the PR title (else the run fails); a Release-Phase footer bumps the minor number"]
   sq --> mk["changelog from git log, build assets (source workspace, tools, samples)"]
   mk --> old["delete a draft left by a failed attempt (a published Release is never touched)"]
   old --> dr["create a draft Release at the merge commit"]

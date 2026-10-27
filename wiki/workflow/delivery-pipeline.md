@@ -13,6 +13,34 @@ Everything below only makes those four steps safe and repeatable. Feature names 
 
 **Built in phase 0b (verified end to end in card 0b-7; hardened in 0b-8):** PR title check (`pr-title`), `governance-guard`, `ci` also on `main`, squash-subject check in the release, diff hash and approval record (`tools/diff-hash`, run by the agent, not by a workflow), squash merge by the agent after a green `gh run watch`, release workflow (`release.yml`: draft Release, assets, publish). **Not built:** auto-merge, rulesets, required checks, the package smoke test and per-platform tool/sample archives. Control by control, see [pipeline-runbook](../../docs/gates/pipeline-runbook.md).
 
+## Phase-branch workflow (owner decision 2026-10-27, card 1-38; reason: the 2,000 free Actions minutes per month)
+
+Measured cost before this change: one `ci` run bills about 15 minutes (Windows counted twice) and ran on every push of every branch, so a phase of about 40 cards used most of a month. Now:
+
+1. **A phase has one long branch `phase/<n>`** (for phase 1: `phase/1`), cut from `main`. Ordinary cards are PRs **into the phase branch** (`agent/<id>-<slug>` -> `phase/<n>`), squash-merged there after the owner's approval, as before: PR link, diff hash (base = `origin/phase/<n>`), approval record, `diff_hash.py check`. On such a PR only the cheap workflows run (`pr-title`, `governance-guard`); `ci` does not run on branch pushes and `trusted-pr-gates` only fires for PRs into `main`. **The evidence for an ordinary card is the local gate run** (fmt, clippy, tests on Windows and, through WSL, Linux; the Python gate tools; the review report), written into `reviews/<id>.md`.
+2. **Governance cards go to `main` first**, by their own PR, with one `ci` run started by hand on the commit to approve (`gh workflow run ci.yml --ref <branch>`, then `gh run watch`). Reason: the gate tools and configuration come from `main`, so a change to them must already be on `main` when the phase PR is judged. A card that touches a protected path is a governance card. After it merges, `phase/<n>` merges `main` in (no CI run on that push).
+3. **Checkpoints.** About every 10 cards, and before the phase PR, the agent starts `ci` by hand on `phase/<n>` and fixes what is red, so a failure is small to find.
+4. **The phase ends** with one PR `phase/<n>` -> `main`: title `feat(phase-<n>): <summary>`, the full CI on the head commit, the owner's approval against the diff hash of the phase (the card approvals are the manifest, listed in the PR body), merged with a **merge commit** (history of the cards stays): `gh pr merge N --merge --subject "<PR title> (#N)" --body "Release-Phase: <n>" --match-head-commit <sha>`. The footer `Release-Phase: <n>` makes the release workflow bump the **minor** number once for the phase (`next_version.py`); every governance PR merged to `main` in between still gets its patch number. The release notes list all cards of the phase.
+5. **Known gaps (accepted, follow-up card):** nothing yet fails a phase merge that forgets the `Release-Phase` footer (the phase would release as a patch; the agent checks the planned version with `next_version.py` before merging); for PRs into `phase/<n>` `governance-guard` and `pr-title` take their tools from the phase branch, which stays trustworthy only because governance cards reach it by merging `main` in; the approval report of a dispatched run on a branch computes the hash against `main`, so a per-card hash is checked locally with `diff_hash.py` (base `origin/phase/<n>`). For an ordinary card, "after green checks" in the steps below means: cheap checks green and local gates green.
+6. **Not weakened:** no push to `main`, the owner's approval against a diff hash for every card and for the phase, a red check is a stop, governance diffs are read by the owner. **Weakened and said so:** an ordinary card is no longer checked by CI before its merge into the phase branch; the first independent run is the checkpoint or the phase PR.
+
+```mermaid
+flowchart TD
+  M[main] -->|cut| PB[phase/n]
+  PB --> C1[ordinary card PR into phase/n: local gates, cheap checks, approval, squash]
+  C1 --> PB
+  G[governance card PR into main: one dispatched CI run, approval, squash, patch release] --> M
+  M -->|merge main in| PB
+  PB -->|every ~10 cards| CP[ci dispatched on phase/n]
+  CP --> PB
+  PB --> PP[phase PR into main: full CI, approval of the phase diff hash]
+  PP --> MC[merge commit with Release-Phase footer]
+  MC --> R[release: one minor bump, notes list the cards]
+  R --> M
+```
+
+The task lifecycle below is the mechanics of one card. Where it says "push branch; CI on the branch" read: ordinary card = local gates are the evidence; governance card = one dispatched CI run on the commit to approve.
+
 ## 1. Task lifecycle
 
 ```mermaid
@@ -23,7 +51,7 @@ flowchart TD
   L -- yes --> RV[REVIEW PHASE: self, automated, independent, QA, architecture, security, performance, product fit]
   RV --> F{open blocker or major findings?}
   F -- yes --> W
-  F -- no --> B[push branch agent/task-id; CI G1 runs on the branch]
+  F -- no --> B[push branch agent/task-id; ordinary card: local gates are the evidence, governance card: one dispatched CI run]
   B --> C{CI green?}
   C -- no --> W
   C -- yes --> O[CC opens the PR, computes the diff hash]
@@ -41,7 +69,7 @@ flowchart TD
 | 1 | **Task card** (module, layer, given/when/then, **acceptance basis**, perf expectation, allowed files; `governance task: yes/no`) | PO (CC can draft it with `/task`) | card given to the session |
 | 2 | **Software-team work**: plan, design, **clean-code test-first implementation** (TDD style), design note | Claude Code (roles below) | implementation complete, local gates green |
 | 3 | **REVIEW PHASE** (R1-R8: self, automated clean-up, independent, QA, architecture, security, performance, product fit) with a fix loop | Claude Code reviewer roles, separate sessions ([clean-code-and-review §4](clean-code-and-review.md)) | review report `reviews/<task-id>.md` with **0 open blocker/major** (max 3 loops, else stop and report to PO) |
-| 4 | **Push** branch `agent/<task-id>`; **CI G1 on the branch** | CC / GitHub Actions | G1 green on this SHA |
+| 4 | **Push** branch `agent/<task-id>`; ordinary card: **local gates** green and recorded in the review report; governance card: **CI started by hand** on this commit | CC / GitHub Actions | gates green on this SHA |
 | 5 | **Acceptance package** (includes the review report) | CC | delivered to PO |
 | 6 | **PO approval** (in the session, a plain "approved"); the PR is already open and its full link and hash were given with the package | PO | approval recorded against this **diff hash** (content hash of the proposed change against `main`) |
 | 7 | **Record and merge**: approval section in the PR description, `diff_hash.py check`, `gh run watch --exit-status`, `gh pr merge N --squash --subject "<PR title> (#N)" --body "" --match-head-commit <sha>` | CC | on `main` (Free plan: no auto-merge) |
@@ -145,7 +173,8 @@ Known GitHub behaviour **[K]**: a tag pushed with the default `GITHUB_TOKEN` doe
 
 | Situation | Behaviour |
 |---|---|
-| CI red on the branch | CC fixes and re-runs; the PO is asked only once CI is green |
+| CI red on the branch (dispatched run of a governance card, or a phase checkpoint) | CC fixes and re-runs; the PO is asked only once CI is green |
+| CI red on the phase PR | CC fixes on `phase/<n>` with fix commits (small, since checkpoints ran earlier); a fix that changes behaviour or metrics is shown to the PO before the phase merge |
 | CI red after approval | mechanical fix: continue automatically; behaviour/metric-changing fix: pause and ask again (section 2) |
 | Merge blocked or checks not green | PR stays open; CC investigates; it never bypasses rules (on Free there is no auto-merge: CC merges by hand after the checks pass) |
 | Release job fails | stops, no retry loops, CC reports; fix is a new task |
