@@ -10,3 +10,4 @@ pub mod math;
 pub mod pool;
 pub mod rng;
 pub mod simd;
+pub mod sparse;

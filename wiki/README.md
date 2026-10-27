@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.37 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.38 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.38** - Implemented `base::sparse`: `SparseSet`, `InsertError` (core-runtime section 8, decisions of card 1-25). Task 1-25.
 > - **v0.37** - Implemented `base::map`: `DenseMap`, `MapKey`, `hash64` (core-runtime section 8, decisions of card 1-24); the container spike decisions of cards 1-21 and 1-22 are recorded as decided. Task 1-24.
 > - **v0.36** - Owner decision (card 1-23, governance task): D2, identical physics results across platforms, returns, **for the physics crate only, opt-in** (Cargo feature `cross-platform-determinism`, off by default, on in CI), on Windows x86-64 and Linux x86-64; ARM64 stays a portability proof. Restored: a deterministic math facade in `base` with own functions, bans on `mul_add`, libm functions and fused intrinsics in `physics` and on reciprocal-estimate intrinsics in `physics` and `base`; FMA is used where the CPU has it, through the facade, with the feature off (`gates/architecture.toml`, scanned by arch-check), a stored golden hash compared on both platforms, and the D2 cost report. Updated: physics section 3 (rules 7 to 10), digest section 5, ADR-0007 row, Q9, Q16, R-21, quality metrics, TDD workflow, roadmap, ports-and-adapters, core-runtime. The facade, the golden file and the CI job are built with the physics crate in phase 4; nothing is built here. Task 1-23.
 > - **v0.35** - New page [spikes/container-competitors](spikes/container-competitors.md): survey of what competitor engines (Box2D, Jolt, Rapier, Bevy, Godot, Unreal, Unity, EnTT) use for containers where order matters, with sources, compared with the container spike. Task 1-22.

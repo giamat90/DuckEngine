@@ -301,7 +301,7 @@ The fixed hasher multiplies, and a multiplication never moves information down i
 
 ## 8. Decisions for the owner
 
-**Decided by the owner on 2026-10-27:** all four are accepted as recommended, plus the stronger hash of the competitor survey and the `swap_remove` order after a delete. Cards: 1-24 (map, hash, skew test; implemented, see [core-runtime](../architecture/core-runtime.md) section 8), 1-25 (`SparseSet`), 1-26 (fixed ring). No separate sort card (point 3).
+**Decided by the owner on 2026-10-27:** all four are accepted as recommended, plus the stronger hash of the competitor survey and the `swap_remove` order after a delete. Cards: 1-24 (map, hash, skew test; implemented, see [core-runtime](../architecture/core-runtime.md) section 8), 1-25 (`SparseSet`; implemented, see core-runtime section 8), 1-26 (fixed ring). No separate sort card (point 3).
 
 1. **Hash map in simulation code: build the own dense-ordered map?** (recommended) Or allow the standard map with a fixed hasher where it is never iterated: faster lookups (about 2x on present keys, 2.5-8x on absent keys from 10,000 entries), but the `physics` crate's arch-check scan rejects the identifiers `HashMap` and `HashSet` outright, so this needs a governance task to change the scanner, and the hasher must be built and tested.
 2. **Build `SparseSet`?** (recommended, for component-style data where iteration dominates and ids are bounded.)
