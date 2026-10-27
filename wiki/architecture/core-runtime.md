@@ -423,7 +423,7 @@ Decisions of card 1-11 (`simd` v0, and the N-6 spike):
 - **Inlining.** The small methods carry `#[inline]`; whether they inline across crates without LTO is for the first benchmark to show.
 - **`unsafe`.** `std::arch` intrinsics are `unsafe fn` to call, even for SSE2 which is in the x86-64 baseline, so `sse2` carries `#![expect(unsafe_code, ..)]`: 13 blocks, each one intrinsic call with a `// SAFETY:` comment. The module is compiled only when the target has `sse2`, which makes the comment true by construction. Third allowed module (with `alloc` and `arena`); the per-module budget is checked by `tools/unsafe-budget` (card 1-31).
 - **Miri** is clean on the host target for all `simd` tests (case count reduced under Miri).
-- **Not measured: speedup.** Gate G4 (SIMD speedup) needs a benchmark and a consumer; neither exists yet. The D2 cost report (feature on versus off) is measured with the physics crate in phase 4 (v0.36). This card proves equivalence, not speed.
+- **Speedup (card 1-33, [simd-benchmark](../spikes/simd-benchmark.md)).** The 8-lane kernel equals the compiler's own vectorised plain loop (ratio 0.92 to 1.21) and is 3.3 to 11 times faster than a loop the compiler cannot vectorise; what G4 should compare is an open owner decision. A consumer does not exist yet. The D2 cost report (feature on versus off) is measured with the physics crate in phase 4 (v0.36). This card proves equivalence, not speed.
 - **On x86-64 the scalar and SSE2 code both compile to SSE instructions**, so the equivalence tests cannot fail by an ISA difference here; they pin the contract for the NEON backend (phase 2), which is where scalar and vector code can differ.
 
 How the backend is chosen (compile time):

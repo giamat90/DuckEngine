@@ -64,3 +64,10 @@ version = "0.1.0"
 [[package]]
 name = "skeleton-unsafe"
 version = "0.1.0"
+
+[[package]]
+name = "tools_simd_bench"
+version = "0.1.0"
+dependencies = [
+ "base",
+]
