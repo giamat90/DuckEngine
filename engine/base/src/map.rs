@@ -64,13 +64,22 @@ pub struct DenseMap<K, V> {
     capacity: u32,
 }
 
+/// The largest capacity a map can have: one index value is kept for "empty".
+const fn clamped_capacity(capacity: u32) -> u32 {
+    if capacity < EMPTY {
+        capacity
+    } else {
+        EMPTY - 1
+    }
+}
+
 impl<K: MapKey, V> DenseMap<K, V> {
     /// A map with room for `capacity` entries (at most `u32::MAX - 1`; more is cut to that).
     /// Like `Vec::with_capacity`, this aborts (or panics on a capacity overflow) when the
     /// system cannot provide the storage.
     #[must_use]
     pub fn with_capacity(capacity: u32) -> Self {
-        let capacity = capacity.min(EMPTY - 1);
+        let capacity = clamped_capacity(capacity);
         let slots = (u64::from(capacity) * 2).next_power_of_two().max(2);
         Self {
             entries: Vec::with_capacity(capacity as usize),
@@ -287,6 +296,29 @@ mod tests {
         assert_eq!(hash64(1), 0xb456_bcfc_34c2_cb2c);
         assert_eq!(hash64(2), 0x3abf_2a20_6506_83e7);
         assert_eq!(hash64(0xdead_beef), 0xd24b_d59f_862a_1dac);
+    }
+
+    #[test]
+    fn the_hash_mixes_the_high_bits_of_the_key_into_the_low_ones() {
+        // Reference values of the same finalizer, computed outside this crate.
+        assert_eq!(hash64(1 << 40), 0xe80f_632e_d2f2_32f6);
+        assert_eq!(hash64(u64::MAX), 0x64b5_720b_4b82_5f21);
+        assert_eq!(hash64(0x8000_0000_0000_0001), 0x6dd3_9475_fbd3_dc62);
+    }
+
+    #[test]
+    fn a_capacity_above_the_limit_is_cut_to_the_limit() {
+        assert_eq!(clamped_capacity(5), 5);
+        assert_eq!(clamped_capacity(EMPTY - 1), EMPTY - 1);
+        assert_eq!(clamped_capacity(EMPTY), EMPTY - 1);
+        assert_eq!(clamped_capacity(u32::MAX), EMPTY - 1);
+    }
+
+    #[test]
+    fn a_map_with_an_entry_is_not_empty() {
+        let map = filled(4, &[7]);
+        assert!(!map.is_empty());
+        assert_eq!(map.len(), 1);
     }
 
     #[test]

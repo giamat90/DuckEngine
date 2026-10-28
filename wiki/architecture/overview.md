@@ -42,7 +42,6 @@ flowchart TB
     PlatPort[platform ports: threads, files, time, window, dynlib]
   end
   subgraph L0[L0 Base - language + standard library only, no OS-specific, vendor or third-party code]
-    Tool[toolchain shim: compiler/ISA differences]
     Mem[allocators]
     Math[math facade over std, SIMD abstraction]
     Cont[handles, pools, specialised containers]
@@ -69,7 +68,7 @@ flowchart TB
 
 | Module | Layer | Owns port(s) | Depends on | Notes |
 |---|---|---|---|---|
-| `base` | L0 | `simd` abstraction and `IVirtualMemory` (declared here) | language + standard library only | toolchain shim, allocator interface, math facade, handles, specialised containers, assert. **ISA backends (scalar, SSE/AVX, NEON) live inside `base` behind `cfg(target_arch)`/`target_feature`, not in L3 `cpu_*` crates, unless the phase-1 spike (N-6) chooses the generic top-down design instead.** |
+| `base` | L0 | `simd` abstraction and `IVirtualMemory` (declared here) | language + standard library only | allocator interface, math facade, handles, specialised containers, assert. **ISA backends (scalar, SSE/AVX, NEON) live inside `base` behind `cfg(target_arch)`/`target_feature`, not in L3 `cpu_*` crates, unless the phase-1 spike (N-6) chooses the generic top-down design instead.** |
 | `platform` | L1 | `IVirtualMemory`, `IThreads`, `IClock`, `IFileSystem` (virtual mounts, sync + background reads), `IWindow`/`ISurface`, `ILifecycle`, `IInputDevice`, `IDynLib`, `ISystemInfo`, log/profiler sinks | base | interfaces only; full list in [ports-and-adapters §3](ports-and-adapters.md); Win32 + POSIX/Linux first, Headless always |
 | `jobs` | L1 | - | base, platform | injectable scheduler (see [core-runtime](core-runtime.md)) |
 | `ecs` | L1 | - | base, jobs | archetype/hybrid storage (ADR-0003) |

@@ -7,7 +7,7 @@
 ## 2. Memory
 
 - **Memory (v0.6):** allocation uses the standard allocator by default (`malloc`/`new`, Rust global allocator) behind a small `IAllocator` interface so counting, tracking and arenas can be layered on top. `IVirtualMemory` stays an optional platform port for page-level reserve/commit where needed (arenas, strict memory budgets); it is no longer the mandatory root.
-- Allocator interface + concrete allocators: **linear/arena** (per-frame, per-job), **pool** (fixed-size objects), **stack**, **general-purpose** fallback, plus debug allocators (tracking, guard pages, poisoning).
+- Allocator interface + concrete allocators: **linear/arena** (per-frame, per-job), **pool** (fixed-size objects), **stack**, **general-purpose** fallback, plus debug allocators (tracking, guard pages, poisoning), deferred (see Phase 1 scope decisions, card 1-37).
 - **Per-frame arena** reset each frame; scratch arenas per job.
 - **Steady state = zero heap allocations per frame** in hot systems; enforced by a counting allocator in tests ([R1](../00-vision-and-requirements.md)). The counting allocator uses **per-thread counters** and the assertion is per thread or per job ("this job made 0 allocator calls"): in the spike a shared atomic counter cost +29% single-threaded and made 8 threads 5.9x slower, per-thread counters cost +4% and +2% ([allocator spike](../spikes/allocator-spike.md) S7).
 - **Containers:** use `std` containers by default. Write own containers (`SparseSet`, `RingBuffer`, handle pools, fixed-capacity variants) where the standard ones do not fit or a benchmark shows a win. **Arena-backed containers are own code:** stable Rust `Vec`/`HashMap` use only the global allocator `[K, verify]`, so per-frame/per-job arenas need small own containers (default: own small arena containers; a pinned third-party arena crate behind a facade is the alternative; chosen in phase 1 by benchmark, D-9). `#[global_allocator]` counting is used for the zero-allocation tests.
@@ -371,7 +371,7 @@ Reading the diagram: nothing in `base` knows the OS; the outward seams are `LogS
 
 Complexity: `next_u32` is O(1); `below` is O(1) expected (fewer than 2 draws on average, worst case unbounded but with probability halving each draw). Logging cost is one level comparison when the record is filtered out.
 
-Not yet covered, by design: the profiling hook; more `simd` types and ISAs, vectors backed by SIMD, further containers (later phase 1 cards).
+Not yet covered, by design: more `simd` types and ISAs, vectors backed by SIMD, further containers (later phase 1 cards).
 
 Decisions of card 1-2 (counting allocator):
 
@@ -606,4 +606,54 @@ flowchart TD
   Config["gates/unsafe-budget.toml"] --> Listed
   Config --> Budget
   Config --> Ratio
+```
+
+## Profiling hook (card 1-35)
+
+Decided by the owner (2026-10-27): a **feature-gated macro in front of one global sink**, name-only events.
+
+- **API.** `base::profile`: trait `ProfileSink: Sync` with `enter(&self, name: &'static str)` and `exit(&self, name)`; `install_sink(&'static dyn ProfileSink)` sets the process-wide sink once (a second call returns `SinkAlreadyInstalled`, the first stays); `scope(name)` returns a `ScopeGuard` whose drop reports the exit; `profile_scope!("name")` opens a scope for the rest of the block.
+- **Zero cost when off.** `profile_scope!` expands to nothing unless the `profiling` feature of `base` is on, so the name expression is not even evaluated (test `profile_off`). With the feature on and no sink installed a scope is one atomic load. `scope` itself is always compiled, so layer 4 code that installs a sink builds with or without the feature.
+- **No clock in `base`.** The hook only says "entered / left `name`". The sink, written in layer 4 (or a dev adapter such as Tracy), takes the timestamp and the thread id. This keeps the clock ban of layers 0-2 and keeps simulation code deterministic.
+- **No allocation per scope** (test `profile_allocations`: 100 nested scope pairs, 0 allocator calls, with and without a sink). The guard remembers the sink it entered, so an exit always pairs with its enter even if the sink is installed while the scope is open (test `profile_late_install`). The guard is `!Send`, so `enter` and `exit` come from one thread (compile-time test).
+- **Global state, on purpose.** The log interface has no global; scopes sit in deep hot code where passing a profiler through every call is too heavy, and the wiki already says "profiling macros expanding to a hook" ([overview](overview.md)). The global is a safe `OnceLock`, no `unsafe`.
+- **Known limits.** One sink per process; the sink must be thread-safe (`Sync`) and must itself not allocate or lock if it is to be used in a hot path; events carry the name only (a category can be added later, additive). CI builds, lints and tests `base` with the feature on (two steps of the `ci` build job, card 1-41), and `tools/local-gates` does too.
+- **Usage.** `profile_scope!("name");` as a statement (it expands to a `let`, so not as a block tail or match arm); `let _ = scope("x")` drops the guard at once. A sink is observe-only, tolerates unbalanced events and opens no scope itself.
+- **Checks.** 5 integration test files (each its own process, because the sink is global) and 2 unit tests plus a compile-time `!Send` check, run with and without the feature; line coverage of `profile.rs` 88% on the stable toolchain (the missed lines are a compile-time `Send` check and test-only lines; [phase1-exit-audit](../spikes/phase1-exit-audit.md)); Clippy clean in both modes; safe code only.
+
+```mermaid
+flowchart LR
+  Code["engine code: profile_scope!(name)"] -->|feature off| Nothing["expands to nothing"]
+  Code -->|feature on| Scope["scope(name)"]
+  Scope --> Load{"sink installed? one atomic load"}
+  Load -->|no| Noop["no event"]
+  Load -->|yes| Enter["sink.enter(name)"]
+  Enter --> Guard["ScopeGuard keeps the sink"]
+  Guard -->|drop at end of block| Exit["sink.exit(name)"]
+  App["layer 4: install_sink(&SINK)"] --> Load
+  Sink["sink in layer 4: timestamp, thread id, output"] --- Enter
+  Sink --- Exit
+```
+
+## Phase 1 scope decisions (card 1-37)
+
+Three roadmap phase 1 items had no code and no explicit decision. Owner picks, 2026-10-27:
+
+| Item | Decision | Why | Revisit when |
+|---|---|---|---|
+| Toolchain shim (compiler/ISA differences) | **Dropped** | There is one compiler, `rustc`, pinned by `rust-toolchain.toml`; ISA differences are already the `simd` module. A shim would be API without a user. | A second compiler or codegen backend is supported. |
+| Debug allocators (tracking, guard pages, poisoning) | **Deferred**: tracking and poisoning with the first long-lived subsystems, guard pages with `IVirtualMemory` | The counting allocator, Miri and the sanitizers in CI cover phase 1. Guard pages need the virtual-memory port, which comes with the platform work. | The first subsystem with long-lived allocations, and the platform phase. |
+| D-9 arena containers: own code vs a pinned crate | **Closed: own code** (`Arena`, `ArenaBox`, `ArenaVec`, card 1-3) | The allocator spike, Miri-clean `unsafe` inside its budget, no new dependency, and the zero-allocation and determinism rules. **No head-to-head benchmark against an arena crate was run**, although D-9 asked for one; this is the owner's call. | A benchmark or a defect shows a crate is better; the exit is a pinned crate behind the same API. |
+
+```mermaid
+flowchart TD
+  R[roadmap phase 1 items without code] --> A[toolchain shim]
+  R --> B[debug allocators]
+  R --> C[D-9 arena containers]
+  A -->|one compiler, ISA is simd| A1[dropped]
+  B -->|counting allocator, Miri, sanitizers suffice| B1[deferred: tracking with long-lived subsystems, guard pages with IVirtualMemory]
+  C -->|Arena and ArenaVec built and verified in 1-3| C1[closed: own code, exit = pinned crate behind the same API]
+  A1 --> U[roadmap, overview, vision, open questions updated]
+  B1 --> U
+  C1 --> U
 ```

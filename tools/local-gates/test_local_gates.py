@@ -27,6 +27,8 @@ class Plan(unittest.TestCase):
         self.assertIn("cargo test --workspace --locked", commands)
         self.assertIn("cargo clippy -p app_runtime --no-default-features --all-targets --locked -- -D warnings", commands)
         self.assertIn("cargo test -p app_runtime --no-default-features --locked", commands)
+        self.assertIn("cargo test -p base --features profiling --locked", commands)
+        self.assertIn("cargo clippy -p base --features profiling --all-targets --locked -- -D warnings", commands)
 
     def test_gate_steps_run_the_gate_tools_on_the_working_tree(self):
         commands = [" ".join(step.argv) for step in lg.gate_steps("origin/main")]
