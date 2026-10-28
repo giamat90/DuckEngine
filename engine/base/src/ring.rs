@@ -136,6 +136,13 @@ mod tests {
     }
 
     #[test]
+    fn a_ring_with_a_value_is_not_empty() {
+        let ring = filled(4, &[9]);
+        assert!(!ring.is_empty());
+        assert_eq!(ring.len(), 1);
+    }
+
+    #[test]
     fn values_come_out_in_the_order_they_went_in() {
         let mut ring = filled(8, &[3, 1, 2]);
         assert_eq!(ring.len(), 3);

@@ -189,6 +189,13 @@ mod tests {
     }
 
     #[test]
+    fn a_set_with_an_entry_is_not_empty() {
+        let set = filled(100, 8, &[5]);
+        assert!(!set.is_empty());
+        assert_eq!(set.len(), 1);
+    }
+
+    #[test]
     fn insert_then_get_and_contains() {
         let set = filled(100, 8, &[5, 7]);
         assert_eq!(set.len(), 2);

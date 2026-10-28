@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.52 (2026-10-27).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.53 (2026-10-28).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.53** - Phase 1 exit audit (card 1-36): new page [spikes/phase1-exit-audit](spikes/phase1-exit-audit.md), coverage, mutation and Miri of the whole `base` crate against the digest section 7 gates, all four pass; five test gaps closed with tests (map, ring, sparse), two equivalent mutants recorded; core-runtime profiling section corrected.
 > - **v0.52** - Phase 1 scope decisions (card 1-37, owner): toolchain shim dropped, debug allocators deferred, D-9 closed as own arena code (no benchmark against a crate); roadmap, overview, vision, open questions and core-runtime updated.
 > - **v0.51** - Profiling hook in `base` (card 1-35): `profile_scope!` macro (feature `profiling`, zero cost off) in front of one global `ProfileSink` installed by layer 4; section added to core-runtime. First card on the `phase/1` branch.
 > - **v0.50** - Phase-branch gaps closed (card 1-40): the `Release-Phase` footer is enforced in `pr-title` (phase PRs) and `release` (every merge), `governance-guard` and `pr-title` take their tools from `main`, the local-gates tests run in `ci`. Governance task 1-40.
@@ -96,6 +97,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 25 | [spikes/allocator-benchmark](spikes/allocator-benchmark.md) | Allocator benchmark (Windows and Linux in WSL2): default allocator vs mimalloc; pass criterion applied; nothing adopted |
 | 26 | [decisions/adr-0022-global-allocator](decisions/adr-0022-global-allocator.md) | ADR-0022 (decided): mimalloc as the global allocator of application builds |
 | 27 | [spikes/simd-benchmark](spikes/simd-benchmark.md) | SIMD benchmark (gate G4, Windows and Linux in WSL2): 8-lane kernel vs plain and opaque scalar loops; owner chose option A, watching D |
+| 28 | [spikes/phase1-exit-audit](spikes/phase1-exit-audit.md) | Phase 1 exit audit (card 1-36): line and branch coverage, mutation score and Miri of the whole `base` crate against the digest section 7 gates |
 
 ## Confidence legend used in this wiki
 
