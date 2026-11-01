@@ -5,8 +5,10 @@
 
 pub mod clock;
 pub mod error;
+pub mod headless;
 pub mod platform;
 pub mod threads;
+pub mod window;
 
 #[cfg(any(test, feature = "contract-tests"))]
 pub mod contract;

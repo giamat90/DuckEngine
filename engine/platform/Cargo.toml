@@ -11,7 +11,7 @@ description = "Layer 1 platform crate: the clock and thread ports, their std and
 # The generic contract suites in `platform::contract`, for the tests of other crates' adapters.
 contract-tests = []
 
-[dev-dependencies]
+[dependencies]
 base = { path = "../base" }
 
 [lints]

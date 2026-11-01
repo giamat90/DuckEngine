@@ -317,3 +317,70 @@ classDiagram
 - `Caps` is derived from the ports (`IThreads::has_threads`), never stored, so the two cannot disagree; `Platform::new(clock, threads)` takes no caps. `StdThreads::new()` reads the system parallelism once, because the call can allocate; `spawn` refuses a name with a NUL byte (`InvalidPath`) instead of panicking.
 - The Headless platform has no threads (`NullThreads`): `spawn` returns `Unsupported`, `parallelism()` is 1.
 - Per-frame calls (`now`, `parallelism`, `caps`, manual `sleep` and `advance`) make no allocator call (counting-allocator test). `spawn` allocates by design: it runs at startup.
+
+## 12. Implemented: window system (card 2-4)
+
+The window port, the event queue and the Headless window system are in `engine/platform` (modules `window` and `headless`). Where this section and the sketch in section 2.4 differ, this section is the code.
+
+```mermaid
+classDiagram
+  class Platform {
+    +windows: Option~Box dyn IWindowSystem~
+    +with_windows(Box dyn IWindowSystem) Platform
+    +headless_windows(max) Platform and ScriptHandle
+    +caps() Caps
+  }
+  class IWindowSystem {
+    <<port>>
+    +has_window() bool
+    +create_window(WindowDesc) Result~WindowId~
+    +destroy_window(WindowId) Result
+    +window_info(WindowId) Result~WindowInfo~
+    +native_token(WindowId) Result~NativeToken~
+    +pump(EventQueue) PumpResult
+  }
+  class HeadlessWindows {
+    virtual windows in a Pool
+  }
+  class ScriptHandle {
+    +push(Event)
+    +pending() usize
+  }
+  class EventQueue {
+    fixed capacity Ring
+    +push(Event) Result
+    +pop() Option~Event~
+  }
+  class Event {
+    <<enum>>
+    Quit
+    CloseRequested
+    Focus
+    Resized
+    Key
+    MouseButton
+    MouseMove
+    Scroll
+  }
+  IWindowSystem <|.. HeadlessWindows
+  HeadlessWindows <-- ScriptHandle : scripts events
+  IWindowSystem ..> EventQueue : pump fills
+  EventQueue o-- Event
+  Platform o-- IWindowSystem
+```
+
+- `WindowId` is a `base::pool::Handle<WindowInfo>`: a destroyed window's id is `NotFound` everywhere, also after its slot is reused (generation check).
+- `pump(&mut EventQueue)` takes `&mut` (the sketch said `&`), appends in order and returns `PumpResult { delivered, dropped }`. The queue is a `base::ring::Ring` allocated once; an event that does not fit is dropped and counted, never silent.
+- **Headless has virtual windows, not none.** The sketch in 2.4 said Headless has no window and `create_window` is `Unsupported`. The code gives it bookkeeping-only windows (a pool, no display), so that window-dependent logic and the contract suite run everywhere; `has_window` is true there and means "windows can be created". The plain `std` platform has no window system (`Platform::windows` is `None`, `caps().has_window` false). The GLFW adapter (2-6) will be the first real one.
+- `ScriptHandle` feeds the Headless system; `pump` replays the script in order and applies the events that change window state (`Resized`, `Focus`, `CloseRequested`). Input events pass through unchanged.
+- **Not `Send`.** `IWindowSystem` is used from the thread that created it (GLFW allows window calls on the main thread only), so a `Platform` that holds one is not `Send`; the clock, thread and file ports stay `Send + Sync`.
+- **Dropped events are the caller's to check.** `PumpResult::dropped` is never silent but also never acted on by the port. Headless `pump` drains the whole script, and the state changes (`Resized`, `Focus`, `CloseRequested`) are applied even when the event itself does not fit and is dropped.
+- **Stale ids in the queue.** Events of a window that was destroyed meanwhile may still be queued; consumers tolerate stale `WindowId`s.
+- **Close requests** are latched in `WindowInfo::close_requested` and cannot be cancelled in v0.
+- **Resize detail.** `Resized` carries the screen size only; the framebuffer size and the DPI scale are read with `window_info` and may get their own events with the GLFW adapter (2-6). Key events carry the hardware scancode and the modifier bits `window::mods::{SHIFT, CONTROL, ALT, SUPER}`; layout-independent key codes come with the input module (phase 7).
+- **Errors.** `QueueFull` is the "capacity exhausted" error for windows too; a zero width or height is refused with `InvalidPath` (the shared invalid-argument error). `native_token` is never `NativeToken::NULL` (0) for a live window.
+- `Caps` gets `has_window`, derived from the port like `has_threads`.
+- `Platform::new(clock, threads)` is unchanged; windows are added with `with_windows`. `Platform::headless_windows(max)` returns the platform, the manual clock handle and the script handle.
+- Gamepad events from the sketch are not in v0 (no device to test them against); text input is deferred, as in 2.4.
+- `contract::window_contract(windows, feed)` checks create, token (never null) and size, zero-size refusal, double destroy, stale ids for info, token and destroy (also after the slot is reused), repeated `pump` into a capacity-1 queue (`len == before + delivered`, never above capacity; this part needs no scripted events, so it also runs against a real adapter), and, when `feed` is given, order and drop accounting (weaker without `feed`). It is tested against deliberately broken systems (accepts a double destroy, hides drops, miscounts, accepts a zero-size window, cannot hold two windows, has no windows).
+- `pump`, `window_info`, `native_token` and `caps` make no allocator call (counting-allocator test); creating windows allocates in the pool at startup.

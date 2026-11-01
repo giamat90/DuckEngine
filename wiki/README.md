@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.57 (2026-11-01).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.59 (2026-11-01).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.59** - Window system (card 2-4): `IWindowSystem`, `EventQueue` (fixed-capacity ring, drops reported), `Event`, `WindowId`, `HeadlessWindows` with a `ScriptHandle`, `Caps::has_window`, `Platform::with_windows` and `headless_windows`, contract suite `window_contract`; section 12 added to [architecture/platform-ports](architecture/platform-ports.md).
 > - **v0.57** - Platform ports, clock and threads (card 2-2): new crate `engine/platform` (layer 1) with `Platform`, `Caps`, `PlatformError`, `IClock` (integer nanosecond `Ticks`, `StdClock`, `ManualClock`), `IThreads` (`StdThreads`, `NullThreads`) and the contract suites; owner choices O1 to O8 recorded as accepted; section 10 added to [architecture/platform-ports](architecture/platform-ports.md).
 > - **v0.56** - Fixed-step accumulator (card 2-5): new crate `engine/frame` with `FixedStep` and `Steps { count, alpha, dropped }` in integer ticks, stall cap with the dropped time reported; core-runtime section with a Mermaid view.
 > - **v0.55** - Develop-branch workflow (card 2-9, owner decision, CI budget; governance): ordinary card PRs target the permanent branch `develop` (no CI there), `develop` merges into `main` only when the owner explicitly asks, with full CI, the owner's approval of the batch diff hash and a merge commit carrying `Release-Batch: <label>` (one minor release per batch); replaces the `phase/<n>` branches and the `Release-Phase` footer of cards 1-38 and 1-40. Delivery-pipeline, ci-diagrams, tooling-and-ci, board-management, the digest and `CLAUDE.md` updated.

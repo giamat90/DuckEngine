@@ -5,6 +5,7 @@
 use crate::clock::{IClock, Ticks};
 use crate::error::PlatformError;
 use crate::threads::IThreads;
+use crate::window::{Event, EventQueue, IWindowSystem, NativeToken, WindowDesc, WindowId};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -80,6 +81,135 @@ pub fn threads_contract(threads: &dyn IThreads, supports_threads: bool) {
     }
 }
 
+const DESC: WindowDesc<'static> = WindowDesc {
+    title: "contract-window",
+    width: 64,
+    height: 48,
+};
+
+/// Window contract, for a system that can create windows: create gives a window with the
+/// requested size and its own native token (never the null token); a zero width or height is
+/// `InvalidPath`; destroy works once and a stale id is `NotFound` for info, token and destroy
+/// (also after its slot is reused); repeated `pump` calls into a capacity-1 queue keep
+/// `len == len before + delivered` and never exceed the capacity. These checks need no scripted
+/// events, so they also run against a real adapter. With `feed` (a way to inject events, as the
+/// Headless system has) scripted events also come out in order and an overflow is reported as
+/// drops; without `feed` the order and drop-count checks are skipped, so they are weaker.
+///
+/// # Panics
+/// When the implementation breaks the contract (this is test code).
+pub fn window_contract(windows: &mut dyn IWindowSystem, feed: Option<&mut dyn FnMut(Event)>) {
+    assert!(
+        windows.has_window(),
+        "the window contract needs a system that can create windows"
+    );
+    let first = window_lifecycle(windows);
+    assert_eq!(
+        windows.window_info(first).err(),
+        Some(PlatformError::NotFound),
+        "stale id accepted"
+    );
+    let reused = windows.create_window(&DESC).ok();
+    assert!(reused.is_some(), "a freed slot must be reusable");
+    assert_eq!(
+        windows.native_token(first).err(),
+        Some(PlatformError::NotFound),
+        "stale token accepted"
+    );
+    assert_eq!(
+        windows.destroy_window(first).err(),
+        Some(PlatformError::NotFound),
+        "stale destroy accepted"
+    );
+    pump_is_bounded(windows);
+    if let (Some(feed), Some(window)) = (feed, reused) {
+        scripted_events(windows, feed, window);
+    }
+}
+
+fn window_lifecycle(windows: &mut dyn IWindowSystem) -> WindowId {
+    let a = windows.create_window(&DESC).ok();
+    let b = windows.create_window(&DESC).ok();
+    let (Some(a), Some(b)) = (a, b) else {
+        panic!("two windows must fit");
+    };
+    let info = windows.window_info(a).ok();
+    assert_eq!(info.map(|i| (i.width, i.height)), Some((64, 48)));
+    assert_ne!(
+        windows.native_token(a),
+        windows.native_token(b),
+        "tokens must differ"
+    );
+    assert_ne!(windows.native_token(a), Ok(NativeToken::NULL), "null token");
+    for (width, height) in [(0, 48), (64, 0)] {
+        let empty = WindowDesc {
+            width,
+            height,
+            ..DESC
+        };
+        assert_eq!(
+            windows.create_window(&empty).err(),
+            Some(PlatformError::InvalidPath),
+            "zero size accepted"
+        );
+    }
+    assert_eq!(windows.destroy_window(b), Ok(()));
+    assert_eq!(
+        windows.destroy_window(b),
+        Err(PlatformError::NotFound),
+        "double destroy"
+    );
+    assert_eq!(windows.destroy_window(a), Ok(()));
+    a
+}
+
+fn pump_is_bounded(windows: &mut dyn IWindowSystem) {
+    let mut queue = EventQueue::with_capacity(1);
+    for round in 0..6 {
+        let before = queue.len();
+        let result = windows.pump(&mut queue);
+        assert!(queue.len() <= queue.capacity(), "pump overfilled the queue");
+        assert_eq!(
+            queue.len(),
+            before + result.delivered as usize,
+            "delivered must match the queue"
+        );
+        if round % 2 == 1 {
+            queue.pop();
+        }
+    }
+}
+
+fn scripted_events(windows: &mut dyn IWindowSystem, feed: &mut dyn FnMut(Event), window: WindowId) {
+    let events: Vec<Event> = (1..=5)
+        .map(|n| Event::Resized {
+            window,
+            width: n,
+            height: n,
+        })
+        .collect();
+    for event in &events {
+        feed(*event);
+    }
+    let mut small = EventQueue::with_capacity(2);
+    let result = windows.pump(&mut small);
+    assert_eq!(
+        (result.delivered, result.dropped),
+        (2, 3),
+        "overflow must be reported"
+    );
+    assert_eq!(small.pop(), Some(events[0]), "events must keep their order");
+    assert_eq!(small.pop(), Some(events[1]), "events must keep their order");
+    for event in &events[..3] {
+        feed(*event);
+    }
+    let mut big = EventQueue::with_capacity(8);
+    let result = windows.pump(&mut big);
+    assert_eq!((result.delivered, result.dropped), (3, 0));
+    let got: Vec<Event> = std::iter::from_fn(|| big.pop()).collect();
+    assert_eq!(got, events[..3], "events must keep their order");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +255,220 @@ mod tests {
         fn has_threads(&self) -> bool {
             false
         }
+    }
+
+    use crate::headless::{HeadlessWindows, ScriptHandle};
+    use crate::window::{NativeToken, PumpResult, WindowInfo};
+
+    fn headless_contract(system: &mut dyn IWindowSystem, script: &ScriptHandle) {
+        let mut feed = |event: Event| script.push(event);
+        window_contract(system, Some(&mut feed));
+    }
+
+    #[test]
+    fn the_headless_windows_pass_the_window_contract() {
+        let (mut windows, script) = HeadlessWindows::new(4);
+        headless_contract(&mut windows, &script);
+    }
+
+    /// Forgets that a destroyed window is gone.
+    struct Lenient(HeadlessWindows);
+
+    impl IWindowSystem for Lenient {
+        fn has_window(&self) -> bool {
+            true
+        }
+
+        fn create_window(&mut self, desc: &WindowDesc<'_>) -> Result<WindowId, PlatformError> {
+            self.0.create_window(desc)
+        }
+
+        fn destroy_window(&mut self, id: WindowId) -> Result<(), PlatformError> {
+            let _ = self.0.destroy_window(id);
+            Ok(())
+        }
+
+        fn window_info(&self, id: WindowId) -> Result<WindowInfo, PlatformError> {
+            self.0.window_info(id)
+        }
+
+        fn native_token(&self, id: WindowId) -> Result<NativeToken, PlatformError> {
+            self.0.native_token(id)
+        }
+
+        fn pump(&mut self, queue: &mut EventQueue) -> PumpResult {
+            self.0.pump(queue)
+        }
+    }
+
+    /// Drops events without saying so.
+    struct Silent(HeadlessWindows);
+
+    impl IWindowSystem for Silent {
+        fn has_window(&self) -> bool {
+            true
+        }
+
+        fn create_window(&mut self, desc: &WindowDesc<'_>) -> Result<WindowId, PlatformError> {
+            self.0.create_window(desc)
+        }
+
+        fn destroy_window(&mut self, id: WindowId) -> Result<(), PlatformError> {
+            self.0.destroy_window(id)
+        }
+
+        fn window_info(&self, id: WindowId) -> Result<WindowInfo, PlatformError> {
+            self.0.window_info(id)
+        }
+
+        fn native_token(&self, id: WindowId) -> Result<NativeToken, PlatformError> {
+            self.0.native_token(id)
+        }
+
+        fn pump(&mut self, queue: &mut EventQueue) -> PumpResult {
+            let result = self.0.pump(queue);
+            PumpResult {
+                dropped: 0,
+                ..result
+            }
+        }
+    }
+
+    /// Accepts a window of zero size by making it one unit large.
+    struct Sloppy(HeadlessWindows);
+
+    impl IWindowSystem for Sloppy {
+        fn has_window(&self) -> bool {
+            true
+        }
+
+        fn create_window(&mut self, desc: &WindowDesc<'_>) -> Result<WindowId, PlatformError> {
+            let fixed = WindowDesc {
+                width: desc.width.max(1),
+                height: desc.height.max(1),
+                ..*desc
+            };
+            self.0.create_window(&fixed)
+        }
+
+        fn destroy_window(&mut self, id: WindowId) -> Result<(), PlatformError> {
+            self.0.destroy_window(id)
+        }
+
+        fn window_info(&self, id: WindowId) -> Result<WindowInfo, PlatformError> {
+            self.0.window_info(id)
+        }
+
+        fn native_token(&self, id: WindowId) -> Result<NativeToken, PlatformError> {
+            self.0.native_token(id)
+        }
+
+        fn pump(&mut self, queue: &mut EventQueue) -> PumpResult {
+            self.0.pump(queue)
+        }
+    }
+
+    /// Claims it delivered more events than it put in the queue.
+    struct Liar(HeadlessWindows);
+
+    impl IWindowSystem for Liar {
+        fn has_window(&self) -> bool {
+            true
+        }
+
+        fn create_window(&mut self, desc: &WindowDesc<'_>) -> Result<WindowId, PlatformError> {
+            self.0.create_window(desc)
+        }
+
+        fn destroy_window(&mut self, id: WindowId) -> Result<(), PlatformError> {
+            self.0.destroy_window(id)
+        }
+
+        fn window_info(&self, id: WindowId) -> Result<WindowInfo, PlatformError> {
+            self.0.window_info(id)
+        }
+
+        fn native_token(&self, id: WindowId) -> Result<NativeToken, PlatformError> {
+            self.0.native_token(id)
+        }
+
+        fn pump(&mut self, queue: &mut EventQueue) -> PumpResult {
+            let result = self.0.pump(queue);
+            PumpResult {
+                delivered: result.delivered + 1,
+                ..result
+            }
+        }
+    }
+
+    /// A system with no windows at all.
+    struct NoWindows;
+
+    impl IWindowSystem for NoWindows {
+        fn has_window(&self) -> bool {
+            false
+        }
+
+        fn create_window(&mut self, _desc: &WindowDesc<'_>) -> Result<WindowId, PlatformError> {
+            Err(PlatformError::Unsupported)
+        }
+
+        fn destroy_window(&mut self, _id: WindowId) -> Result<(), PlatformError> {
+            Err(PlatformError::NotFound)
+        }
+
+        fn window_info(&self, _id: WindowId) -> Result<WindowInfo, PlatformError> {
+            Err(PlatformError::NotFound)
+        }
+
+        fn native_token(&self, _id: WindowId) -> Result<NativeToken, PlatformError> {
+            Err(PlatformError::NotFound)
+        }
+
+        fn pump(&mut self, _queue: &mut EventQueue) -> PumpResult {
+            PumpResult::default()
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "double destroy")]
+    fn the_window_contract_rejects_a_system_that_accepts_a_double_destroy() {
+        let (inner, script) = HeadlessWindows::new(4);
+        headless_contract(&mut Lenient(inner), &script);
+    }
+
+    #[test]
+    #[should_panic(expected = "overflow must be reported")]
+    fn the_window_contract_rejects_silently_dropped_events() {
+        let (inner, script) = HeadlessWindows::new(4);
+        headless_contract(&mut Silent(inner), &script);
+    }
+
+    #[test]
+    #[should_panic(expected = "zero size accepted")]
+    fn the_window_contract_rejects_a_zero_sized_window() {
+        let (inner, _script) = HeadlessWindows::new(4);
+        window_contract(&mut Sloppy(inner), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "delivered must match")]
+    fn the_window_contract_rejects_a_pump_that_miscounts() {
+        let (inner, _script) = HeadlessWindows::new(4);
+        window_contract(&mut Liar(inner), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "two windows must fit")]
+    fn the_window_contract_rejects_a_system_that_cannot_hold_two_windows() {
+        let (mut windows, _script) = HeadlessWindows::new(1);
+        window_contract(&mut windows, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "can create windows")]
+    fn the_window_contract_needs_a_system_with_windows() {
+        window_contract(&mut NoWindows, None);
     }
 
     #[test]
