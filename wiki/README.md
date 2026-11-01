@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.67 (2026-11-01).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.68 (2026-11-01).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.68** - The `pending = true` flag is removed from the `simd/neon.rs` unsafe-budget entry (card 2-15, governance): the file is on `main` since the phase 2 release (v0.3.0), so the stale check applies to it again.
 > - **v0.67** - Unsafe budget: entries may carry `pending = true` (card 2-13, governance), so a new unsafe file can land in two steps under the trusted-config rule (entry first, file next, flag removed after). Needed for `simd/neon.rs` of card 2-7. core-runtime updated.
 > - **v0.66** - Stale NEON statements corrected (card 2-12): core-runtime, platform-ports section 7 and the 2-7 review now say that the NEON tests run natively on the hosted ARM64 runner (card 2-10) and that no emulator is used.
 > - **v0.65** - ARM64 CI job (card 2-10, governance): the probe showed that GitHub Free serves a hosted ARM64 runner (`ubuntu-24.04-arm`) for the private repository; job `arm64` of `ci` runs clippy and the tests of the workspace (adapters excluded) natively on AArch64, so the unit tests and clippy of the NEON backend of card 2-7 run on real hardware, not under QEMU (no Miri, no mutation, no determinism claim). github-plan-findings and ci-diagrams updated.
