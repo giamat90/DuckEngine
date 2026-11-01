@@ -72,7 +72,7 @@ audio thread (callback driven, decoupled)     --> mixes from a lock-free command
 | `map` | `DenseMap<K, V>`, `MapKey`, `hash64` | Fixed-capacity hash map whose iteration order depends only on the operations done (entries in a dense array in insertion order, remove swaps the last entry into the hole). Safe code, `u32` positions in a linear-probing table with at least twice the capacity in slots and no tombstones. The hash is the `MurmurHash3` 64-bit finalizer (integer arithmetic only). `MapKey` is implemented for `u32`, `u64` and `Handle<T>`. Built for simulation code, where the standard maps are banned (card 1-24) |
 | `sparse` | `SparseSet<V>`, `InsertError<V>` | Fixed-capacity map from a small integer id (below an id bound) to a value, with the same iteration order rule as `map`: dense array in insertion order, remove swaps the last entry into the hole. A table with one `u32` position per possible id finds an entry; the dense array confirms it, so the table is never cleared. Safe code. Built for data keyed by a bounded id (component-style data), where iteration dominates (card 1-25) |
 | `ring` | `Ring<T>` | Fixed-capacity FIFO queue of `Copy + Default` values: one array allocated at construction (length a power of two, so an index wraps with a mask), `push` at the back returns the value when the ring is full, `pop` and `peek` at the front, `get` and `iter` in FIFO order. Safe code, no drop glue to run. Built for queues on hot paths where the no-allocation rule applies (card 1-26) |
-| `simd` | `scalar::F32x4`, `sse2::F32x4`, `F32x4` (the build target's backend) | Four `f32` lanes with `splat`, `from_array`, `to_array`, `+ - * /`, unary `-`, `sqrt`, `min`, `max`, `abs` and `horizontal_sum`. `scalar` is the reference and is always built; `sse2` (x86-64) gives the same bits for every operation, checked by property tests over 20,000 random and special-value cases per operation (D2). Each operation is one IEEE-754 operation per lane (or a sign-bit mask, or the fixed add sequence of `horizontal_sum`): no FMA, no `rcpps` or `rsqrtps`. `min` and `max` are defined as `a < b ? a : b` and `a > b ? a : b` (the x86 rule: `other` when equal or unordered), `horizontal_sum` as `(l0 + l1) + (l2 + l3)`. NaN payloads are unspecified; simulation code must not produce NaN. 13 `unsafe` blocks in `sse2`, all single intrinsic calls with a `// SAFETY:` comment. |
+| `simd` | `scalar::F32x4`, `sse2::F32x4`, `neon::F32x4`, `F32x4` (the build target's backend) | Four `f32` lanes with `splat`, `from_array`, `to_array`, `+ - * /`, unary `-`, `sqrt`, `min`, `max`, `abs` and `horizontal_sum`. `scalar` is the reference and is always built; `sse2` (x86-64) and `neon` (AArch64, card 2-7) give the same bits for every operation, checked by property tests over 20,000 random and special-value cases per operation (D2). Each operation is one IEEE-754 operation per lane (or a sign-bit mask, or the fixed add sequence of `horizontal_sum`): no FMA, no `rcpps` or `rsqrtps`, and on NEON no `vfmaq`, `vmlaq`, `vrecpe`, `vrsqrte`. `min` and `max` are defined as `a < b ? a : b` and `a > b ? a : b` (the x86 rule: `other` when equal or unordered), `horizontal_sum` as `(l0 + l1) + (l2 + l3)`. NaN payloads are unspecified; simulation code must not produce NaN. 13 `unsafe` blocks in `sse2` and 13 in `neon`, all single intrinsic calls with a `// SAFETY:` comment. On NEON `min` and `max` are a compare and a select (`vcltq`/`vcgtq` + `vbslq`), because `fmin`/`fmax` return NaN for a NaN operand and order the zeros; `abs`, `neg` and `sqrt` are `vabsq`, `vnegq` and `vsqrtq`; `horizontal_sum` is `vpaddq` then one `f32` add. |
 | `math` | `Scalar`, `Vec2`, `Vec3`, `Vec4`, `Mat3`, `Mat4`, `Quat` | `Scalar` is `f32` (one alias, [conventions](conventions.md)). The vectors are `repr(C)` plain data with fields `x`, `y`, `z`, `w`, alignment of one scalar. Constants `ZERO`, `ONE` and the axes, `splat`, `from_array`, `to_array`, operators `+ - neg`, scalar `*` and `/`, `dot`, `length_squared`, `length`, `distance`, `normalized` (an `Option`), `min`, `max`, `abs`, `lerp`; `Vec2::perp` and `cross`, `Vec3::cross`, `extend` and `truncate`. The order of every operation is fixed and nothing is fused, so results repeat bit for bit. Safe code only. `Mat3` and `Mat4` are column-major `repr(C)` plain data holding their columns (`cols`), column vectors, `M * v` ([conventions](conventions.md)). `IDENTITY`, `ZERO`, `from_cols`, `from_cols_array`, `to_cols_array`, `transpose`, `determinant`, `inverse` (an `Option`), `is_finite`, the operators `Mat * Vec` and `Mat * Mat`, `from_scale` and `from_rotation_x`, `_y`, `_z` (radians, counter-clockwise); `Mat4` adds `from_translation`, `from_mat3`, `transform_point3` and `transform_vector3`. `Quat` is a `repr(C)` quaternion `x, y, z, w` (Hamilton, `w` last, identity `(0, 0, 0, 1)`), a rotation when it has unit length: `IDENTITY`, `from_axis_angle` (an `Option`), `*` (the Hamilton product, the right factor applies first), `conjugate`, `inverse` and `normalized` (both `Option`), `dot`, `length`, `rotate`, `to_mat3`, `to_mat4`, `nlerp` and `slerp` (both `Option`, shorter arc). |
 | `assert` | `duck_assert!`, `duck_debug_assert!` | Always-on and debug-only assertion. A failure panics with the condition or message; under `panic = "abort"` that ends the process, so nothing unwinds across a module boundary. |
 
@@ -259,6 +259,10 @@ classDiagram
       <<x86-64 backend>>
       +same operations
     }
+    class NeonF32x4 {
+      <<AArch64 backend>>
+      +same operations
+    }
     class F32x4 {
       <<alias of the target backend>>
     }
@@ -349,7 +353,9 @@ classDiagram
   MapKey ..> hash64 : u32 and u64 call
   Handle ..|> MapKey : implements
   Sse2F32x4 ..> ScalarF32x4 : must match bit for bit
+  NeonF32x4 ..> ScalarF32x4 : must match bit for bit
   F32x4 ..> Sse2F32x4 : x86-64 with sse2
+  F32x4 ..> NeonF32x4 : AArch64 with neon
   F32x4 ..> ScalarF32x4 : any other target
   Vec2 --> Scalar : components
   Vec3 --> Scalar : components
@@ -421,10 +427,10 @@ Decisions of card 1-11 (`simd` v0, and the N-6 spike):
 - **NaN payloads are not part of the contract.** The tests treat any two NaN results as equal, except for `abs` and `neg`, which are compared strictly. Simulation code must not produce NaN.
 - **Subnormals.** Equivalence is tested under the default floating-point control state. Simulation jobs set and assert the control registers (digest section 5); the NEON backend must use the same flush-to-zero setting.
 - **Inlining.** The small methods carry `#[inline]`; whether they inline across crates without LTO is for the first benchmark to show.
-- **`unsafe`.** `std::arch` intrinsics are `unsafe fn` to call, even for SSE2 which is in the x86-64 baseline, so `sse2` carries `#![expect(unsafe_code, ..)]`: 13 blocks, each one intrinsic call with a `// SAFETY:` comment. The module is compiled only when the target has `sse2`, which makes the comment true by construction. Third allowed module (with `alloc` and `arena`); the per-module budget is checked by `tools/unsafe-budget` (card 1-31).
+- **`unsafe`.** `std::arch` intrinsics are `unsafe fn` to call, even for SSE2 which is in the x86-64 baseline, so `sse2` carries `#![expect(unsafe_code, ..)]`: 13 blocks, each one intrinsic call with a `// SAFETY:` comment. The module is compiled only when the target has `sse2`, which makes the comment true by construction. Third allowed module (with `alloc` and `arena`); `neon` (card 2-7) is the fourth, the same way (13 blocks, `cfg` on `aarch64` with `neon`, budget 16); the per-module budget is checked by `tools/unsafe-budget` (card 1-31).
 - **Miri** is clean on the host target for all `simd` tests (case count reduced under Miri).
 - **Speedup (card 1-33, [simd-benchmark](../spikes/simd-benchmark.md)).** The 8-lane kernel equals the compiler's own vectorised plain loop (ratio 0.92 to 1.21) and is 3.3 to 11 times faster than a loop the compiler cannot vectorise; what G4 should compare is an open owner decision. A consumer does not exist yet. The D2 cost report (feature on versus off) is measured with the physics crate in phase 4 (v0.36). This card proves equivalence, not speed.
-- **On x86-64 the scalar and SSE2 code both compile to SSE instructions**, so the equivalence tests cannot fail by an ISA difference here; they pin the contract for the NEON backend (phase 2), which is where scalar and vector code can differ.
+- **On x86-64 the scalar and SSE2 code both compile to SSE instructions**, so the equivalence tests cannot fail by an ISA difference here; they pin the contract for the NEON backend (card 2-7), which is where scalar and vector code can differ. The NEON tests are cross-compiled and linted for `aarch64-unknown-linux-gnu`, and since card 2-10 they run natively on a hosted AArch64 runner (job `arm64` of `ci`): the 14 `simd::neon` tests and the rest of `base` passed on a probe run (2026-11-01). That covers unit tests and clippy only; Miri, mutation and determinism of ARM64 are not gated.
 
 How the backend is chosen (compile time):
 
@@ -432,8 +438,11 @@ How the backend is chosen (compile time):
 flowchart TD
   A[simd::F32x4 is used] --> B{target is x86-64 with sse2?}
   B -- yes --> C[alias of sse2::F32x4]
-  B -- no --> D[alias of scalar::F32x4]
+  B -- no --> G{target is AArch64 with neon?}
+  G -- yes --> H[alias of neon::F32x4]
+  G -- no --> D[alias of scalar::F32x4]
   C --> E[tests compare every operation with scalar::F32x4 bit for bit]
+  H --> E
   D --> F[the reference is the implementation]
 ```
 
@@ -587,7 +596,7 @@ flowchart TD
 - **Count.** An `unsafe` span runs from the keyword to the closing brace of its block (or the `;` of a declaration); the budget counts the non-blank lines of the union of spans. Ratio = unsafe lines / code lines of all checked crates.
 - **Findings.** `unsafe-outside-allowlist` (a file with `unsafe` that is not listed), `missing-safety` (a block or impl without a `// SAFETY:` comment on its line or in the comment run directly above; an `unsafe fn` needs a `# Safety` doc section or a SAFETY comment, except inside an `unsafe impl`, where the trait states the contract), `module-budget` (more unsafe lines than the file's budget), `unsafe-ratio` (more than `max_percent`), `stale-allowlist` (a listed file is missing, unless the entry says `pending = true`), `unmapped`.
 - **A new unsafe file takes two steps (card 2-13).** The gate reads the budget from `main`, so a PR cannot add a file with `unsafe` and its entry at once, and an entry for a missing file would be stale. The entry goes first with `pending = true` (no stale finding, and still held to its line budget once the file exists), the file lands afterwards, and a follow-up governance PR removes the flag once the file is on `main`.
-- **Today:** 55 unsafe lines of 5,459 code lines (1.01%): `alloc.rs` 29, `arena.rs` 10, `simd/sse2.rs` 16 (the budgets).
+- **Today:** 55 unsafe lines of 5,459 code lines (1.01%): `alloc.rs` 29, `arena.rs` 10, `simd/sse2.rs` 16 (the budgets); since card 2-7 `simd/neon.rs` 16 as well (71 unsafe lines of 8,695 code lines, 0.82%).
 - **Where it runs.** The unit tests run in the `ci` build job (card 1-31). Since card 1-32 the tool also runs as a step of the trusted "gates from main" job, which takes the tool and `gates/unsafe-budget.toml` from `main` and the source from the push (like arch-check, it runs `cargo metadata` inside the push). A change to the budget file takes effect once merged. Miri on changed `unsafe` is a separate gate and is not part of this tool.
 - **Scope of the count.** All `.rs` files of the crates, including `tests/`, `benches/` and `#[cfg(test)]` code, in both the numerator and the denominator; the budgets are line counts, not block counts (the blocks per module are in the module notes above).
 - **Known gaps.** A `{` inside generics of an `unsafe fn` header ends the span early (undercount); a stray `)` such as an `unsafe fn(u8)` pointer type, or `#[unsafe(no_mangle)]`, makes the span swallow the next block (overcount, fails closed); a `/* */` SAFETY comment or one above a statement whose `unsafe` is on a later line is not seen (fails closed); a `SAFETY:` anywhere in the comment run is accepted. The scan is textual: `unsafe` produced by a macro, a file pulled in by `include!`, or a SAFETY comment that is present but wrong are not detected (the review phase R6 reads them).
@@ -667,4 +676,30 @@ flowchart TD
   A1 --> U[roadmap, overview, vision, open questions updated]
   B1 --> U
   C1 --> U
+```
+
+## Fixed-step accumulator (card 2-5)
+
+The `frame` crate (layer 2 glue, no dependencies of its own, its tests use `base`, reads no clock) holds `FixedStep`, the accumulator of the frame loop designed in [platform-ports](platform-ports.md) section 3. The application owns the loop and feeds the accumulator the ticks since the last frame; the accumulator answers how many fixed steps to run and how far into the next step the frame is.
+
+- **Integer ticks.** `FixedStep::new(step_ticks, max_steps)` takes `u64` ticks (for example nanoseconds). A zero step or zero `max_steps` is an error value, not a panic.
+- **`advance(frame_ticks) -> Steps { count, alpha, dropped }`.** `count` is at most `max_steps`. `alpha` is the leftover fraction of a step as a fixed-point `u32` (`remainder * 2^32 / step_ticks`, so `alpha / 2^32` is in `[0, 1)`), for render interpolation. `dropped` is the tick total of the whole steps the cap cut (`u128`, so even `u64::MAX` plus a remainder is exact).
+- **Stall cap.** After a long stall the surplus steps are not run later and not lost silently: they are reported in `dropped`. The sub-step remainder is kept.
+- **Conservation.** Per call, `old remainder + frame_ticks == count * step_ticks + dropped + new remainder`; the remainder stays below `step_ticks`. A property test over a seeded `Pcg32` checks this and the repeatability of the output; a test with a manual tick counter drives a headless loop; a counting-allocator test shows `advance` makes no allocator call.
+- **Determinism.** `advance` is a pure function of the accumulator and its argument (no float, no clock), so D0 and D1 hold by construction.
+
+```mermaid
+sequenceDiagram
+  participant App as application loop
+  participant F as FixedStep
+  participant Sim as simulation
+  participant R as render
+  App->>F: advance(frame_ticks)
+  F-->>App: Steps count, alpha, dropped
+  loop count times
+    App->>Sim: step(fixed dt)
+  end
+  App->>R: draw(alpha)
+  Note over F: remainder below step_ticks is carried to the next frame
+  Note over F: steps beyond max_steps are cut and reported in dropped
 ```
