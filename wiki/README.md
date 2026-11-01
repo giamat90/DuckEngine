@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.66 (2026-11-01).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.67 (2026-11-01).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.67** - Unsafe budget: entries may carry `pending = true` (card 2-13, governance), so a new unsafe file can land in two steps under the trusted-config rule (entry first, file next, flag removed after). Needed for `simd/neon.rs` of card 2-7. core-runtime updated.
 > - **v0.66** - Stale NEON statements corrected (card 2-12): core-runtime, platform-ports section 7 and the 2-7 review now say that the NEON tests run natively on the hosted ARM64 runner (card 2-10) and that no emulator is used.
 > - **v0.65** - ARM64 CI job (card 2-10, governance): the probe showed that GitHub Free serves a hosted ARM64 runner (`ubuntu-24.04-arm`) for the private repository; job `arm64` of `ci` runs clippy and the tests of the workspace (adapters excluded) natively on AArch64, so the unit tests and clippy of the NEON backend of card 2-7 run on real hardware, not under QEMU (no Miri, no mutation, no determinism claim). github-plan-findings and ci-diagrams updated.
 > - **v0.64** - Linux GLFW CI job (card 2-11, governance): job `glfw_linux` of `ci` installs xvfb and the distribution `libglfw3` and runs the tests of `adapter_window_glfw` (window contract suite included) with `DUCK_REQUIRE_GLFW=1`; when the crate is not in the workspace yet (`main` behind `develop`) it reports "not run". ci-diagrams section 2 updated. Phase 2 exit criterion, Linux half of "platform contract suite green on both OSes".

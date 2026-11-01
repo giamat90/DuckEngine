@@ -594,11 +594,22 @@ flowchart TD
 `tools/unsafe-budget/unsafe_budget.py` enforces the `unsafe` rules of the digest (section 4) and gate G3 of ADR-0001 section 6. It reads `gates/unsafe-budget.toml` (a protected path: `max_percent = 5` and an allowlist of files, each with a line budget) and the layers of `gates/architecture.toml`, and scans every `.rs` file of the layer 0-2 crates (exempt crates and layers 3-4 are skipped; a crate with no layer is a finding). Comments and strings are blanked first, so `unsafe_code` and text in comments do not count.
 
 - **Count.** An `unsafe` span runs from the keyword to the closing brace of its block (or the `;` of a declaration); the budget counts the non-blank lines of the union of spans. Ratio = unsafe lines / code lines of all checked crates.
-- **Findings.** `unsafe-outside-allowlist` (a file with `unsafe` that is not listed), `missing-safety` (a block or impl without a `// SAFETY:` comment on its line or in the comment run directly above; an `unsafe fn` needs a `# Safety` doc section or a SAFETY comment, except inside an `unsafe impl`, where the trait states the contract), `module-budget` (more unsafe lines than the file's budget), `unsafe-ratio` (more than `max_percent`), `stale-allowlist` (a listed file is missing), `unmapped`.
+- **Findings.** `unsafe-outside-allowlist` (a file with `unsafe` that is not listed), `missing-safety` (a block or impl without a `// SAFETY:` comment on its line or in the comment run directly above; an `unsafe fn` needs a `# Safety` doc section or a SAFETY comment, except inside an `unsafe impl`, where the trait states the contract), `module-budget` (more unsafe lines than the file's budget), `unsafe-ratio` (more than `max_percent`), `stale-allowlist` (a listed file is missing, unless the entry says `pending = true`), `unmapped`.
+- **A new unsafe file takes two steps (card 2-13).** The gate reads the budget from `main`, so a PR cannot add a file with `unsafe` and its entry at once, and an entry for a missing file would be stale. The entry goes first with `pending = true` (no stale finding, and still held to its line budget once the file exists), the file lands afterwards, and a follow-up governance PR removes the flag once the file is on `main`.
 - **Today:** 55 unsafe lines of 5,459 code lines (1.01%): `alloc.rs` 29, `arena.rs` 10, `simd/sse2.rs` 16 (the budgets); since card 2-7 `simd/neon.rs` 16 as well (71 unsafe lines of 8,695 code lines, 0.82%).
 - **Where it runs.** The unit tests run in the `ci` build job (card 1-31). Since card 1-32 the tool also runs as a step of the trusted "gates from main" job, which takes the tool and `gates/unsafe-budget.toml` from `main` and the source from the push (like arch-check, it runs `cargo metadata` inside the push). A change to the budget file takes effect once merged. Miri on changed `unsafe` is a separate gate and is not part of this tool.
 - **Scope of the count.** All `.rs` files of the crates, including `tests/`, `benches/` and `#[cfg(test)]` code, in both the numerator and the denominator; the budgets are line counts, not block counts (the blocks per module are in the module notes above).
 - **Known gaps.** A `{` inside generics of an `unsafe fn` header ends the span early (undercount); a stray `)` such as an `unsafe fn(u8)` pointer type, or `#[unsafe(no_mangle)]`, makes the span swallow the next block (overcount, fails closed); a `/* */` SAFETY comment or one above a statement whose `unsafe` is on a later line is not seen (fails closed); a `SAFETY:` anywhere in the comment run is accepted. The scan is textual: `unsafe` produced by a macro, a file pulled in by `include!`, or a SAFETY comment that is present but wrong are not detected (the review phase R6 reads them).
+
+```mermaid
+sequenceDiagram
+  participant G as governance PR into main
+  participant R as release PR (develop into main)
+  participant F as follow-up governance PR into main
+  G->>G: entry for the new file, pending = true (no stale finding)
+  R->>R: brings the file; the trusted budget on main already lists it
+  F->>F: removes pending = true, the stale check applies again
+```
 
 ```mermaid
 flowchart TD

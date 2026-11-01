@@ -6,7 +6,11 @@ gates/unsafe-budget.toml with a line budget, and every `unsafe` block or impl ha
 comment directly above it (an `unsafe fn` needs a `# Safety` doc section or a SAFETY comment).
 
 Findings: unsafe-outside-allowlist, missing-safety, module-budget, unsafe-ratio, stale-allowlist (an
-allowlisted file that does not exist), unmapped (a workspace crate with no layer).
+allowlisted file that does not exist and is not marked `pending = true`), unmapped (a workspace crate with no layer).
+
+A new `unsafe` file cannot be listed and added in one step (the gate reads this file from main), so an
+entry may carry `pending = true` until the file lands: it is then not stale, and it is still held to its
+line budget once the file exists. Remove the flag in the PR after the file has landed.
 
 The count is textual (comments and strings are blanked first): an `unsafe` span runs from the keyword
 to the closing brace of its block, or to the end of the line when a `;` comes first.
@@ -39,6 +43,7 @@ _OPEN, _CLOSE = "([", ")]"
 class Budget:
     max_percent: float
     modules: dict
+    pending: frozenset = frozenset()
 
 
 @dataclass(frozen=True)
@@ -55,7 +60,7 @@ def load_budget(text):
         raise ValueError("max_percent must be a number")
     if not 0 <= percent <= 100:  # also false for nan
         raise ValueError("max_percent must be between 0 and 100")
-    modules = {}
+    modules, pending = {}, set()
     for entry in data.get("modules", []):
         path, lines = entry.get("path"), entry.get("max_unsafe_lines")
         if not isinstance(path, str) or isinstance(lines, bool) or not isinstance(lines, int):
@@ -63,7 +68,12 @@ def load_budget(text):
         if path in modules:
             raise ValueError(f"{path} is listed twice")
         modules[path] = lines
-    return Budget(float(percent), modules)
+        flag = entry.get("pending", False)
+        if not isinstance(flag, bool):
+            raise ValueError(f"{path}: pending must be true or false")
+        if flag:
+            pending.add(path)
+    return Budget(float(percent), modules, frozenset(pending))
 
 
 def load_architecture(text):
@@ -164,6 +174,11 @@ def _file_findings(relative, unsafe, missing, budget):
     return found
 
 
+def _stale_findings(root, budget):
+    missing = (relative for relative in budget.modules if relative not in budget.pending and not (root / relative).is_file())
+    return [arch_check.Finding("stale-allowlist", f"{relative}: allowlisted file does not exist") for relative in missing]
+
+
 def _checked_packages(metadata, architecture):
     packages, findings = [], []
     for package in metadata["packages"]:
@@ -187,7 +202,7 @@ def check(metadata, budget, architecture):
             unsafe, code_lines, missing = scan_file(path.read_text(encoding="utf-8"))
             unsafe_total, code_total = unsafe_total + len(unsafe), code_total + code_lines
             findings += _file_findings(_relative(path, root), unsafe, missing, budget)
-    findings += [arch_check.Finding("stale-allowlist", f"{relative}: allowlisted file does not exist") for relative in budget.modules if not (root / relative).is_file()]
+    findings += _stale_findings(root, budget)
     if code_total and unsafe_total * 100 > budget.max_percent * code_total:
         findings.append(arch_check.Finding("unsafe-ratio", f"{unsafe_total} of {code_total} code lines are unsafe, limit {budget.max_percent}%"))
     return Report(findings, unsafe_total, code_total)

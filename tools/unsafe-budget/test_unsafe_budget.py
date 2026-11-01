@@ -22,6 +22,7 @@ max_unsafe_lines = 3
 """
 
 NO_MODULES = "max_percent = 5\n"
+PENDING = "pending = true\n"
 
 SAFE_BLOCK = "// SAFETY: the pointer is valid.\nlet _v = unsafe { *p };\n"
 
@@ -134,6 +135,37 @@ class Budget(unittest.TestCase):
 
     def test_an_allowlisted_file_that_does_not_exist_is_refused(self):
         report = Workspace(self, {"base": {"src/lib.rs": filler(3)}}).run()
+        self.assertEqual(["stale-allowlist"], rules(report))
+
+    def test_a_pending_entry_may_name_a_file_that_does_not_exist_yet(self):
+        report = Workspace(self, {"base": {"src/lib.rs": filler(3)}}).run(BUDGET + "pending = true\n")
+        self.assertEqual([], rules(report))
+
+    def test_a_pending_entry_whose_file_exists_is_still_held_to_its_budget(self):
+        text = filler(200) + SAFE_BLOCK * 4
+        report = Workspace(self, {"base": {"src/low.rs": text}}).run(BUDGET + "pending = true\n")
+        self.assertEqual(["module-budget"], rules(report))
+
+    def test_pending_must_be_true_or_false(self):
+        with self.assertRaises(ValueError):
+            ub.load_budget(BUDGET + 'pending = "yes"\n')
+
+    def test_a_pending_entry_does_not_cover_another_file_with_unsafe(self):
+        budget = BUDGET.replace("low.rs", "later.rs") + PENDING
+        report = Workspace(self, {"base": {"src/low.rs": filler(200) + SAFE_BLOCK}}).run(budget)
+        self.assertEqual(["unsafe-outside-allowlist"], rules(report))
+
+    def test_a_pending_entry_whose_file_exists_within_budget_is_clean(self):
+        report = Workspace(self, {"base": {"src/low.rs": filler(200) + SAFE_BLOCK}}).run(BUDGET + PENDING)
+        self.assertEqual([], rules(report))
+
+    def test_pending_false_leaves_the_stale_check_on(self):
+        report = Workspace(self, {"base": {"src/lib.rs": filler(3)}}).run(BUDGET + "pending = false\n")
+        self.assertEqual(["stale-allowlist"], rules(report))
+
+    def test_a_pending_sibling_does_not_hide_a_stale_entry(self):
+        budget = BUDGET + PENDING + '\n[[modules]]\npath = "base/src/gone.rs"\nmax_unsafe_lines = 1\n'
+        report = Workspace(self, {"base": {"src/lib.rs": filler(3)}}).run(budget)
         self.assertEqual(["stale-allowlist"], rules(report))
 
     def test_the_budget_needs_a_ratio(self):
