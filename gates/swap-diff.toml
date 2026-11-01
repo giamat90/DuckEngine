@@ -1,0 +1,25 @@
+# Swap-diff check (card 2-16; checked by tools/swap-diff). A protected path (Class 3).
+# When backend or platform N+1 is added, at most `max_engine_game_files` files of engine or game code
+# may change (wiki/workflow/quality-metrics.md "Swap diff", decision N-4). Each changed file goes into
+# the first class below that matches; whatever matches none is engine or game code. `*` stays inside one
+# path segment, `**` crosses segments. A range with no adapter and no composition-root file fails: it
+# adds no backend, so it proves nothing.
+max_engine_game_files = 0
+
+adapter = ["engine/adapter_*/**"]
+composition_root = ["engine/app_*/**"]
+# The port declarations of the `platform` crate: the port traits, their types and the contract suites. A
+# change here is a port revision (at most one before the port is `stable`): reported, never failed, because
+# the tool cannot see a port's earlier revisions. The std and Null implementations (`headless.rs`,
+# `memory_files.rs`, `std_files.rs`, `vpath.rs`) and the tests are not listed, so they count as engine code.
+# `clock.rs`, `files.rs`, `threads.rs` and `window.rs` hold a port and its std or Null implementation
+# together; the tool cannot separate them, so a change to them is reported as a port revision.
+ports = [
+  "engine/platform/src/clock.rs", "engine/platform/src/files.rs", "engine/platform/src/threads.rs",
+  "engine/platform/src/window.rs", "engine/platform/src/platform.rs", "engine/platform/src/error.rs",
+  "engine/platform/src/contract.rs", "engine/platform/src/lib.rs",
+]
+# Workspace plumbing that adding a crate has to touch. Any edit to these two files is ignored, including
+# a dependency bump: the tool cannot tell a crate addition from other edits.
+plumbing = ["Cargo.toml", "Cargo.lock"]
+non_code = ["wiki/**", "reviews/**", "gates/**", "tools/**", ".github/**", "THIRD_PARTY.md", "*.md"]

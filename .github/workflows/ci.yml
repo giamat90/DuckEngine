@@ -89,6 +89,9 @@ jobs:
       - name: Test the diff-hash tool
         run: python -m unittest -q test_diff_hash
         working-directory: tools/diff-hash
+      - name: Test the swap-diff tool
+        run: python -m unittest -q test_swap_diff
+        working-directory: tools/swap-diff
       - name: Test the release tools
         run: |
           python -m unittest -q test_next_version
