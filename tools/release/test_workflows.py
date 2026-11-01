@@ -300,6 +300,22 @@ class Ci(unittest.TestCase):
         self.assertIn('>> "$GITHUB_STEP_SUMMARY"', job)
         self.assertEqual(job.count("if: steps.adapter.outputs.present == 'true'"), 2)
 
+    def test_the_arm64_job_runs_on_a_hosted_arm_runner_and_proves_the_cpu(self):
+        # Card 2-10: a hosted ARM64 runner exists for this private repo (probe of 2026-11-01), so the NEON
+        # backend runs on real AArch64 hardware, not under an emulator.
+        job = CI[CI.index("\n  arm64:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        job = job[:following.start()] if following else job
+        self.assertIn("runs-on: ubuntu-24.04-arm", job)
+        self.assertNotIn("matrix", job)
+        self.assertIn('test "$(uname -m)" = aarch64', job)
+        self.assertIn("cargo clippy --workspace --exclude 'adapter_*' --all-targets --locked -- -D warnings", job)
+        self.assertIn("cargo test --workspace --exclude 'adapter_*' --locked", job)
+        self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
+        self.assertNotIn("continue-on-error", job)
+        self.assertNotRegex(job, r"(?m)^\s+if:")
+        self.assertNotIn("qemu", job)
+
     def test_ci_runs_the_tests_of_every_tool_folder(self):
         for folder, module in (("tools/templates", "test_templates"), ("tools/token-probe", "test_probe"),
                                ("tools/local-gates", "test_local_gates"),

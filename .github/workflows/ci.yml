@@ -361,3 +361,29 @@ jobs:
         env:
           DUCK_REQUIRE_GLFW: "1"
         run: xvfb-run --auto-servernum cargo test -p adapter_window_glfw --locked -- --nocapture
+
+  # Card 2-10: the engine on real AArch64 hardware. A test run on 2026-11-01 showed that GitHub Free gives a
+  # hosted ARM64 Linux runner (`ubuntu-24.04-arm`) for this private repository, so the NEON backend of `simd`
+  # (card 2-7) is tested natively, not under an emulator. The adapters are left out (no GLFW or display
+  # there; that is the job `glfw_linux`). On a tree without the NEON backend the same job tests the scalar
+  # reference on AArch64. One Linux job, on `main` and by hand; billed as Linux (budget it as 1x).
+  arm64:
+    name: ARM64 hosted runner (clippy and tests, native)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Check that this really is an AArch64 CPU
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          echo "### ARM64: ran natively on an AArch64 hosted runner ($(uname -m))" >> "$GITHUB_STEP_SUMMARY"
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain
+      - name: Clippy
+        run: cargo clippy --workspace --exclude 'adapter_*' --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --workspace --exclude 'adapter_*' --locked
