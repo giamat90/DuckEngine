@@ -18,8 +18,8 @@ Git and the wiki are canonical (roadmap, ADRs, reviews, metric reports). The boa
 | Review (R1-R8) | implementation done, review phase and fix loop | all planned tests are green and the review phase starts |
 | Waiting for owner approval | design note, metric report and product view are ready | the review report has 0 open blocker/major issues; the PR is open and its link is given to the owner with the diff hash |
 | PR / CI | owner approved the diff hash; checks running or green | the owner approved; the agent merges after green checks |
-| Merged in phase branch | an ordinary card's PR is merged into `phase/<n>`, not yet on `main` (card 1-38) | the PR is merged into the phase branch; the column is created when the first phase branch exists |
-| Done (released) | the PR is merged into `main` | the PR is merged into `main` (owner decision 2026-10-24); a governance card on its own merge, an ordinary card when its phase PR merges, and then it gets the version number |
+| Merged in develop | an ordinary card's PR is merged into `develop`, not yet on `main` (cards 1-38, 2-9) | the PR is merged into `develop` |
+| Done (released) | the PR is merged into `main` | the PR is merged into `main` (owner decision 2026-10-24); a governance card on its own merge, an ordinary card when the release PR from `develop` merges, and then it gets the version number |
 
 Backward moves are allowed and need a comment saying why (a failed gate, a changed requirement). A card never skips a column.
 
@@ -35,7 +35,7 @@ Backward moves are allowed and need a comment saying why (a failed gate, a chang
 ## 4. Subtasks
 
 - Small steps of one task: checklist items on the card.
-- Work that needs its own PR (and therefore its own release): a **separate card**, linked from the parent in the description. One card = one PR. An ordinary card is released with its phase (one minor version per phase), a governance card gets its own patch version ([delivery-pipeline](delivery-pipeline.md), phase-branch workflow).
+- Work that needs its own PR (and therefore its own release): a **separate card**, linked from the parent in the description. One card = one PR. An ordinary card is released with its batch (one minor version per release the owner asks for), a governance card gets its own patch version ([delivery-pipeline](delivery-pipeline.md), develop-branch workflow).
 - The agent creates subtasks when the test list or the review reveals them, and says so in a comment. It does not silently drop or merge cards.
 
 ## 5. "What is the next task?"

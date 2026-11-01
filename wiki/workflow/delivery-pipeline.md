@@ -13,38 +13,39 @@ Everything below only makes those four steps safe and repeatable. Feature names 
 
 **Built in phase 0b (verified end to end in card 0b-7; hardened in 0b-8):** PR title check (`pr-title`), `governance-guard`, `ci` also on `main`, squash-subject check in the release, diff hash and approval record (`tools/diff-hash`, run by the agent, not by a workflow), squash merge by the agent after a green `gh run watch`, release workflow (`release.yml`: draft Release, assets, publish). **Not built:** auto-merge, rulesets, required checks, the package smoke test and per-platform tool/sample archives. Control by control, see [pipeline-runbook](../../docs/gates/pipeline-runbook.md).
 
-## Phase-branch workflow (owner decision 2026-10-27, card 1-38; reason: the 2,000 free Actions minutes per month)
+## Develop-branch workflow (owner decision 2026-11-01, card 2-9, replaces the phase-branch workflow of card 1-38; reason: the 2,000 free Actions minutes per month)
 
-Measured cost before this change: one `ci` run bills about 15 minutes (Windows counted twice) and ran on every push of every branch, so a phase of about 40 cards used most of a month. Now:
+Measured cost before card 1-38: one `ci` run bills about 15 minutes (Windows counted twice) and ran on every push of every branch, so a phase of about 40 cards used most of a month. Card 1-38 moved the cost to one run per phase on a `phase/<n>` branch; card 2-9 replaces the per-phase branch with one permanent branch, so the release moment is the owner's choice and no longer tied to a phase boundary. Now:
 
-1. **A phase has one long branch `phase/<n>`** (for phase 1: `phase/1`), cut from `main`. Ordinary cards are PRs **into the phase branch** (`agent/<id>-<slug>` -> `phase/<n>`), squash-merged there after the owner's approval, as before: PR link, diff hash (base = `origin/phase/<n>`), approval record, `diff_hash.py check`. On such a PR only the cheap workflows run (`pr-title`, `governance-guard`); `ci` does not run on branch pushes and `trusted-pr-gates` only fires for PRs into `main`. **The evidence for an ordinary card is the local gate run** (fmt, clippy, tests on Windows and, through WSL, Linux; the Python gate tools; the review report), written into `reviews/<id>.md`.
-2. **Governance cards go to `main` first**, by their own PR, with one `ci` run started by hand on the commit to approve (`gh workflow run ci.yml --ref <branch>`, then `gh run watch`). Reason: the gate tools and configuration come from `main`, so a change to them must already be on `main` when the phase PR is judged. A card that touches a protected path is a governance card. After it merges, `phase/<n>` merges `main` in (no CI run on that push).
-3. **Checkpoints.** About every 10 cards, and before the phase PR, the agent starts `ci` by hand on `phase/<n>` and fixes what is red, so a failure is small to find.
-4. **The phase ends** with one PR `phase/<n>` -> `main`: title `feat(phase-<n>): <summary>`, the full CI on the head commit, the owner's approval against the diff hash of the phase (the card approvals are the manifest, listed in the PR body), merged with a **merge commit** (history of the cards stays): `gh pr merge N --merge --subject "<PR title> (#N)" --body "Release-Phase: <n>" --match-head-commit <sha>`. The footer `Release-Phase: <n>` makes the release workflow bump the **minor** number once for the phase (`next_version.py`); every governance PR merged to `main` in between still gets its patch number. The release notes list all cards of the phase.
-5. **Gaps closed by card 1-40:** `pr-title` fails a PR from `phase/<n>` whose description lacks exactly one line `Release-Phase: <n>`; the `release` workflow fails (before building anything) if the merge of a `phase/<n>` PR does not carry that footer, or if any other merge carries it; `governance-guard` and `pr-title` take their tools from `main`, also for PRs into a phase branch. The phase PR description must itself contain the line `Release-Phase: <n>` (the merge body is passed with `--body`; the PR check reads the description as its proxy). No other commit may start a line with `Release-Phase:` (the version tool reads every commit since the last tag, so a card squash body that does would bump the minor number or fail the release); card squashes use `--body ""`. Still true: the approval report of a dispatched run on a branch computes the hash against `main`, so a per-card hash is checked locally with `diff_hash.py` (base `origin/phase/<n>`). For an ordinary card, "after green checks" in the steps below means: cheap checks green and local gates green.
-6. **Not weakened:** no push to `main`, the owner's approval against a diff hash for every card and for the phase, a red check is a stop, governance diffs are read by the owner. **Weakened and said so:** an ordinary card is no longer checked by CI before its merge into the phase branch; the first independent run is the checkpoint or the phase PR.
+1. **There is one long-lived branch `develop`**, cut from `main`, never deleted and never the source of anything but a release PR. Ordinary cards are PRs **into `develop`** (`agent/<id>-<slug>` -> `develop`), squash-merged there after the owner's approval, as before: PR link, diff hash (base = `origin/develop`), approval record, `diff_hash.py check`. On such a PR only the cheap workflows run (`pr-title`, `governance-guard`); `ci` does not run on branch pushes and `trusted-pr-gates` only fires for PRs into `main`, so **CI is off for `develop`**. **The evidence for an ordinary card is the local gate run** (fmt, clippy, tests on Windows and, through WSL, Linux; the Python gate tools; the review report), written into `reviews/<id>.md`.
+2. **Governance cards go to `main` first**, by their own PR, with one `ci` run started by hand on the commit to approve (`gh workflow run ci.yml --ref <branch>`, then `gh run watch`). Reason: the gate tools and configuration come from `main`, so a change to them must already be on `main` when a release PR is judged. A card that touches a protected path is a governance card. After it merges, `develop` merges `main` in (`git merge origin/main`, a merge commit pushed to `develop`, no CI run on that push). This sync merge carries no change of its own, only content that already passed its own approval, so it has no diff hash and needs no approval; it is a precondition of the next release PR (otherwise the PR shows `main`-only changes as removed).
+3. **Checkpoints.** The agent starts `ci` by hand on `develop` before a release PR, and whenever the owner asks, and fixes what is red, so a failure is small to find.
+4. **A release happens only when the owner explicitly asks for it.** The agent then opens one PR `develop` -> `main`: title `feat(release): <summary>`, the full CI on the head commit (`ci` and `trusted-pr-gates` run because the base is `main`), the owner's approval against the diff hash of the whole batch (the card approvals are the manifest, listed in the PR body), merged with a **merge commit** (the card history stays): `gh pr merge N --merge --subject "<PR title> (#N)" --body "Release-Batch: <label>" --match-head-commit <sha>`. The label is the date of the request, `YYYY-MM-DD` (`-2` for a second batch the same day). The footer `Release-Batch: <label>` makes the release workflow bump the **minor** number once for the batch (`next_version.py`); every governance PR merged to `main` in between still gets its patch number. The release notes list all cards of the batch. Afterwards `develop` fast-forwards to `main` (`git merge --ff-only origin/main`; if a governance card landed on `main` in between and the fast-forward fails, merge `main` in instead), so the two branches are equal again. `--delete-branch` is never used on the release merge, and the repository setting "Automatically delete head branches" must stay off (checked 2026-11-01: `delete_branch_on_merge` is false); a deleted `develop` would make the footer rule stop matching.
+5. **Gaps closed by card 1-40, moved to the new names by card 2-9:** `pr-title` fails a PR from `develop` whose description lacks exactly one line `Release-Batch: <label>` (one word); the `release` workflow fails (before building anything) if the merge of a `develop` PR does not carry that footer, or if any other merge carries it; `governance-guard` and `pr-title` take their tools from `main`, also for PRs into `develop`. The release PR description must itself contain the line (the merge body is passed with `--body`; the PR check reads the description as its proxy). No other commit may start a line with `Release-Batch:` (the version tool reads every commit since the last tag, so a card squash body that does would bump the minor number or fail the release); card squashes use `--body ""`. A stray `Release-Batch:` line in a card squash body is harmless for the version (the release is a minor bump anyway) but still fails the release check on `main` if it ends up in a governance squash; `pr-title` requires the footer only for a PR whose head branch `develop` lives in this repository, so a fork's branch named `develop` is not mistaken for a release. Only the exact branch name `develop` counts as the release branch; the old `Release-Phase:` footer and `phase/<n>` branches are no longer recognised. Still true: the approval report of a dispatched run on a branch computes the hash against `main`, so a per-card hash is checked locally with `diff_hash.py` (base `origin/develop`). For an ordinary card, "after green checks" in the steps below means: cheap checks green and local gates green.
+6. **Not weakened:** no push to `main`, the owner's approval against a diff hash for every card and for every release, a red check is a stop, governance diffs are read by the owner. **Weakened and said so:** an ordinary card is no longer checked by CI before its merge into `develop`; the first independent run is the checkpoint or the release PR, so a bug can sit on `develop` unseen by CI until the owner asks for a release. A release is therefore only as small as the owner makes it: the more cards pile up on `develop`, the larger the first red run. **Transition (this card):** after the merge of card 2-9, `develop` is created once from `main`. `phase/1` is merged and no longer used. `phase/2` holds one commit beyond `main` (the design note of card 2-1, PR #82, merged into it on 2026-11-01), so `develop` is created at the tip of `phase/2` (which contains `main`), and `phase/2` is then deleted. A merge from a `phase/<n>` branch into `main` would now fail the release check, which is intended. **Setup note:** GitHub Free has no branch protection, so "no CI on `develop`" is the absence of a trigger in the workflows (`ci` is `push: [main]` plus manual), not a setting; `develop` itself is created once by the owner's go-ahead on this card.
 
 ```mermaid
 flowchart TD
-  M[main] -->|cut| PB[phase/n]
-  PB --> C1[ordinary card PR into phase/n: local gates, cheap checks, approval, squash]
-  C1 --> PB
+  M[main] -->|cut once| D[develop]
+  D --> C1[ordinary card PR into develop: local gates, cheap checks, approval, squash]
+  C1 --> D
   G[governance card PR into main: one dispatched CI run, approval, squash, patch release] --> M
-  M -->|merge main in| PB
-  PB -->|every ~10 cards| CP[ci dispatched on phase/n]
-  CP --> PB
-  PB --> PP[phase PR into main: full CI, approval of the phase diff hash]
-  PP --> MC[merge commit with Release-Phase footer]
+  M -->|merge main in| D
+  D -->|before a release, or on request| CP[ci dispatched on develop]
+  CP --> D
+  D -->|only when the owner asks| RP[release PR into main: full CI, approval of the batch diff hash]
+  RP --> MC[merge commit with Release-Batch footer]
   MC --> R[release: one minor bump, notes list the cards]
   R --> M
+  M -->|fast-forward| D
 ```
 
 ```mermaid
 flowchart LR
-  PR[PR from phase/n into main] --> T{pr-title: body has exactly one line Release-Phase: n?}
+  PR[PR from develop into main] --> T{pr-title: body has exactly one line Release-Batch: label?}
   T -- no --> RED[check fails, no merge]
-  T -- yes --> MG[merge commit, body Release-Phase: n]
-  MG --> RL{release: head branch is phase/n and footer is n?}
+  T -- yes --> MG[merge commit, body Release-Batch: label]
+  MG --> RL{release: head branch is develop and footer present?}
   OTHER[any other merge] --> RL2{release: no footer?}
   RL -- no --> STOP[release fails before building]
   RL -- yes --> BUMP[one minor bump]
@@ -52,11 +53,30 @@ flowchart LR
   RL2 -- no --> STOP
 ```
 
+```mermaid
+sequenceDiagram
+  actor Owner
+  participant CC as Claude Code
+  participant D as develop (no CI)
+  participant M as main (CI + release)
+  Owner->>CC: task
+  CC->>D: PR agent/id to develop, local gates, review report
+  Owner->>CC: approve (diff hash)
+  CC->>D: squash merge
+  Note over D: more cards accumulate, nothing runs
+  Owner->>CC: release now
+  CC->>M: PR develop to main, ci dispatched, full CI green
+  Owner->>CC: approve (batch diff hash)
+  CC->>M: merge commit, body Release-Batch label
+  M-->>M: release workflow: minor bump, tag, publish
+  CC->>D: fast-forward to main
+```
+
 The task lifecycle below is the mechanics of one card. Where it says "push branch; CI on the branch" read: ordinary card = local gates are the evidence; governance card = one dispatched CI run on the commit to approve.
 
 ### Local gates (card 1-39)
 
-`python tools/local-gates/local_gates.py [--base origin/phase/<n>] [--wsl]` runs, in one go and without stopping at the first failure: Rust format, Clippy, build and tests (also `app_runtime` without the mimalloc feature), the gate tools on the working tree (architecture, unsafe budget, wiki lint, digest), the diff hash, the unit tests of every Python tool (found by scanning `tools/*` and `acceptance/` for `test_*.py`, so a new tool is picked up without editing the script), cargo-deny when installed, and with `--wsl` the Linux test run. Exit code 1 if a step failed; the summary lists what is **not** run locally (Miri, coverage, mutation, benchmarks, metrics): those wait for the checkpoint or the phase PR. The gate tools run from the working tree, not from a trusted checkout of `main`; that guarantee stays with `ci`. Its unit tests run in `ci` (card 1-40).
+`python tools/local-gates/local_gates.py [--base origin/develop] [--wsl]` runs, in one go and without stopping at the first failure: Rust format, Clippy, build and tests (also `app_runtime` without the mimalloc feature), the gate tools on the working tree (architecture, unsafe budget, wiki lint, digest), the diff hash, the unit tests of every Python tool (found by scanning `tools/*` and `acceptance/` for `test_*.py`, so a new tool is picked up without editing the script), cargo-deny when installed, and with `--wsl` the Linux test run. Exit code 1 if a step failed; the summary lists what is **not** run locally (Miri, coverage, mutation, benchmarks, metrics): those wait for the checkpoint or the release PR. The gate tools run from the working tree, not from a trusted checkout of `main`; that guarantee stays with `ci`. Its unit tests run in `ci` (card 1-40).
 
 ```mermaid
 flowchart LR
@@ -200,8 +220,8 @@ Known GitHub behaviour **[K]**: a tag pushed with the default `GITHUB_TOKEN` doe
 
 | Situation | Behaviour |
 |---|---|
-| CI red on the branch (dispatched run of a governance card, or a phase checkpoint) | CC fixes and re-runs; the PO is asked only once CI is green |
-| CI red on the phase PR | CC fixes on `phase/<n>` with fix commits (small, since checkpoints ran earlier); a fix that changes behaviour or metrics is shown to the PO before the phase merge |
+| CI red on the branch (dispatched run of a governance card, or a develop checkpoint) | CC fixes and re-runs; the PO is asked only once CI is green |
+| CI red on the release PR | CC fixes on `develop` with fix commits (small, since checkpoints ran earlier); a fix that changes behaviour or metrics is shown to the PO before the release merge |
 | CI red after approval | mechanical fix: continue automatically; behaviour/metric-changing fix: pause and ask again (section 2) |
 | Merge blocked or checks not green | PR stays open; CC investigates; it never bypasses rules (on Free there is no auto-merge: CC merges by hand after the checks pass) |
 | Release job fails | stops, no retry loops, CC reports; fix is a new task |
