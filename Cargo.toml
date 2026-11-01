@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["engine/skeleton", "engine/skeleton-unsafe", "engine/g1-control", "engine/base", "engine/app_runtime", "engine/tools_simd_bench"]
+members = ["engine/skeleton", "engine/skeleton-unsafe", "engine/g1-control", "engine/base", "engine/platform", "engine/app_runtime", "engine/tools_simd_bench"]
 
 [workspace.package]
 edition = "2024"

@@ -105,7 +105,7 @@ The composition root builds one `Platform` value (sketch) from the chosen implem
 ### 2.2 Threads
 
 - v0 is deliberately small: `spawn(name, job)`, `parallelism()` and a `ThreadHandle` that can be joined. Mutex, condvar, atomics and thread-local storage are `std` directly in layers 0-2, as the policy says; the port is only for **creating** threads, which the architecture config allows only in `platform` and `jobs`.
-- `Caps.has_threads` false selects the deterministic single-thread path: `spawn` returns `Unsupported` and the job system (phase 4) runs the same work inline. The Null platform has this on by default for tests.
+- `Caps.has_threads` false selects the deterministic single-thread path: `spawn` returns `Unsupported` and the job system (phase 4) runs the same work inline. The Headless platform has threads off by default, so tests exercise the single-thread path.
 - Affinity hints, priorities, semaphores and fibers wait for the job system (phase 4), where the first real need is known.
 
 ### 2.3 File system
@@ -191,7 +191,7 @@ sequenceDiagram
 
 ## 4. Contract suites
 
-One generic suite per port, in `platform::contract` behind the feature `contract-tests`. A suite is a set of functions that take a **factory** for the thing under test; each adapter's own tests call the suite with its factory. A new adapter is accepted when the suite for its port passes unchanged.
+One generic suite per port, in `platform::contract` behind the feature `contract-tests`. A suite is a set of functions that take the thing under test (v0: the instance, plus a flag where behaviour differs, such as `exact` for the manual clock); each adapter's own tests call the suite with its instance. A new adapter is accepted when the suite for its port passes unchanged.
 
 ```mermaid
 flowchart LR
@@ -267,4 +267,53 @@ flowchart LR
 | O7 | Lifecycle and input | event kinds of one `IWindowSystem` (recommended) · three separate ports as the roadmap lists | one port: GLFW and Win32 provide them together; the roadmap wording is updated if you agree |
 | O8 | Wall-clock time | not in v0 (recommended) · included | not in v0: no phase 2 user, and it is a source of non-reproducible values |
 
-Nothing above is built yet. Once you decide O1 to O8 (or accept the recommendations), cards 2-2 to 2-5 can start in parallel after 2-2's `Platform` and `PlatformError` types exist.
+O1 to O8 were accepted with the recommendations (owner, 2026-11-01). Cards 2-3, 2-4 and 2-8 start after 2-2's `Platform` and `PlatformError` types exist; 2-5 does not need them.
+
+## 10. Implemented: clock and threads (card 2-2)
+
+The crate `engine/platform` (layer 1) holds the first two ports. Differences from the sketches above are listed here; where the two disagree, this section is the code.
+
+```mermaid
+classDiagram
+  class Platform {
+    +clock: Box~dyn IClock~
+    +threads: Box~dyn IThreads~
+    +std() Platform
+    +headless() Platform and Arc~ManualClock~
+    +caps() Caps
+  }
+  class IClock {
+    <<port>>
+    +now() Ticks
+    +sleep(Ticks)
+  }
+  class IThreads {
+    <<port>>
+    +spawn(name, Job) Result~ThreadHandle~
+    +parallelism() u32
+  }
+  class StdClock
+  class ManualClock {
+    +advance(Ticks)
+  }
+  class StdThreads
+  class NullThreads
+  class PlatformError {
+    <<enum>>
+  }
+  IClock <|.. StdClock
+  IClock <|.. ManualClock
+  IThreads <|.. StdThreads
+  IThreads <|.. NullThreads
+  Platform o-- IClock
+  Platform o-- IThreads
+  IThreads ..> PlatformError
+```
+
+- `Ticks` is a newtype over `u64` nanoseconds with saturating arithmetic; the manual clock is an atomic, so `IClock` is `Send + Sync` and `advance` takes `&self`.
+- `Platform::headless()` returns the platform and an `Arc<ManualClock>`: the application keeps the handle and moves time, the platform reads it. `IClock` is implemented for `Arc<C>` for that.
+- `Platform` has the clock and the threads for now; the file system and the window system join it in 2-3 and 2-4. `Caps` has `has_threads` only, for the same reason.
+- `contract::clock_contract` and `contract::threads_contract` take the implementation under test; they are compiled for the crate's own tests and for other crates behind the feature `contract-tests`. Each is itself tested against deliberately broken implementations.
+- `Caps` is derived from the ports (`IThreads::has_threads`), never stored, so the two cannot disagree; `Platform::new(clock, threads)` takes no caps. `StdThreads::new()` reads the system parallelism once, because the call can allocate; `spawn` refuses a name with a NUL byte (`InvalidPath`) instead of panicking.
+- The Headless platform has no threads (`NullThreads`): `spawn` returns `Unsupported`, `parallelism()` is 1.
+- Per-frame calls (`now`, `parallelism`, `caps`, manual `sleep` and `advance`) make no allocator call (counting-allocator test). `spawn` allocates by design: it runs at startup.

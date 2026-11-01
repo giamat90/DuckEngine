@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.55 (2026-11-01).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.57 (2026-11-01).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.57** - Platform ports, clock and threads (card 2-2): new crate `engine/platform` (layer 1) with `Platform`, `Caps`, `PlatformError`, `IClock` (integer nanosecond `Ticks`, `StdClock`, `ManualClock`), `IThreads` (`StdThreads`, `NullThreads`) and the contract suites; owner choices O1 to O8 recorded as accepted; section 10 added to [architecture/platform-ports](architecture/platform-ports.md).
 > - **v0.55** - Develop-branch workflow (card 2-9, owner decision, CI budget; governance): ordinary card PRs target the permanent branch `develop` (no CI there), `develop` merges into `main` only when the owner explicitly asks, with full CI, the owner's approval of the batch diff hash and a merge commit carrying `Release-Batch: <label>` (one minor release per batch); replaces the `phase/<n>` branches and the `Release-Phase` footer of cards 1-38 and 1-40. Delivery-pipeline, ci-diagrams, tooling-and-ci, board-management, the digest and `CLAUDE.md` updated.
 > - **v0.54** - Phase 2 started (branch `phase/2`, cut from `phase/1`): new page [architecture/platform-ports](architecture/platform-ports.md), design note of the platform port family v0 (clock, threads, virtual-mount file system, window and events, fixed-step frame loop, GLFW boundary, ARM64), with eight choices for the owner. Card 2-1.
 > - **v0.53** - Phase 1 exit audit (card 1-36): new page [spikes/phase1-exit-audit](spikes/phase1-exit-audit.md), coverage, mutation and Miri of the whole `base` crate against the digest section 7 gates, all four pass; five test gaps closed with tests (map, ring, sparse), two equivalent mutants recorded; core-runtime profiling section corrected.
