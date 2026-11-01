@@ -15,3 +15,9 @@ max_unsafe_lines = 10
 [[modules]]
 path = "engine/base/src/simd/sse2.rs"
 max_unsafe_lines = 16
+
+[[modules]]
+path = "engine/base/src/simd/neon.rs"
+max_unsafe_lines = 16
+# neon.rs lands with the phase 2 release; remove the next line in the PR after it has landed on main.
+pending = true
