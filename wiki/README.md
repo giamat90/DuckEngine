@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.54 (2026-11-01).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.64 (2026-11-01).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.64** - Linux GLFW CI job (card 2-11, governance): job `glfw_linux` of `ci` installs xvfb and the distribution `libglfw3` and runs the tests of `adapter_window_glfw` (window contract suite included) with `DUCK_REQUIRE_GLFW=1`; when the crate is not in the workspace yet (`main` behind `develop`) it reports "not run". ci-diagrams section 2 updated. Phase 2 exit criterion, Linux half of "platform contract suite green on both OSes".
 > - **v0.62** - Headless-only CI job (card 2-8, governance): job `headless` of `ci` builds and tests the workspace without `adapter_*` and `app_*` and fails when an excluded crate is still in the dependency graph; ci-diagrams section 2 updated. Phase 2 exit criterion "headless-only CI job green".
 > - **v0.54** - Develop-branch workflow (card 2-9, owner decision, CI budget; governance): ordinary card PRs target the permanent branch `develop` (no CI there), `develop` merges into `main` only when the owner explicitly asks, with full CI, the owner's approval of the batch diff hash and a merge commit carrying `Release-Batch: <label>` (one minor release per batch); replaces the `phase/<n>` branches and the `Release-Phase` footer of cards 1-38 and 1-40. Delivery-pipeline, ci-diagrams, tooling-and-ci, board-management, the digest and `CLAUDE.md` updated.
 > - **v0.53** - Phase 1 exit audit (card 1-36): new page [spikes/phase1-exit-audit](spikes/phase1-exit-audit.md), coverage, mutation and Miri of the whole `base` crate against the digest section 7 gates, all four pass; five test gaps closed with tests (map, ring, sparse), two equivalent mutants recorded; core-runtime profiling section corrected.

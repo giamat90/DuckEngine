@@ -317,3 +317,47 @@ jobs:
           fi
       - name: Build and test without adapters
         run: cargo test --workspace --exclude 'adapter_*' --exclude 'app_*' --locked
+
+  # Phase 2 exit criterion (card 2-11): the real GLFW adapter and the window contract suite on Linux. The
+  # windows are created without a graphics API, so a virtual X display (xvfb) is all it needs. GLFW comes
+  # from the distribution package (THIRD_PARTY.md: Linux from the distribution package); the library is
+  # loaded at run time (card 2-6). DUCK_REQUIRE_GLFW makes a missing library or display a failure, not a
+  # skipped test. `main` can be behind `develop`: when the crate is not in the workspace the job says so
+  # (a notice, "not run") instead of failing or passing silently. One Ubuntu job, on `main` and by hand.
+  glfw_linux:
+    name: GLFW adapter on Linux (xvfb)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain
+      - name: Find the adapter
+        id: adapter
+        run: |
+          set -euo pipefail
+          # Decided from the tree, not from cargo's exit code: once the crate folder exists, a cargo
+          # failure (a broken manifest, a missing toolchain) fails this step instead of passing as "absent".
+          if [ -d engine/adapter_window_glfw ]; then
+            cargo pkgid -p adapter_window_glfw > /dev/null
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::not run: adapter_window_glfw is not in this workspace yet"
+            echo "### GLFW on Linux: not run (adapter_window_glfw is not in this workspace yet)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Install xvfb and GLFW
+        if: steps.adapter.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb libglfw3
+          dpkg-query --show libglfw3
+      - name: Test the adapter under a virtual display
+        if: steps.adapter.outputs.present == 'true'
+        env:
+          DUCK_REQUIRE_GLFW: "1"
+        run: xvfb-run --auto-servernum cargo test -p adapter_window_glfw --locked -- --nocapture
