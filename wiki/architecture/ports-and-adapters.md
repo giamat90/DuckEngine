@@ -73,6 +73,8 @@ flowchart LR
 
 ## 3. The Platform port family (new in v0.2)
 
+The phase 2 shape of these ports (signatures, Null implementations, contract suites, the GLFW boundary) is proposed in [platform-ports](platform-ports.md).
+
 | Port | Responsibility | Notes for portability (later platforms are hypothetical, Q17) |
 |---|---|---|
 | `IVirtualMemory` | optional: reserve/commit/decommit pages (for arenas and strict memory budgets). **Declared in `base` (L0)** because allocators need it (dependency inversion), implemented in L3; allocation otherwise uses the standard allocator behind `IAllocator` (v0.6) | consoles/WASM budgets are hypothetical (Q17) |
