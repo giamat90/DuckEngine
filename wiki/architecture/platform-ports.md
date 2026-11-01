@@ -228,8 +228,8 @@ The GLFW window tests need a display. A job without one reports them as `not run
 
 ## 7. ARM64 and NEON
 
-- The NEON backend is a new backend inside `base`'s `simd` module, next to the scalar and SSE2 ones, behind `cfg(target_arch = "aarch64")`. It must be bit-identical to the scalar reference like the others. It needs an ARM64 test run to mean anything.
-- Whether GitHub Free gives a hosted ARM64 runner for a private repository is **not verified** ([github-plan-findings](../workflow/github-plan-findings.md)). Card 2-7 starts by finding out with a test run. If there is none, the NEON code is still written and compiled (cross-check build), and the test run is reported as `not run: device not set up`, as the owner's rule allows. The workflow change is governance.
+- The NEON backend is a new backend inside `base`'s `simd` module, next to the scalar and SSE2 ones, behind `cfg(target_arch = "aarch64")`. It must be bit-identical to the scalar reference like the others. It needs an ARM64 test run to mean anything: since card 2-10 the job `arm64` of `ci` provides it on real AArch64 hardware.
+- GitHub Free **does** serve a hosted ARM64 runner (`ubuntu-24.04-arm`) for this private repository (verified 2026-11-01, card 2-10, [github-plan-findings](../workflow/github-plan-findings.md)), so no emulator is used. The job is governance (CI workflow). If the label is ever withdrawn, the run is reported as `not run: runner unavailable`, never green.
 
 ## 8. How the cards follow from this
 
