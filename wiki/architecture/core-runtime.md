@@ -657,3 +657,29 @@ flowchart TD
   B1 --> U
   C1 --> U
 ```
+
+## Fixed-step accumulator (card 2-5)
+
+The `frame` crate (layer 2 glue, no dependencies of its own, its tests use `base`, reads no clock) holds `FixedStep`, the accumulator of the frame loop designed in [platform-ports](platform-ports.md) section 3. The application owns the loop and feeds the accumulator the ticks since the last frame; the accumulator answers how many fixed steps to run and how far into the next step the frame is.
+
+- **Integer ticks.** `FixedStep::new(step_ticks, max_steps)` takes `u64` ticks (for example nanoseconds). A zero step or zero `max_steps` is an error value, not a panic.
+- **`advance(frame_ticks) -> Steps { count, alpha, dropped }`.** `count` is at most `max_steps`. `alpha` is the leftover fraction of a step as a fixed-point `u32` (`remainder * 2^32 / step_ticks`, so `alpha / 2^32` is in `[0, 1)`), for render interpolation. `dropped` is the tick total of the whole steps the cap cut (`u128`, so even `u64::MAX` plus a remainder is exact).
+- **Stall cap.** After a long stall the surplus steps are not run later and not lost silently: they are reported in `dropped`. The sub-step remainder is kept.
+- **Conservation.** Per call, `old remainder + frame_ticks == count * step_ticks + dropped + new remainder`; the remainder stays below `step_ticks`. A property test over a seeded `Pcg32` checks this and the repeatability of the output; a test with a manual tick counter drives a headless loop; a counting-allocator test shows `advance` makes no allocator call.
+- **Determinism.** `advance` is a pure function of the accumulator and its argument (no float, no clock), so D0 and D1 hold by construction.
+
+```mermaid
+sequenceDiagram
+  participant App as application loop
+  participant F as FixedStep
+  participant Sim as simulation
+  participant R as render
+  App->>F: advance(frame_ticks)
+  F-->>App: Steps count, alpha, dropped
+  loop count times
+    App->>Sim: step(fixed dt)
+  end
+  App->>R: draw(alpha)
+  Note over F: remainder below step_ticks is carried to the next frame
+  Note over F: steps beyond max_steps are cut and reported in dropped
+```
