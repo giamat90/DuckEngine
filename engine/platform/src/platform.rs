@@ -6,6 +6,7 @@
 //! file system port joins the bundle in a later card.
 
 use crate::clock::{IClock, ManualClock, StdClock};
+use crate::files::IFileSystem;
 use crate::headless::{HeadlessWindows, ScriptHandle};
 use crate::threads::{IThreads, NullThreads, StdThreads};
 use crate::window::IWindowSystem;
@@ -18,6 +19,8 @@ pub struct Caps {
     pub has_threads: bool,
     /// Windows can be created.
     pub has_window: bool,
+    /// File reads run on a thread of their own.
+    pub has_background_io: bool,
 }
 
 /// The bundle of ports.
@@ -28,6 +31,8 @@ pub struct Platform {
     pub threads: Box<dyn IThreads>,
     /// The window system; none on a platform without one (for example the plain `std` platform).
     pub windows: Option<Box<dyn IWindowSystem>>,
+    /// The file system, when the application mounted one.
+    pub files: Option<Box<dyn IFileSystem>>,
 }
 
 impl Platform {
@@ -38,6 +43,7 @@ impl Platform {
             clock,
             threads,
             windows: None,
+            files: None,
         }
     }
 
@@ -71,12 +77,20 @@ impl Platform {
         (platform.with_windows(Box::new(windows)), clock, script)
     }
 
+    /// The bundle with `files` as its file system.
+    #[must_use]
+    pub fn with_files(mut self, files: Box<dyn IFileSystem>) -> Self {
+        self.files = Some(files);
+        self
+    }
+
     /// What this platform can do, read from the ports so it cannot disagree with them.
     #[must_use]
     pub fn caps(&self) -> Caps {
         Caps {
             has_threads: self.threads.has_threads(),
             has_window: self.windows.as_ref().is_some_and(|w| w.has_window()),
+            has_background_io: self.files.as_ref().is_some_and(|f| f.has_background_io()),
         }
     }
 }
@@ -86,6 +100,8 @@ mod tests {
     use super::*;
     use crate::clock::Ticks;
     use crate::error::PlatformError;
+    use crate::memory_files::MemoryFileSystem;
+    use crate::std_files::StdFileSystem;
 
     #[test]
     fn the_std_platform_has_threads_and_a_running_clock() {
@@ -119,6 +135,21 @@ mod tests {
         let mut queue = EventQueue::with_capacity(2);
         assert_eq!(windows.pump(&mut queue).delivered, 1);
         assert_eq!(queue.pop(), Some(Event::Quit));
+    }
+
+    #[test]
+    fn a_file_system_joins_the_bundle_and_shows_in_the_caps() {
+        let (platform, _) = Platform::headless();
+        assert!(platform.files.is_none());
+        assert!(!platform.caps().has_background_io);
+        let memory = platform.with_files(Box::new(MemoryFileSystem::new()));
+        assert!(memory.files.is_some());
+        assert!(
+            !memory.caps().has_background_io,
+            "memory reads run on the caller"
+        );
+        let std = Platform::std().with_files(Box::new(StdFileSystem::new()));
+        assert!(std.caps().has_background_io);
     }
 
     #[test]

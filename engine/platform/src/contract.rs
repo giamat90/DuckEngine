@@ -4,7 +4,9 @@
 
 use crate::clock::{IClock, Ticks};
 use crate::error::PlatformError;
+use crate::files::{IFileSystem, ReadId, ReadState};
 use crate::threads::IThreads;
+use crate::vpath::VPath;
 use crate::window::{Event, EventQueue, IWindowSystem, NativeToken, WindowDesc, WindowId};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -208,6 +210,157 @@ fn scripted_events(windows: &mut dyn IWindowSystem, feed: &mut dyn FnMut(Event),
     assert_eq!((result.delivered, result.dropped), (3, 0));
     let got: Vec<Event> = std::iter::from_fn(|| big.pop()).collect();
     assert_eq!(got, events[..3], "events must keep their order");
+}
+
+/// The path every file system under test must hold, with [`FIXTURE_BYTES`] as its content.
+pub const FIXTURE_PATH: &str = "test/hello.txt";
+
+/// The content of [`FIXTURE_PATH`].
+pub const FIXTURE_BYTES: &[u8] = b"hello, duck";
+
+/// A second path every file system under test must hold, with no content.
+pub const EMPTY_PATH: &str = "test/empty.txt";
+
+fn fixture() -> VPath {
+    VPath::new(FIXTURE_PATH).unwrap_or_else(|_| panic!("the fixture path is valid"))
+}
+
+fn empty() -> VPath {
+    VPath::new(EMPTY_PATH).unwrap_or_else(|_| panic!("the empty path is valid"))
+}
+
+fn missing() -> VPath {
+    VPath::new("test/missing.txt").unwrap_or_else(|_| panic!("the missing path is valid"))
+}
+
+/// Polls `id` until it is no longer pending, calling `pump` between polls.
+fn wait_for(fs: &dyn IFileSystem, id: ReadId, pump: &dyn Fn()) -> ReadState {
+    for _ in 0..200_000 {
+        let state = fs.read_poll(id);
+        if state != ReadState::Pending {
+            return state;
+        }
+        pump();
+        std::thread::sleep(std::time::Duration::from_micros(50));
+    }
+    panic!("a background read never finished");
+}
+
+/// File system contract. The file system holds [`FIXTURE_PATH`] with [`FIXTURE_BYTES`] and
+/// [`EMPTY_PATH`] with no bytes. `pump`
+/// is called while a background read is pending (the in-memory file system needs
+/// `complete_all`; the `std` one needs nothing). Proves: size and synchronous reads (exact,
+/// larger and too-small buffers, missing file), background reads (same bytes as the synchronous
+/// read, missing file ends `Failed(NotFound)`, too-small buffer ends `Failed(BufferTooSmall)`),
+/// an empty file, two reads in flight at once, the buffer length and the bytes past the file
+/// left as they were, and the end of a [`ReadId`] once its buffer is taken.
+///
+/// # Panics
+/// When the file system breaks the contract (this is test code).
+pub fn files_contract(fs: &dyn IFileSystem, pump: &dyn Fn()) {
+    synchronous_reads(fs);
+    background_read_matches(fs, pump);
+    background_read_errors(fs, pump);
+    read_ids_end_when_taken(fs, pump);
+    empty_and_overlapping_reads(fs, pump);
+}
+
+fn synchronous_reads(fs: &dyn IFileSystem) {
+    let len = FIXTURE_BYTES.len();
+    assert_eq!(fs.size(&fixture()), Ok(len as u64));
+    assert_eq!(fs.size(&missing()), Err(PlatformError::NotFound));
+    let mut exact = vec![0_u8; len];
+    assert_eq!(fs.read_into(&fixture(), &mut exact), Ok(len));
+    assert_eq!(exact, FIXTURE_BYTES);
+    let mut big = vec![0xAA_u8; len + 4];
+    assert_eq!(fs.read_into(&fixture(), &mut big), Ok(len));
+    assert_eq!(&big[..len], FIXTURE_BYTES);
+    assert_eq!(
+        &big[len..],
+        &[0xAA; 4],
+        "bytes past the file must stay untouched"
+    );
+    let mut small = vec![0_u8; len - 1];
+    let needed = len as u64;
+    assert_eq!(
+        fs.read_into(&fixture(), &mut small),
+        Err(PlatformError::BufferTooSmall { needed })
+    );
+    assert_eq!(
+        fs.read_into(&missing(), &mut big),
+        Err(PlatformError::NotFound)
+    );
+}
+
+fn background_read_matches(fs: &dyn IFileSystem, pump: &dyn Fn()) {
+    let len = FIXTURE_BYTES.len();
+    let started = fs.read_start(fixture(), vec![0_u8; len + 3].into_boxed_slice());
+    let id = started.unwrap_or_else(|e| panic!("read_start failed: {e}"));
+    assert_eq!(wait_for(fs, id, pump), ReadState::Done(len));
+    let buf = fs
+        .read_take(id)
+        .unwrap_or_else(|| panic!("finished read gave no buffer"));
+    assert_eq!(buf.len(), len + 3, "the buffer comes back whole");
+    assert_eq!(&buf[..len], FIXTURE_BYTES);
+    assert_eq!(
+        &buf[len..],
+        &[0; 3],
+        "bytes past the file must stay untouched"
+    );
+}
+
+fn background_read_errors(fs: &dyn IFileSystem, pump: &dyn Fn()) {
+    let started = fs.read_start(missing(), vec![0_u8; 8].into_boxed_slice());
+    let id = started.unwrap_or_else(|e| panic!("read_start failed: {e}"));
+    assert_eq!(
+        wait_for(fs, id, pump),
+        ReadState::Failed(PlatformError::NotFound)
+    );
+    assert!(
+        fs.read_take(id).is_some(),
+        "a failed read still returns the buffer"
+    );
+    let needed = FIXTURE_BYTES.len() as u64;
+    let small = vec![0_u8; 2].into_boxed_slice();
+    let id = fs
+        .read_start(fixture(), small)
+        .unwrap_or_else(|e| panic!("read_start failed: {e}"));
+    let expected = ReadState::Failed(PlatformError::BufferTooSmall { needed });
+    assert_eq!(wait_for(fs, id, pump), expected);
+    assert!(fs.read_take(id).is_some());
+}
+
+fn read_ids_end_when_taken(fs: &dyn IFileSystem, pump: &dyn Fn()) {
+    let buf = vec![0_u8; 16].into_boxed_slice();
+    let id = fs
+        .read_start(fixture(), buf)
+        .unwrap_or_else(|e| panic!("read_start failed: {e}"));
+    wait_for(fs, id, pump);
+    assert!(fs.read_take(id).is_some());
+    assert!(fs.read_take(id).is_none(), "a buffer can be taken once");
+    assert_eq!(fs.read_poll(id), ReadState::Failed(PlatformError::NotFound));
+}
+
+fn empty_and_overlapping_reads(fs: &dyn IFileSystem, pump: &dyn Fn()) {
+    assert_eq!(fs.size(&empty()), Ok(0));
+    assert_eq!(fs.read_into(&empty(), &mut []), Ok(0));
+    let len = FIXTURE_BYTES.len();
+    let start = |path: VPath, size: usize| {
+        let started = fs.read_start(path, vec![0x55_u8; size].into_boxed_slice());
+        started.unwrap_or_else(|e| panic!("read_start failed: {e}"))
+    };
+    let (first, second) = (start(fixture(), len), start(empty(), 4));
+    assert_ne!(first, second);
+    assert_eq!(wait_for(fs, second, pump), ReadState::Done(0));
+    assert_eq!(wait_for(fs, first, pump), ReadState::Done(len));
+    let second_buf = fs.read_take(second).unwrap_or_else(|| panic!("no buffer"));
+    let first_buf = fs.read_take(first).unwrap_or_else(|| panic!("no buffer"));
+    assert_eq!(
+        &second_buf[..],
+        &[0x55; 4],
+        "an empty file leaves the buffer as it was"
+    );
+    assert_eq!(&first_buf[..], FIXTURE_BYTES);
 }
 
 #[cfg(test)]

@@ -318,6 +318,52 @@ classDiagram
 - The Headless platform has no threads (`NullThreads`): `spawn` returns `Unsupported`, `parallelism()` is 1.
 - Per-frame calls (`now`, `parallelism`, `caps`, manual `sleep` and `advance`) make no allocator call (counting-allocator test). `spawn` allocates by design: it runs at startup.
 
+## 11. Implemented: file system (card 2-3)
+
+The file system port is in `engine/platform` (modules `vpath`, `files`, `std_files`, `memory_files`). Where this section and the sketch in 2.3 disagree, this section is the code.
+
+```mermaid
+classDiagram
+  class VPath {
+    +new(text) Result~VPath~
+    +strip_prefix(prefix) Option~str~
+  }
+  class IFileSystem {
+    <<port>>
+    +size(VPath) Result~u64~
+    +read_into(VPath, buf) Result~usize~
+    +read_start(VPath, Box buf) Result~ReadId~
+    +read_poll(ReadId) ReadState
+    +read_take(ReadId) Option~Box buf~
+    +has_background_io() bool
+  }
+  class StdFileSystem {
+    +mount_dir(prefix, dir)
+  }
+  class MemoryFileSystem {
+    +add_file(path, bytes)
+    +set_deferred(bool)
+    +complete_all()
+  }
+  class ReadState {
+    <<enum>>
+    Pending
+    Done(len)
+    Failed(PlatformError)
+  }
+  IFileSystem <|.. StdFileSystem
+  IFileSystem <|.. MemoryFileSystem
+  IFileSystem ..> VPath
+  IFileSystem ..> ReadState
+  StdFileSystem --> IoThread : one thread, started at the first read_start
+```
+
+- **Mounting is not in the trait.** A directory (`StdFileSystem::mount_dir`) and in-memory files (`MemoryFileSystem::add_file`) are mounted differently; reading is the common part and is what the contract proves. The longest matching prefix wins; an unmounted path is `NotFound`.
+- **Background reads take the buffer by value** (`Box<[u8]>`, allocated by the caller at load time) so the I/O thread fills it in safe code; `read_take` gives it back once the read is no longer pending, and ends the `ReadId`. A missing file or a too-small buffer is reported by `read_poll` (`Failed`), the buffer still comes back. At most 32 reads are in flight: the 33rd `read_start` is `QueueFull` and drops its path and buffer.
+- **Allocation:** `read_start` (path and buffer moved in), `read_poll` and `read_take` make no allocator call on the caller's thread (counting-allocator test, both implementations). The synchronous `size` and `read_into` of the `std` implementation go through `std::fs` and may allocate for the OS path: they are for load time.
+- **Memory implementation:** a read completes at the next `read_poll`; after `set_deferred(true)` it stays `Pending` until `complete_all()`, so tests can force both orders. `has_background_io` is false.
+- `Platform` gets `files: Option<Box<dyn IFileSystem>>` and `with_files`; `Caps::has_background_io` is derived from the port.
+
 ## 12. Implemented: window system (card 2-4)
 
 The window port, the event queue and the Headless window system are in `engine/platform` (modules `window` and `headless`). Where this section and the sketch in section 2.4 differ, this section is the code.
