@@ -85,12 +85,13 @@ pub fn threads_contract(threads: &dyn IThreads, supports_threads: bool) {
 
 const DESC: WindowDesc<'static> = WindowDesc {
     title: "contract-window",
-    width: 64,
-    height: 48,
+    width: 320,
+    height: 240,
 };
 
-/// Window contract, for a system that can create windows: create gives a window with the
-/// requested size and its own native token (never the null token); a zero width or height is
+/// Window contract, for a system that can create windows. The test window is 320 by 240, a size a
+/// real desktop honours (a smaller one is raised to the title bar's minimum). Create gives a window
+/// with the requested size and its own native token (never the null token); a zero width or height is
 /// `InvalidPath`; destroy works once and a stale id is `NotFound` for info, token and destroy
 /// (also after its slot is reused); repeated `pump` calls into a capacity-1 queue keep
 /// `len == len before + delivered` and never exceed the capacity. These checks need no scripted
@@ -136,14 +137,14 @@ fn window_lifecycle(windows: &mut dyn IWindowSystem) -> WindowId {
         panic!("two windows must fit");
     };
     let info = windows.window_info(a).ok();
-    assert_eq!(info.map(|i| (i.width, i.height)), Some((64, 48)));
+    assert_eq!(info.map(|i| (i.width, i.height)), Some((320, 240)));
     assert_ne!(
         windows.native_token(a),
         windows.native_token(b),
         "tokens must differ"
     );
     assert_ne!(windows.native_token(a), Ok(NativeToken::NULL), "null token");
-    for (width, height) in [(0, 48), (64, 0)] {
+    for (width, height) in [(0, 240), (320, 0)] {
         let empty = WindowDesc {
             width,
             height,

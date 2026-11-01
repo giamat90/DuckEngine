@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "adapter_window_glfw"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "platform",
+]
+
+[[package]]
 name = "app_runtime"
 version = "0.1.0"
 dependencies = [

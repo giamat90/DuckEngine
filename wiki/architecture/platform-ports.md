@@ -430,3 +430,57 @@ classDiagram
 - Gamepad events from the sketch are not in v0 (no device to test them against); text input is deferred, as in 2.4.
 - `contract::window_contract(windows, feed)` checks create, token (never null) and size, zero-size refusal, double destroy, stale ids for info, token and destroy (also after the slot is reused), repeated `pump` into a capacity-1 queue (`len == before + delivered`, never above capacity; this part needs no scripted events, so it also runs against a real adapter), and, when `feed` is given, order and drop accounting (weaker without `feed`). It is tested against deliberately broken systems (accepts a double destroy, hides drops, miscounts, accepts a zero-size window, cannot hold two windows, has no windows).
 - `pump`, `window_info`, `native_token` and `caps` make no allocator call (counting-allocator test); creating windows allocates in the pool at startup.
+
+## 13. Implemented: GLFW window adapter (card 2-6)
+
+The first real window system is the crate `engine/adapter_window_glfw` (layer 3). It implements `IWindowSystem` for Windows and Linux and nothing else; clock, threads and files stay `std`. Where this section and section 6 differ, this section is the code.
+
+```mermaid
+classDiagram
+    class IWindowSystem {
+        <<trait, platform>>
+        create_window()
+        destroy_window()
+        window_info()
+        native_token()
+        pump()
+    }
+    class GlfwWindows {
+        ids Pool
+        slots Vec~Option~Window~~
+        live Vec
+        api Api
+        load(path, max)
+        load_default(max)
+    }
+    class Api {
+        function pointers
+        create_window()
+        poll(sink)
+    }
+    class Library {
+        <<dynlib>>
+        open(path)
+        symbol(name)
+    }
+    class Sink {
+        queue EventQueue
+        windows live list
+        delivered, dropped
+    }
+    IWindowSystem <|.. GlfwWindows
+    GlfwWindows *-- Api
+    Api *-- Library
+    Api ..> Sink : callbacks fill, only during poll
+```
+
+- **O3 decided by the owner: (c), load at run time.** `dynlib` is the loader (`LoadLibraryExW` / `dlopen`); `glfw` looks up the functions it needs (18, plus `glfwGetVersion` and the native window getter) by name. On Windows a bare name is searched in the application folder and System32 only, never the current directory or `PATH`; the variable and a path given to `load` name any file and are as trusted as the command line (use a full path). The build needs no C compiler and no GLFW header. The program needs the library: next to it, on the search path, or named by the environment variable `DUCK_GLFW_LIB`. A missing library is `PlatformError::NotFound`, an older one than 3.3 is `Unsupported`, a failing `glfwInit` (no display) is `Io`. The pins and hashes are in `THIRD_PARTY.md`; the binaries are not in git.
+- **Events by callback, delivered by pull.** GLFW reports input through callbacks, which GLFW calls on the polling thread during `glfwPollEvents`. `pump` puts a `Sink` (the caller's `EventQueue`, the list of live windows, two counters) in a thread-local cell for the length of the poll; the callbacks find it there, turn the GLFW event into a port `Event` and push it, counting drops. Outside a poll the cell is empty and a callback does nothing. No GLFW window user pointer and no global state outlive the call.
+- **A `Window` cannot be used after it is destroyed**: `destroy_window` takes it by value. GLFW keeps global state and is not thread safe: a process-wide flag allows one `GlfwWindows` at a time (a second `load` is `QueueFull`), and it is used from one thread (the type is not `Send`, on purpose). Only events raised inside `pump` are queued; a callback during `create_window` or `destroy_window` is ignored, and on Windows `pump` can stay inside GLFW while the user drags a window.
+- **No graphics context**: windows are created with `GLFW_NO_API`. The render adapter makes its own context or swapchain from `native_token` (the `HWND`, or the X11 window id). Under Wayland GLFW has no such window and `native_token` is `Unsupported`.
+- **Unsafe**: 55 lines in all, counted by `tools/unsafe-budget` over the engine crates (it covers layers 0 to 2 only, so the two adapter files `dynlib.rs` and `glfw.rs` are not on its allowlist and not part of its ratio). Section 6 said the budget file needs a governance step for this module; the gate does not read adapters, so no protected file was changed. Extending G3 to adapters would be a separate governance card.
+- **Tests**: callbacks are called by hand in unit tests (no display). Against the real library: the contract suite, capacity, one-instance, token, real resize and, on Windows, a real close click (posted with `PostMessageW`, delivered by `pump` for the right window, the window really gone after destroy) and the counting-allocator test. Without the library or a display they print `not run: device not set up` and return; they are not counted as a green run of the adapter. With `DUCK_REQUIRE_GLFW=1` a missing device fails them instead, for a job that is meant to have one.
+- **Linux** is type- and lint-checked (`cargo clippy --target x86_64-unknown-linux-gnu`) but not run; the Linux-only code (`dlopen`, `glfwGetX11Window`) has no test result yet. Windows and 64-bit Linux only (`compile_error!` elsewhere).
+- **Contract change found by the real adapter**: the contract asked for a 64 by 48 window; Windows raises the width of a window to the minimum of its title bar (120), so the test window is now 320 by 240.
+- Per-frame calls (`pump`, `window_info`, `native_token`) make no allocator call on the Rust side (counting allocator); GLFW's own C allocations are outside that count.
+
