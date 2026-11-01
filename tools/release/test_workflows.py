@@ -258,6 +258,48 @@ class Ci(unittest.TestCase):
         self.assertIn(test, build)
         self.assertLess(build.index("cargo test --workspace --locked"), build.index(test))
 
+    def test_the_headless_job_builds_and_tests_without_any_adapter_or_application_crate(self):
+        # Phase 2 exit criterion (card 2-8): the engine must build and pass its tests with no real OS, GPU
+        # or audio adapter present; excluded crates must also be absent from the dependency graph.
+        job = CI[CI.index("\n  headless:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)  # the next job key, if a job is ever added after this one
+        job = job[:following.start()] if following else job
+        self.assertIn("runs-on: ubuntu-latest", job)
+        self.assertNotIn("matrix", job)
+        self.assertIn("--exclude 'adapter_*' --exclude 'app_*'", job)
+        self.assertIn("cargo test --workspace --exclude 'adapter_*' --exclude 'app_*' --locked", job)
+        # Every target and every feature, not only the runner's: a Windows-only or optional dependency counts.
+        self.assertIn("cargo tree --workspace --exclude 'adapter_*' --exclude 'app_*' --locked --target all "
+                      "--all-features --edges normal,build,dev", job)
+        self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
+        self.assertNotIn("continue-on-error", job)
+        self.assertNotRegex(job, r"(?m)^\s+if:")
+
+    def test_the_glfw_linux_job_runs_the_real_adapter_under_a_virtual_display(self):
+        # Phase 2 exit criterion (card 2-11): the window contract on Linux with the real GLFW library.
+        job = CI[CI.index("\n  glfw_linux:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        job = job[:following.start()] if following else job
+        self.assertIn("runs-on: ubuntu-latest", job)
+        self.assertNotIn("matrix", job)
+        self.assertIn("xvfb libglfw3", job)
+        self.assertIn('DUCK_REQUIRE_GLFW: "1"', job)
+        self.assertIn("xvfb-run --auto-servernum cargo test -p adapter_window_glfw --locked", job)
+        self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
+        self.assertNotIn("continue-on-error", job)
+
+    def test_the_glfw_linux_job_says_so_when_the_adapter_is_not_in_the_workspace_yet(self):
+        # `main` may be behind `develop`: a missing crate is reported, never silently green.
+        job = CI[CI.index("\n  glfw_linux:") + 1:]
+        # Presence is decided from the tree; once the crate folder exists a cargo failure (a broken manifest)
+        # fails the job instead of passing as "absent".
+        self.assertIn("if [ -d engine/adapter_window_glfw ]; then", job)
+        self.assertIn("cargo pkgid -p adapter_window_glfw > /dev/null", job)
+        self.assertNotIn("pkgid -p adapter_window_glfw > /dev/null 2>&1", job)
+        self.assertIn("::notice::not run: adapter_window_glfw is not in this workspace yet", job)
+        self.assertIn('>> "$GITHUB_STEP_SUMMARY"', job)
+        self.assertEqual(job.count("if: steps.adapter.outputs.present == 'true'"), 2)
+
     def test_ci_runs_the_tests_of_every_tool_folder(self):
         for folder, module in (("tools/templates", "test_templates"), ("tools/token-probe", "test_probe"),
                                ("tools/local-gates", "test_local_gates"),

@@ -42,11 +42,11 @@ flowchart LR
 
 ## 2. Jobs of the `ci` workflow
 
-Source: `.github/workflows/ci.yml`. Four independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
+Source: `.github/workflows/ci.yml`. Six independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
 
 ```mermaid
 flowchart TB
-  start(["push"]) --> g1 & gates & metrics & deny
+  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux
 
   subgraph g1["g1: build, test, fmt, clippy (Windows and Ubuntu)"]
     direction TB
@@ -79,7 +79,18 @@ flowchart TB
     d1["cargo-deny: licences, bans, sources, advisories"]
   end
 
-  g1 & gates & metrics & deny --> done(["all green = the commit may merge"])
+  subgraph headless["headless (Ubuntu): no adapter, no application crate (card 2-8)"]
+    direction TB
+    h1["cargo tree (all targets, all features) without adapter_* and app_*: none of them in the graph"] --> h2["cargo test --workspace --exclude adapter_* --exclude app_*"]
+  end
+
+  subgraph glfw_linux["glfw_linux (Ubuntu, card 2-11): the real GLFW adapter under a virtual display"]
+    direction TB
+    l1{"adapter_window_glfw in the workspace?"} -- no --> l2["notice: not run, adapter not in this workspace yet"]
+    l1 -- yes --> l3["apt: xvfb, libglfw3"] --> l4["xvfb-run cargo test -p adapter_window_glfw, DUCK_REQUIRE_GLFW=1"]
+  end
+
+  g1 & gates & metrics & deny & headless & glfw_linux --> done(["all green = the commit may merge"])
 ```
 
 ---

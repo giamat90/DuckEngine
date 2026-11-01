@@ -1,9 +1,11 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.63 (2026-11-01).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.64 (2026-11-01).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.64** - Linux GLFW CI job (card 2-11, governance): job `glfw_linux` of `ci` installs xvfb and the distribution `libglfw3` and runs the tests of `adapter_window_glfw` (window contract suite included) with `DUCK_REQUIRE_GLFW=1`; when the crate is not in the workspace yet (`main` behind `develop`) it reports "not run". ci-diagrams section 2 updated. Phase 2 exit criterion, Linux half of "platform contract suite green on both OSes".
 > - **v0.63** - NEON `simd` backend (card 2-7, governance step: `gates/unsafe-budget.toml` entry for `simd/neon.rs`): `neon::F32x4` behind `aarch64` with `neon`, same operations and tests as `sse2`, `min`/`max` as compare-and-select; cross-compiled and linted, not run on an AArch64 CPU; core-runtime and platform-ports updated.
+> - **v0.62** - Headless-only CI job (card 2-8, governance): job `headless` of `ci` builds and tests the workspace without `adapter_*` and `app_*` and fails when an excluded crate is still in the dependency graph; ci-diagrams section 2 updated. Phase 2 exit criterion "headless-only CI job green".
 > - **v0.61** - GLFW window adapter (card 2-6, owner choice O3 (c): loaded at run time): new crate `engine/adapter_window_glfw` (layer 3) with `GlfwWindows` implementing `IWindowSystem`, a hand-written binding of the GLFW C API and a loader for `glfw3.dll` / `libglfw.so.3`; `THIRD_PARTY.md` GLFW row now in tree (3.4, hashes); the window contract uses a 320 by 240 test window; section 13 added to [architecture/platform-ports](architecture/platform-ports.md).
 > - **v0.60** - Platform ports, file system (card 2-3): `VPath`, `IFileSystem` (read-only, caller-owned buffers, polled background reads with a `ReadId`), `StdFileSystem` (mounted directories, one I/O thread) and `MemoryFileSystem` (Null), contract suite; `Platform::with_files`; section 11 added to [architecture/platform-ports](architecture/platform-ports.md).
 > - **v0.59** - Window system (card 2-4): `IWindowSystem`, `EventQueue` (fixed-capacity ring, drops reported), `Event`, `WindowId`, `HeadlessWindows` with a `ScriptHandle`, `Caps::has_window`, `Platform::with_windows` and `headless_windows`, contract suite `window_contract`; section 12 added to [architecture/platform-ports](architecture/platform-ports.md).
