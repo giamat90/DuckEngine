@@ -240,7 +240,7 @@ The GLFW window tests need a display. A job without one reports them as `not run
 | 2-4 | `IWindowSystem`, `Event`, `EventQueue`, Headless platform with scripted events, contract suite | 2 |
 | 2-5 | `FixedStep` in `frame` | 2 |
 | 2-6 | `adapter_window_glfw`, hand-written binding, `THIRD_PARTY.md` entry, unsafe budget | 2, with a governance step |
-| 2-7 | NEON backend and the ARM64 job | 3 (workflow) |
+| 2-7 | NEON backend (the ARM64 CI job moved to 2-10, the Linux GLFW CI run is 2-11) | 2, with a governance step (unsafe budget entry) |
 | 2-8 | headless-only and banned-import CI jobs | 3 (workflow) |
 
 ```mermaid
