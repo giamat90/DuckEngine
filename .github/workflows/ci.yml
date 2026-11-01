@@ -289,3 +289,31 @@ jobs:
           echo "$RUNNER_TEMP/${{ matrix.asset }}" >> "$GITHUB_PATH"
       - name: Check
         run: cargo deny --locked check
+
+  # Phase 2 exit criterion (card 2-8): the engine builds and passes its tests with no real OS, GPU or audio
+  # adapter and no application crate present, only the Null and Headless implementations. `--exclude` alone
+  # would still build an adapter that an engine crate depends on, so the first step also fails when an
+  # excluded crate appears in the dependency graph of any target and any feature. One Linux job: the property is the same on every
+  # OS, and Windows would bill double. (The banned-import and layering rules run in `gates`.)
+  headless:
+    name: headless-only build and test (no adapters)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain
+      - name: No adapter or application crate in the headless graph
+        run: |
+          set -euo pipefail
+          cargo tree --workspace --exclude 'adapter_*' --exclude 'app_*' --locked --target all --all-features --edges normal,build,dev --prefix none --format '{p}' > "$RUNNER_TEMP/headless-graph.txt"
+          test -s "$RUNNER_TEMP/headless-graph.txt"
+          if grep -E '^(adapter_|app_)' "$RUNNER_TEMP/headless-graph.txt"; then
+            echo "::error::an engine crate needs an adapter or application crate"
+            exit 1
+          fi
+      - name: Build and test without adapters
+        run: cargo test --workspace --exclude 'adapter_*' --exclude 'app_*' --locked

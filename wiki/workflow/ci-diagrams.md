@@ -42,11 +42,11 @@ flowchart LR
 
 ## 2. Jobs of the `ci` workflow
 
-Source: `.github/workflows/ci.yml`. Four independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
+Source: `.github/workflows/ci.yml`. Five independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
 
 ```mermaid
 flowchart TB
-  start(["push"]) --> g1 & gates & metrics & deny
+  start(["push"]) --> g1 & gates & metrics & deny & headless
 
   subgraph g1["g1: build, test, fmt, clippy (Windows and Ubuntu)"]
     direction TB
@@ -79,7 +79,12 @@ flowchart TB
     d1["cargo-deny: licences, bans, sources, advisories"]
   end
 
-  g1 & gates & metrics & deny --> done(["all green = the commit may merge"])
+  subgraph headless["headless (Ubuntu): no adapter, no application crate (card 2-8)"]
+    direction TB
+    h1["cargo tree (all targets, all features) without adapter_* and app_*: none of them in the graph"] --> h2["cargo test --workspace --exclude adapter_* --exclude app_*"]
+  end
+
+  g1 & gates & metrics & deny & headless --> done(["all green = the commit may merge"])
 ```
 
 ---

@@ -258,6 +258,23 @@ class Ci(unittest.TestCase):
         self.assertIn(test, build)
         self.assertLess(build.index("cargo test --workspace --locked"), build.index(test))
 
+    def test_the_headless_job_builds_and_tests_without_any_adapter_or_application_crate(self):
+        # Phase 2 exit criterion (card 2-8): the engine must build and pass its tests with no real OS, GPU
+        # or audio adapter present; excluded crates must also be absent from the dependency graph.
+        job = CI[CI.index("\n  headless:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)  # the next job key, if a job is ever added after this one
+        job = job[:following.start()] if following else job
+        self.assertIn("runs-on: ubuntu-latest", job)
+        self.assertNotIn("matrix", job)
+        self.assertIn("--exclude 'adapter_*' --exclude 'app_*'", job)
+        self.assertIn("cargo test --workspace --exclude 'adapter_*' --exclude 'app_*' --locked", job)
+        # Every target and every feature, not only the runner's: a Windows-only or optional dependency counts.
+        self.assertIn("cargo tree --workspace --exclude 'adapter_*' --exclude 'app_*' --locked --target all "
+                      "--all-features --edges normal,build,dev", job)
+        self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
+        self.assertNotIn("continue-on-error", job)
+        self.assertNotRegex(job, r"(?m)^\s+if:")
+
     def test_ci_runs_the_tests_of_every_tool_folder(self):
         for folder, module in (("tools/templates", "test_templates"), ("tools/token-probe", "test_probe"),
                                ("tools/local-gates", "test_local_gates"),
