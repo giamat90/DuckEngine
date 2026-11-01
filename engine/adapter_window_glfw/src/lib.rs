@@ -277,6 +277,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     fn token_of(windows: &GlfwWindows, id: WindowId) -> u64 {
         windows.native_token(id).map_or(0, |t| t.0)
     }
