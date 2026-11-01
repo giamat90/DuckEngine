@@ -1,6 +1,6 @@
 """Run the local gates of a card in one command (card 1-39).
 
-Under the phase-branch workflow (delivery-pipeline) the evidence for an ordinary card is a local gate run,
+Under the develop-branch workflow (delivery-pipeline) the evidence for an ordinary card is a local gate run,
 because `ci` no longer runs on every branch push. This runs the same commands as `ci`: Rust format, Clippy and
 tests, the gate tools on the working tree, the unit tests of every Python tool, cargo-deny when installed, the
 diff hash, and with --wsl the Linux test run through WSL. Every step runs; the exit code is 1 if one failed.
@@ -8,7 +8,7 @@ diff hash, and with --wsl the Linux test run through WSL. Every step runs; the e
     local_gates.py [--repo .] [--base origin/main] [--wsl] [--list]
 
 Not run locally (reported at the end): Miri, coverage, mutation, benchmarks, the metrics jobs. They run in the
-`ci` checkpoints and in the phase PR. The gate tools here run from the working tree, not from a trusted
+`ci` checkpoints and in the develop-to-main PR. The gate tools here run from the working tree, not from a trusted
 checkout of `main`: the CI run keeps that guarantee, this one is the early warning.
 """
 
@@ -136,7 +136,7 @@ def _execute_in(repo):
 def main(argv, print_line=print):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", type=Path, default=Path("."))
-    parser.add_argument("--base", default="origin/main", help="base of the diff hash (origin/phase/N for a card in a phase branch)")
+    parser.add_argument("--base", default="origin/main", help="base of the diff hash (origin/develop for an ordinary card)")
     parser.add_argument("--wsl", action="store_true", help="also run the tests on Linux through WSL")
     parser.add_argument("--list", action="store_true", help="print the plan and stop")
     args = parser.parse_args(argv)

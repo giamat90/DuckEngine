@@ -51,7 +51,7 @@ class Release(unittest.TestCase):
         # pull-requests: read is only for the squash-subject check (card 0b-8).
         self.assertRegex(RELEASE, r"(?m)^permissions:\n  contents: write\n  pull-requests: read\n(?!  )")
 
-    def test_a_phase_merge_is_checked_for_its_footer_before_anything_is_built(self):
+    def test_a_develop_merge_is_checked_for_its_footer_before_anything_is_built(self):
         footer = RELEASE.find("check_squash_subject.py footer")
         self.assertGreater(footer, -1)
         self.assertLess(footer, RELEASE.find("make_assets.py"))
@@ -114,14 +114,16 @@ class PullRequestTitle(unittest.TestCase):
     def test_title_is_checked_again_after_an_edit(self):
         self.assertIn("edited", PR_TITLE)
 
-    def test_checks_out_main_not_the_pr_tree_and_not_a_phase_branch_base(self):
+    def test_checks_out_main_not_the_pr_tree_and_not_the_base_branch(self):
         self.assertRegex(PR_TITLE, r"(?m)^          ref: main$")
         self.assertNotIn("pull_request.base", PR_TITLE)
         self.assertNotIn("pull_request.head.sha", PR_TITLE)
 
-    def test_a_phase_pr_is_checked_for_its_release_footer(self):
-        self.assertIn("startsWith(github.event.pull_request.head.ref, 'phase/')", PR_TITLE)
-        self.assertIn("check_squash_subject.py footer --phase-only", PR_TITLE)
+    def test_a_develop_pr_is_checked_for_its_release_footer(self):
+        self.assertIn("github.event.pull_request.head.ref == 'develop'", PR_TITLE)
+        # A fork's branch named develop is not a release PR.
+        self.assertIn("github.event.pull_request.head.repo.full_name == github.repository", PR_TITLE)
+        self.assertIn("check_squash_subject.py footer --batch-only", PR_TITLE)
         self.assertIn("HEAD_REF: ${{ github.event.pull_request.head.ref }}", PR_TITLE)
         for block in run_blocks(PR_TITLE):
             self.assertNotIn("${{", block)
@@ -234,7 +236,7 @@ class TrustedPrGates(unittest.TestCase):
 
 class Ci(unittest.TestCase):
     def test_ci_runs_only_on_main_and_on_demand_not_on_every_branch_push(self):
-        # Phase-branch workflow (card 1-38): a branch push must not spend minutes; the agent starts
+        # Develop-branch workflow (cards 1-38, 2-9): a branch push must not spend minutes; the agent starts
         # one run on the exact commit to approve (`gh workflow run ci.yml --ref <branch>`).
         self.assertRegex(CI, r"(?m)^on:\n  push:\n    branches: \[main\]\n  workflow_dispatch:\n")
         self.assertNotIn("pull_request", CI.split("\npermissions:")[0])

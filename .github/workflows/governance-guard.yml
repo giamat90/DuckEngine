@@ -2,7 +2,7 @@ name: governance-guard
 
 # A PR that changes a protected path (gates/protected-paths.txt) must declare a
 # governance task in its description. The tool and the list come from main (also
-# for a PR into a phase branch); the PR tree is checked out as data only and never executed.
+# for a PR into develop); the PR tree is checked out as data only and never executed.
 on:
   pull_request:
     types: [opened, edited, reopened, synchronize]

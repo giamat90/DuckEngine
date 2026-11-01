@@ -10,7 +10,7 @@ Feed it the messages of the commits since the last release, separated by NUL:
 A BREAKING CHANGE footer counts when it starts a line of the body; a footer
 quoted in prose on its own line is not told apart from a real one.
 
-A `Release-Phase: <n>` footer (a phase merge, card 1-38) bumps at least the minor number.
+A `Release-Batch: <label>` footer (the merge of `develop` into `main`, cards 1-38 and 2-9) bumps at least the minor number.
 """
 
 import argparse
@@ -21,8 +21,8 @@ EXIT_BAD_VERSION = 2
 ORDER = ("patch", "minor", "major")
 HEADER = re.compile(r"(?P<type>[A-Za-z]+)(\([^)\n]+\))?(?P<bang>!)?:[ \t]+\S")
 BREAKING_FOOTER = re.compile(r"^BREAKING[ -]CHANGE: ", re.MULTILINE)
-# The merge commit of a phase branch carries `Release-Phase: <n>`: that merge is the one minor bump of the phase.
-PHASE_FOOTER = re.compile(r"^Release-Phase: \S", re.MULTILINE)
+# The merge commit of `develop` carries `Release-Batch: <label>`: that merge is the one minor bump of the batch.
+BATCH_FOOTER = re.compile(r"^Release-Batch: \S", re.MULTILINE)
 VERSION = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 
 
@@ -49,12 +49,12 @@ def next_version(current, messages):
         raise ValueError(f"not a plain X.Y.Z version: {current!r}")
     major, minor, patch = (int(part) for part in parsed.groups())
     bump = highest_level(messages)
-    phase = any(PHASE_FOOTER.search(message) for message in messages)
+    batch = any(BATCH_FOOTER.search(message) for message in messages)
     if major == 0:
-        # Pre-1.0: a break or a phase merge moves the minor number, everything else the patch number.
-        bump = "minor" if bump == "major" or phase else "patch"
-    elif phase and bump == "patch":
-        bump = "minor"  # after 1.0 a feature is already minor; a phase merge is at least minor
+        # Pre-1.0: a break or a batch merge moves the minor number, everything else the patch number.
+        bump = "minor" if bump == "major" or batch else "patch"
+    elif batch and bump == "patch":
+        bump = "minor"  # after 1.0 a feature is already minor; a batch merge is at least minor
     if bump == "major":
         return f"{major + 1}.0.0"
     if bump == "minor":

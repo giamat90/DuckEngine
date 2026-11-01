@@ -5,10 +5,10 @@ squash message, so the release workflow compares it with the PR title.
 
     check_squash_subject.py number --subject "<subject>"      prints the PR number
     check_squash_subject.py check --subject S --title T       exits 1 on a mismatch
-    check_squash_subject.py footer --head-ref R --message M   exits 1 on a wrong Release-Phase footer
+    check_squash_subject.py footer --head-ref R --message M   exits 1 on a wrong Release-Batch footer
 
-A phase merge (head branch phase/<n>) must carry exactly one `Release-Phase: <n>` footer, because next_version.py
-turns it into the one minor bump of the phase (card 1-38); any other merge must not carry it (card 1-40).
+A release merge (head branch `develop`) must carry exactly one `Release-Batch: <label>` footer, because next_version.py
+turns it into the one minor bump of the batch (cards 1-38, 2-9); any other merge must not carry it (card 1-40).
 """
 
 import argparse
@@ -18,9 +18,9 @@ import sys
 import check_pr_title
 
 NUMBER = re.compile(r".* \(#([1-9][0-9]*)\)")
-PHASE_BRANCH = re.compile(r"phase/([1-9][0-9]*)")
-ANY_FOOTER = re.compile(r"^Release-Phase: \S", re.MULTILINE)  # the line next_version.py reads
-FOOTER = re.compile(r"^Release-Phase: (\S+)[ \t\r]*$", re.MULTILINE)
+RELEASE_BRANCH = "develop"
+ANY_FOOTER = re.compile(r"^Release-Batch: \S", re.MULTILINE)  # the line next_version.py reads
+FOOTER = re.compile(r"^Release-Batch: (\S+)[ \t\r]*$", re.MULTILINE)
 
 
 def pr_number(subject):
@@ -39,17 +39,16 @@ def problems(subject, title):
     return found
 
 
-def footer_problems(head_ref, message, phase_only=False):
-    """Problems with the Release-Phase footer of `message` for a merge of branch `head_ref`."""
+def footer_problems(head_ref, message, batch_only=False):
+    """Problems with the Release-Batch footer of `message` for a merge of branch `head_ref`."""
     footers = FOOTER.findall(message)
     lines = len(ANY_FOOTER.findall(message))  # a line the strict form misses still bumps the version
-    branch = PHASE_BRANCH.fullmatch(head_ref)
-    if branch is None:
-        if lines and not phase_only:
-            return [f"Release-Phase footer on a merge of '{head_ref}', which is not a phase branch"]
+    if head_ref != RELEASE_BRANCH:
+        if lines and not batch_only:
+            return [f"Release-Batch footer on a merge of '{head_ref}', which is not the release branch '{RELEASE_BRANCH}'"]
         return []
-    if lines != 1 or footers != [branch.group(1)]:
-        return [f"merge of '{head_ref}' needs exactly one footer 'Release-Phase: {branch.group(1)}', found {footers or 'none'}"]
+    if lines != 1 or len(footers) != 1:
+        return [f"merge of '{head_ref}' needs exactly one footer 'Release-Batch: <label>', found {footers or 'none'}"]
     return []
 
 
@@ -60,16 +59,16 @@ def main(argv, print_line=print):
     parser.add_argument("--title")
     parser.add_argument("--head-ref")
     parser.add_argument("--message")
-    parser.add_argument("--phase-only", action="store_true", help="footer: ignore branches that are not phase branches")
+    parser.add_argument("--batch-only", action="store_true", help="footer: ignore branches other than the release branch")
     args = parser.parse_args(argv)
     if args.mode == "footer":
         if args.head_ref is None or args.message is None:
             parser.error("footer needs --head-ref and --message")
-        found = footer_problems(args.head_ref, args.message, args.phase_only)
+        found = footer_problems(args.head_ref, args.message, args.batch_only)
         for problem in found:
             print_line(f"FAIL {problem}")
         if not found:
-            print_line("OK Release-Phase footer is right for this merge")
+            print_line("OK Release-Batch footer is right for this merge")
         return 1 if found else 0
     if args.subject is None:
         parser.error(f"{args.mode} needs --subject")

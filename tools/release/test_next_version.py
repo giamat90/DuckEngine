@@ -91,22 +91,22 @@ class NextVersion(unittest.TestCase):
     def test_docs_only_merge_bumps_patch(self):
         self.assertEqual(next_version.next_version("0.4.7", ["docs: a"]), "0.4.8")
 
-    def test_a_phase_footer_bumps_the_minor_number_before_1_0(self):
-        merge = "feat(phase-1): phase 1 (#80)\n\nRelease-Phase: 1\n"
+    def test_a_batch_footer_bumps_the_minor_number_before_1_0(self):
+        merge = "feat(develop): batch p1 (#80)\n\nRelease-Batch: p1\n"
         self.assertEqual(next_version.next_version("0.1.9", ["feat: a", merge]), "0.2.0")
 
-    def test_a_phase_footer_alone_is_enough(self):
-        self.assertEqual(next_version.next_version("0.1.9", ["docs: a\n\nRelease-Phase: 2"]), "0.2.0")
+    def test_a_batch_footer_alone_is_enough(self):
+        self.assertEqual(next_version.next_version("0.1.9", ["docs: a\n\nRelease-Batch: p2"]), "0.2.0")
 
-    def test_a_phase_footer_inside_a_line_is_not_a_footer(self):
-        self.assertEqual(next_version.next_version("0.1.9", ["docs: say Release-Phase: 1 in prose"]), "0.1.10")
+    def test_a_batch_footer_inside_a_line_is_not_a_footer(self):
+        self.assertEqual(next_version.next_version("0.1.9", ["docs: say Release-Batch: p1 in prose"]), "0.1.10")
 
-    def test_a_phase_footer_needs_a_value(self):
-        self.assertEqual(next_version.next_version("0.1.9", ["docs: a\n\nRelease-Phase: "]), "0.1.10")
+    def test_a_batch_footer_needs_a_value(self):
+        self.assertEqual(next_version.next_version("0.1.9", ["docs: a\n\nRelease-Batch: "]), "0.1.10")
 
-    def test_a_phase_footer_is_at_least_minor_after_1_0_and_never_beats_a_break(self):
-        self.assertEqual(next_version.next_version("1.4.2", ["fix: a\n\nRelease-Phase: 3"]), "1.5.0")
-        self.assertEqual(next_version.next_version("1.4.2", ["fix!: a", "docs: b\n\nRelease-Phase: 3"]), "2.0.0")
+    def test_a_batch_footer_is_at_least_minor_after_1_0_and_never_beats_a_break(self):
+        self.assertEqual(next_version.next_version("1.4.2", ["fix: a\n\nRelease-Batch: p3"]), "1.5.0")
+        self.assertEqual(next_version.next_version("1.4.2", ["fix!: a", "docs: b\n\nRelease-Batch: p3"]), "2.0.0")
 
     def test_bad_current_version_is_rejected(self):
         for current in ("", "1.2", "v1.2.3", "1.2.3-rc1", "a.b.c", "1.2.3\n", "01.2.3"):

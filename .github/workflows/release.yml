@@ -41,7 +41,7 @@ jobs:
           number=$(python tools/release/check_squash_subject.py number --subject="$subject")
           title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number" --jq .title)
           python tools/release/check_squash_subject.py check --subject="$subject" --title="$title"
-          # A phase merge carries Release-Phase: <n> (one minor bump per phase), any other merge does not (card 1-40).
+          # The merge of develop carries Release-Batch: <label> (one minor bump per batch), any other merge does not (cards 1-40, 2-9).
           head_ref=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number" --jq .head.ref)
           python tools/release/check_squash_subject.py footer --head-ref="$head_ref" --message="$(git log -1 --format=%B)"
       - name: Build the assets
