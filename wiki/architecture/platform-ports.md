@@ -480,7 +480,22 @@ classDiagram
 - **No graphics context**: windows are created with `GLFW_NO_API`. The render adapter makes its own context or swapchain from `native_token` (the `HWND`, or the X11 window id). Under Wayland GLFW has no such window and `native_token` is `Unsupported`.
 - **Unsafe**: 55 lines in all, counted by `tools/unsafe-budget` over the engine crates (it covers layers 0 to 2 only, so the two adapter files `dynlib.rs` and `glfw.rs` are not on its allowlist and not part of its ratio). Section 6 said the budget file needs a governance step for this module; the gate does not read adapters, so no protected file was changed. Extending G3 to adapters would be a separate governance card.
 - **Tests**: callbacks are called by hand in unit tests (no display). Against the real library: the contract suite, capacity, one-instance, token, real resize and, on Windows, a real close click (posted with `PostMessageW`, delivered by `pump` for the right window, the window really gone after destroy) and the counting-allocator test. Without the library or a display they print `not run: device not set up` and return; they are not counted as a green run of the adapter. With `DUCK_REQUIRE_GLFW=1` a missing device fails them instead, for a job that is meant to have one.
-- **Linux** is type- and lint-checked (`cargo clippy --target x86_64-unknown-linux-gnu`) but not run; the Linux-only code (`dlopen`, `glfwGetX11Window`) has no test result yet. Windows and 64-bit Linux only (`compile_error!` elsewhere).
+- **Linux** was type- and lint-checked only when this card merged; since card 2-11 the job `glfw_linux` of `ci` runs the adapter on Linux under `xvfb` with the distribution's `libglfw3` (21 unit tests including the window contract suite and the no-allocation test passed, `DUCK_REQUIRE_GLFW=1`, so a missing library or display fails instead of skipping). Windows and 64-bit Linux only (`compile_error!` elsewhere).
 - **Contract change found by the real adapter**: the contract asked for a 64 by 48 window; Windows raises the width of a window to the minimum of its title bar (120), so the test window is now 320 by 240.
 - Per-frame calls (`pump`, `window_info`, `native_token`) make no allocator call on the Rust side (counting allocator); GLFW's own C allocations are outside that count.
 
+## 14. Phase 2 exit: gate G6 (FFI) and the swap-diff
+
+Recorded on 2026-11-01 (card 2-17, owner decision).
+
+- **Gate G6 FFI** ([ADR-0001](../decisions/adr-0001-language-evaluation.md): one call each to Win32 and POSIX through hand-written declarations inside an adapter, passing the platform contract test). Evidence accepted by the owner: `engine/adapter_window_glfw/src/dynlib.rs` declares by hand `LoadLibraryExW`, `GetProcAddress` and `FreeLibrary` (Windows, `extern "system"`) and `dlopen`, `dlsym` and `dlclose` (Linux, `extern "C"`), inside the adapter crate only, and the window contract suite passes through them on Windows (local run) and on Linux (job `glfw_linux`, `xvfb`). The ADR names monotonic time and file open as the example calls; in this engine those two go through `std`, which is not wrapped (digest section 2), so library loading is the FFI proof instead. The clock and file system ports therefore have no FFI to prove in phase 2.
+- **Swap-diff** (card 2-16): adding the GLFW adapter changed 0 engine or game files and revised one port file (`platform/src/contract.rs`).
+- **Other exit criteria** of the phase 2 row in the [roadmap](../workflow/roadmap.md): the platform contract suite is green on both OSes and headless (Windows and Linux `ci` jobs, job `headless`); the banned-import check and the headless-only build run in `ci`; the NEON backend runs natively on the hosted ARM64 runner (job `arm64`).
+
+```mermaid
+flowchart LR
+  G6["G6 FFI: dynlib.rs, hand-written Win32 and POSIX calls in an adapter"] --> X["phase 2 exit"]
+  S["swap-diff: 0 engine/game files"] --> X
+  C["contract suites: Windows, Linux (xvfb), headless"] --> X
+  A["ARM64 job: NEON natively"] --> X
+```
