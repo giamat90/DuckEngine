@@ -8,11 +8,11 @@ license-file.workspace = true
 description = "Layer 3 adapter: the window and event port on GLFW, loaded at run time (stopgap)."
 
 [dependencies]
-base = { path = "../base" }
-platform = { path = "../platform" }
+base = { path = "../base", version = "0.1.0" }
+platform = { path = "../platform", version = "0.1.0" }
 
 [dev-dependencies]
-platform = { path = "../platform", features = ["contract-tests"] }
+platform = { path = "../platform", version = "0.1.0", features = ["contract-tests"] }
 
 # Not `workspace = true`: the workspace forbids unsafe code. This adapter denies it instead and
 # allows it in two modules (`dynlib`, `glfw`), where every block is documented. The rest repeats

@@ -9,7 +9,7 @@ description = "Layer 2 glue crate: the fixed-step accumulator of the frame loop 
 
 # Used by the tests only (seeded RNG, counting allocator); the accumulator itself needs nothing.
 [dev-dependencies]
-base = { path = "../base" }
+base = { path = "../base", version = "0.1.0" }
 
 [lints]
 workspace = true

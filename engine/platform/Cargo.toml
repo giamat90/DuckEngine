@@ -12,7 +12,7 @@ description = "Layer 1 platform crate: the clock and thread ports, their std and
 contract-tests = []
 
 [dependencies]
-base = { path = "../base" }
+base = { path = "../base", version = "0.1.0" }
 
 [lints]
 workspace = true
