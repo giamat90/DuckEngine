@@ -291,6 +291,8 @@ class Ci(unittest.TestCase):
     def test_the_glfw_linux_job_says_so_when_the_adapter_is_not_in_the_workspace_yet(self):
         # `main` may be behind `develop`: a missing crate is reported, never silently green.
         job = CI[CI.index("\n  glfw_linux:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        job = job[:following.start()] if following else job
         # Presence is decided from the tree; once the crate folder exists a cargo failure (a broken manifest)
         # fails the job instead of passing as "absent".
         self.assertIn("if [ -d engine/adapter_window_glfw ]; then", job)
@@ -299,6 +301,33 @@ class Ci(unittest.TestCase):
         self.assertIn("::notice::not run: adapter_window_glfw is not in this workspace yet", job)
         self.assertIn('>> "$GITHUB_STEP_SUMMARY"', job)
         self.assertEqual(job.count("if: steps.adapter.outputs.present == 'true'"), 2)
+
+    def test_the_gl_linux_job_runs_the_gl_adapter_on_llvmpipe_and_reports_the_version(self):
+        # Card 3-12 (O7): the GL adapter and the render contract on Linux; a device is required, not optional.
+        job = CI[CI.index("\n  gl_linux:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        job = job[:following.start()] if following else job
+        self.assertIn("runs-on: ubuntu-latest", job)
+        self.assertNotIn("matrix", job)
+        self.assertIn("xvfb libglfw3 mesa-utils libgl1-mesa-dri", job)
+        self.assertIn('LIBGL_ALWAYS_SOFTWARE: "1"', job)
+        self.assertIn('DUCK_REQUIRE_GL: "1"', job)
+        self.assertIn("glxinfo -B", job)
+        self.assertIn("xvfb-run --auto-servernum cargo test -p adapter_render_gl --locked", job)
+        self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
+        self.assertNotIn("continue-on-error", job)
+
+    def test_the_gl_linux_job_says_so_when_the_adapter_is_not_in_the_workspace_yet(self):
+        # `main` may be behind `develop`: a missing crate is reported, never silently green.
+        job = CI[CI.index("\n  gl_linux:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        job = job[:following.start()] if following else job
+        self.assertIn("if [ -d engine/adapter_render_gl ]; then", job)
+        self.assertIn("cargo pkgid -p adapter_render_gl > /dev/null", job)
+        self.assertNotIn("pkgid -p adapter_render_gl > /dev/null 2>&1", job)
+        self.assertIn("::notice::not run: adapter_render_gl is not in this workspace yet", job)
+        self.assertIn('>> "$GITHUB_STEP_SUMMARY"', job)
+        self.assertEqual(job.count("if: steps.adapter.outputs.present == 'true'"), 3)
 
     def test_the_arm64_job_runs_on_a_hosted_arm_runner_and_proves_the_cpu(self):
         # Card 2-10: a hosted ARM64 runner exists for this private repo (probe of 2026-11-01), so the NEON

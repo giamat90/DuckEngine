@@ -365,6 +365,61 @@ jobs:
           DUCK_REQUIRE_GLFW: "1"
         run: xvfb-run --auto-servernum cargo test -p adapter_window_glfw --locked -- --nocapture
 
+  # Card 3-12 (owner open question O7): the OpenGL adapter and the render contract suite on Linux, on Mesa's
+  # software renderer (llvmpipe) under a virtual X display. The first step reports what the runner really
+  # offers (`glxinfo`), so the question "does llvmpipe give OpenGL 4.5 core?" is answered by a run, not by
+  # memory. A job meant to have a device sets DUCK_REQUIRE_GL=1, so a missing device fails instead of
+  # skipping. `main` can be behind `develop`: when the crate is not in the workspace the job says so (a
+  # notice, "not run") instead of failing or passing silently. One Ubuntu job, on `main` and by hand.
+  gl_linux:
+    name: OpenGL adapter on Linux (xvfb, llvmpipe)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain
+      - name: Find the adapter
+        id: adapter
+        run: |
+          set -euo pipefail
+          # Decided from the tree, not from cargo's exit code (as for the GLFW job).
+          if [ -d engine/adapter_render_gl ]; then
+            cargo pkgid -p adapter_render_gl > /dev/null
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::not run: adapter_render_gl is not in this workspace yet"
+            echo "### OpenGL on Linux: not run (adapter_render_gl is not in this workspace yet)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Install xvfb, GLFW and Mesa
+        if: steps.adapter.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb libglfw3 mesa-utils libgl1-mesa-dri
+          dpkg-query --show libglfw3 libgl1-mesa-dri mesa-utils
+      - name: What the runner offers (llvmpipe, OpenGL version)
+        if: steps.adapter.outputs.present == 'true'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set -euo pipefail
+          xvfb-run --auto-servernum glxinfo -B | tee "$RUNNER_TEMP/glxinfo.txt"
+          {
+            echo "### OpenGL on Linux (llvmpipe)"
+            grep -E 'OpenGL (renderer|core profile version|version) string' "$RUNNER_TEMP/glxinfo.txt" || echo "no OpenGL strings reported"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Test the adapter and the render contract on GL
+        if: steps.adapter.outputs.present == 'true'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          DUCK_REQUIRE_GL: "1"
+        run: xvfb-run --auto-servernum cargo test -p adapter_render_gl --locked -- --nocapture
+
   # Card 2-10: the engine on real AArch64 hardware. A test run on 2026-11-01 showed that GitHub Free gives a
   # hosted ARM64 Linux runner (`ubuntu-24.04-arm`) for this private repository, so the NEON backend of `simd`
   # (card 2-7) is tested natively, not under an emulator. The adapters are left out (no GLFW or display

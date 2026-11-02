@@ -46,7 +46,7 @@ Source: `.github/workflows/ci.yml`. Seven independent jobs run in parallel. A ne
 
 ```mermaid
 flowchart TB
-  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & arm64
+  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64
 
   subgraph g1["g1: build, test, fmt, clippy (Windows and Ubuntu)"]
     direction TB
@@ -90,12 +90,18 @@ flowchart TB
     l1 -- yes --> l3["apt: xvfb, libglfw3"] --> l4["xvfb-run cargo test -p adapter_window_glfw, DUCK_REQUIRE_GLFW=1"]
   end
 
+  subgraph gl_linux["gl_linux (Ubuntu, card 3-12): the OpenGL adapter on llvmpipe under a virtual display"]
+    direction TB
+    g1x{"adapter_render_gl in the workspace?"} -- no --> g2x["notice: not run, adapter not in this workspace yet"]
+    g1x -- yes --> g3x["apt: xvfb, libglfw3, mesa-utils, libgl1-mesa-dri"] --> g4x["glxinfo -B: report renderer and OpenGL version"] --> g5x["xvfb-run cargo test -p adapter_render_gl, DUCK_REQUIRE_GL=1"]
+  end
+
   subgraph arm64["arm64 (hosted ubuntu-24.04-arm, card 2-10): native AArch64 hardware"]
     direction TB
     r1["test: uname -m is aarch64"] --> r2["cargo clippy --workspace --exclude adapter_*"] --> r3["cargo test --workspace --exclude adapter_*"]
   end
 
-  g1 & gates & metrics & deny & headless & glfw_linux & arm64 --> done(["all green = the commit may merge"])
+  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 --> done(["all green = the commit may merge"])
 ```
 
 ---

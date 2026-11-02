@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.72 (2026-11-02).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.73 (2026-11-02).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.73** - New CI job `gl_linux` (card 3-12, governance task): the OpenGL adapter and its tests on Linux under xvfb with Mesa llvmpipe, reporting the OpenGL version the runner offers; [workflow/ci-diagrams](workflow/ci-diagrams.md) updated. Answers open question O7 of the phase 3 design note once a run has happened.
 > - **v0.72** - ADR-0009 decided by the owner (card 3-7, governance task): new page [decisions/adr-0009-shader-toolchain](decisions/adr-0009-shader-toolchain.md), shader toolchain GLSL 450 + glslang + SPIRV-Cross, DXC at D3D12, Slang re-evaluated then; `THIRD_PARTY.md` planned rows for the three tools (T2).
 > - **v0.71** - Phase 2 milestone review (card 2-18): new page [spikes/phase2-milestone-review](spikes/phase2-milestone-review.md), exit criteria, hand-measured coverage and mutation of `platform` and `frame` (mutation 141 of 152 viable mutants caught, 11 misses explained; base line coverage reads 84.24% from the tool against 96.26% in the phase 1 audit, cause not established), complexity top 5, dependency graph, ADR status and five adjustment candidates for the owner; risk register: R-12, R-13, R-20, R-22 updated, R-23 (gates not measured by CI on the real crates) and R-24 (CI minutes) added.
 > - **v0.70** - Phase 2 exit recorded (card 2-17): gate G6 FFI is met by the hand-written Win32 and POSIX library-loading calls of the GLFW adapter, run through the contract suite on Windows and Linux (owner decision); platform-ports section 13 corrected (Linux now runs under xvfb) and section 14 added.
