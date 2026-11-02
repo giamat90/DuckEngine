@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.71 (2026-11-02).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.72 (2026-11-02).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.72** - ADR-0009 decided by the owner (card 3-7, governance task): new page [decisions/adr-0009-shader-toolchain](decisions/adr-0009-shader-toolchain.md), shader toolchain GLSL 450 + glslang + SPIRV-Cross, DXC at D3D12, Slang re-evaluated then; `THIRD_PARTY.md` planned rows for the three tools (T2).
 > - **v0.71** - Phase 2 milestone review (card 2-18): new page [spikes/phase2-milestone-review](spikes/phase2-milestone-review.md), exit criteria, hand-measured coverage and mutation of `platform` and `frame` (mutation 141 of 152 viable mutants caught, 11 misses explained; base line coverage reads 84.24% from the tool against 96.26% in the phase 1 audit, cause not established), complexity top 5, dependency graph, ADR status and five adjustment candidates for the owner; risk register: R-12, R-13, R-20, R-22 updated, R-23 (gates not measured by CI on the real crates) and R-24 (CI minutes) added.
 > - **v0.70** - Phase 2 exit recorded (card 2-17): gate G6 FFI is met by the hand-written Win32 and POSIX library-loading calls of the GLFW adapter, run through the contract suite on Windows and Linux (owner decision); platform-ports section 13 corrected (Linux now runs under xvfb) and section 14 added.
 > - **v0.69** - Swap-diff check (card 2-16, governance): `tools/swap-diff` and `gates/swap-diff.toml` count the engine and game files a backend or platform change touches (limit 0, port declarations reported as a port revision, a range with no adapter fails); first measurement: the GLFW adapter touched 0 engine or game files and revised one port file. Closes the swap-diff item of phase 2. ports-and-adapters updated.
@@ -116,6 +117,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 27 | [spikes/simd-benchmark](spikes/simd-benchmark.md) | SIMD benchmark (gate G4, Windows and Linux in WSL2): 8-lane kernel vs plain and opaque scalar loops; owner chose option A, watching D |
 | 28 | [spikes/phase1-exit-audit](spikes/phase1-exit-audit.md) | Phase 1 exit audit (card 1-36): line and branch coverage, mutation score and Miri of the whole `base` crate against the digest section 7 gates |
 | 29 | [architecture/platform-ports](architecture/platform-ports.md) | Platform port family v0 (phase 2 design note): clock, threads, file system, window and events, fixed-step frame loop, GLFW boundary, ARM64; choices for the owner |
+| 30 | [decisions/adr-0009-shader-toolchain](decisions/adr-0009-shader-toolchain.md) | ADR-0009 (decided): GLSL 450 + glslang + SPIRV-Cross, DXC at D3D12 |
 
 ## Confidence legend used in this wiki
 
