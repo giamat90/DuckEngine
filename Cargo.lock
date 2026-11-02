@@ -117,6 +117,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tools_render_bench"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "render",
+]
+
+[[package]]
 name = "tools_shaderc"
 version = "0.1.0"
 dependencies = [
