@@ -16,15 +16,22 @@ compile_error!("the OpenGL adapter supports Windows and Linux only");
 // `lookup` first: it defines the `function_table!` macro the modules below use.
 #[macro_use]
 mod lookup;
+mod api;
 mod context;
+mod device;
 mod dynlib;
+mod exec;
 mod gl;
+mod mapping;
 #[cfg(target_os = "linux")]
 #[path = "glx.rs"]
 mod native;
 #[cfg(windows)]
 #[path = "wgl.rs"]
 mod native;
+mod records;
+mod table;
 pub mod version;
 
 pub use context::{ContextInfo, GlContext};
+pub use device::GlDevice;

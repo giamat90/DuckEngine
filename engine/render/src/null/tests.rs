@@ -887,3 +887,67 @@ fn a_barrier_inside_a_pass_or_on_a_stale_texture_is_refused() {
     d.destroy_texture(t);
     assert_eq!(submit(&mut d, &stale), Err(RenderError::InvalidHandle));
 }
+
+/// A device that keeps handles and rules but no bytes (the bookkeeping a GPU device lets the Null
+/// device do for it).
+fn bookkeeping() -> NullDevice {
+    NullDevice::bookkeeping_only(4)
+}
+
+#[test]
+fn a_bookkeeping_device_checks_buffer_ranges_without_keeping_bytes() {
+    let mut d = bookkeeping();
+    let b = buffer(&mut d, 8, BufferUsage::Vertex);
+    assert_eq!(d.write_buffer(b, 0, &[1; 8]), Ok(()));
+    assert_eq!(d.write_buffer(b, 4, &[0; 4]), Ok(()));
+    assert_eq!(
+        d.write_buffer(b, 4, &[0; 5]),
+        Err(RenderError::InvalidDescription)
+    );
+    d.destroy_buffer(b);
+    assert_eq!(
+        d.write_buffer(b, 0, &[0; 1]),
+        Err(RenderError::InvalidHandle)
+    );
+}
+
+#[test]
+fn a_bookkeeping_device_checks_texture_regions_and_cannot_read_back() {
+    let mut d = bookkeeping();
+    let t = texture(&mut d, 4, 2);
+    assert_eq!(d.write_texture(t, rect(0, 0, 4, 2), &[7; 32]), Ok(()));
+    assert_eq!(d.write_texture(t, rect(1, 1, 2, 1), &[7; 8]), Ok(()));
+    assert_eq!(
+        d.write_texture(t, rect(3, 0, 2, 1), &[0; 8]),
+        Err(RenderError::InvalidDescription)
+    );
+    assert_eq!(
+        d.write_texture(t, rect(0, 0, 4, 2), &[0; 31]),
+        Err(RenderError::InvalidDescription)
+    );
+    let mut out = [0u8; 32];
+    assert_eq!(d.read_back(t, &mut out), Err(RenderError::Unsupported));
+    assert_eq!(out, [0u8; 32]);
+}
+
+#[test]
+fn a_bookkeeping_device_validates_streams_like_the_full_one() {
+    let mut d = bookkeeping();
+    let t = texture(&mut d, 2, 2);
+    let mut clear = CommandStream::new();
+    clear.begin_pass(pass_to(t, Some([1.0, 0.0, 0.0, 1.0])));
+    clear.end_pass();
+    assert_eq!(
+        submit(&mut d, &clear),
+        Ok(SubmitStats {
+            commands: 2,
+            draws: 0
+        })
+    );
+    let mut unclosed = CommandStream::new();
+    unclosed.begin_pass(backbuffer_pass());
+    assert_eq!(
+        submit(&mut d, &unclosed),
+        Err(RenderError::InvalidDescription)
+    );
+}

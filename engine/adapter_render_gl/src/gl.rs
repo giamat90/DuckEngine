@@ -44,6 +44,40 @@ function_table! {
     }
 }
 
+function_table! {
+    /// The one function every OpenGL version has, to read the version before the 4.5 tables are
+    /// asked for (a 3.3 context then reports its version, not a missing function).
+    pub(crate) struct Probe {
+        get_string: unsafe extern "system" fn(u32) -> *const u8 = c"glGetString",
+    }
+}
+
+impl Probe {
+    /// Looks `glGetString` up in the current context.
+    pub fn load_current(lookup: impl FnMut(&CStr) -> *mut c_void) -> Result<Self, &'static CStr> {
+        // SAFETY: `glGetString` has this C signature in every OpenGL version.
+        unsafe { Self::load(lookup) }
+    }
+
+    /// The text `glGetString(name)` returns, or `None` when GL returns null.
+    pub fn string(self, name: u32) -> Option<String> {
+        string_of(self.get_string, name)
+    }
+}
+
+fn string_of(get_string: unsafe extern "system" fn(u32) -> *const u8, name: u32) -> Option<String> {
+    // SAFETY: a context is current (see the module documentation) and `name` is one of the
+    // string names; the call has no other precondition.
+    let text = unsafe { get_string(name) };
+    if text.is_null() {
+        return None;
+    }
+    // SAFETY: a non-null result of `glGetString` points at a NUL-terminated string that stays
+    // valid until the context is destroyed; it is copied before this returns.
+    let text = unsafe { CStr::from_ptr(text.cast()) };
+    Some(text.to_string_lossy().into_owned())
+}
+
 impl Gl {
     /// Looks the functions up with `lookup`, the proc-address function of a context that is
     /// current on this thread; `Err` names the first function the driver lacks.
@@ -56,16 +90,7 @@ impl Gl {
 
     /// The text `glGetString(name)` returns, or `None` when GL returns null.
     pub fn string(&self, name: u32) -> Option<String> {
-        // SAFETY: a context is current (see the module documentation) and `name` is one of the
-        // string names; the call has no other precondition.
-        let text = unsafe { (self.get_string)(name) };
-        if text.is_null() {
-            return None;
-        }
-        // SAFETY: a non-null result of `glGetString` points at a NUL-terminated string that
-        // stays valid until the context is destroyed; it is copied before this returns.
-        let text = unsafe { CStr::from_ptr(text.cast()) };
-        Some(text.to_string_lossy().into_owned())
+        string_of(self.get_string, name)
     }
 
     /// The oldest error flag (`GL_NO_ERROR` is 0), which is cleared.

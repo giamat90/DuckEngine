@@ -1,6 +1,7 @@
 //! The OpenGL context: made from a window's native token, current on the creating thread.
 
-use crate::gl::{Gl, RENDERER, VENDOR, VERSION};
+use crate::api::Api;
+use crate::gl::{Gl, Probe, RENDERER, VENDOR, VERSION};
 use crate::native::Native;
 use crate::version::{GlVersion, accept};
 use core::marker::PhantomData;
@@ -28,6 +29,7 @@ pub struct ContextInfo {
 pub struct GlContext {
     info: ContextInfo,
     gl: Gl,
+    api: Api,
     /// The context stays current on one thread; this keeps the type `!Send` on purpose.
     _one_thread: PhantomData<*const ()>,
     // Last: the context is deleted after everything that calls into it is gone.
@@ -52,11 +54,17 @@ impl GlContext {
     /// operating system refuses a step (for example a window that is gone).
     pub fn create(token: NativeToken) -> Result<Self, PlatformError> {
         let native = Native::create(token)?;
+        // The version first: an older context reports its version, not a missing function.
+        let probe = Probe::load_current(|name| native.proc_address(name))
+            .map_err(|_| PlatformError::Unsupported)?;
+        let version_text = probe.string(VERSION);
+        let version = accept(version_text.as_deref())?;
         let gl = Gl::load_current(|name| native.proc_address(name))
             .map_err(|_| PlatformError::Unsupported)?;
-        let version_text = gl.string(VERSION);
-        let version = accept(version_text.as_deref())?;
+        let api = Api::load_current(|name| native.proc_address(name))
+            .map_err(|_| PlatformError::Unsupported)?;
         gl.use_engine_clip_space();
+        api.set_device_defaults();
         let info = ContextInfo {
             vendor: gl.string(VENDOR).unwrap_or_default(),
             renderer: gl.string(RENDERER).unwrap_or_default(),
@@ -66,9 +74,21 @@ impl GlContext {
         Ok(Self {
             info,
             gl,
+            api,
             _one_thread: PhantomData,
             native,
         })
+    }
+
+    /// The functions of the render device; sound to call while this context lives, on its
+    /// thread (the context is not `Send`).
+    pub(crate) fn api(&self) -> &Api {
+        &self.api
+    }
+
+    /// The context's own few functions (viewport, clear, state queries).
+    pub(crate) fn gl(&self) -> &Gl {
+        &self.gl
     }
 
     /// What the driver reported when the context was made.

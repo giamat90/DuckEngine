@@ -8,9 +8,12 @@ license-file.workspace = true
 description = "Layer 3 adapter: OpenGL 4.5 context and device, loaded at run time (card 3-9: context and clear colour)."
 
 [dependencies]
+base = { path = "../base", version = "0.1.0" }
+render = { path = "../render", version = "0.1.0" }
 platform = { path = "../platform", version = "0.1.0" }
 
 [dev-dependencies]
+render = { path = "../render", version = "0.1.0", features = ["contract-tests"] }
 adapter_window_glfw = { path = "../adapter_window_glfw", version = "0.1.0" }
 
 # Not `workspace = true`: the workspace forbids unsafe code. This adapter denies it instead and

@@ -36,6 +36,8 @@ pub struct NullDevice {
     resources: Resources,
     frame: Option<(FrameId, SurfaceId)>,
     next_frame: u64,
+    /// False for a bookkeeping device: it keeps no buffer or texture bytes.
+    keep_data: bool,
 }
 
 impl Default for NullDevice {
@@ -58,7 +60,25 @@ impl NullDevice {
             resources: Resources::with_capacity(capacity),
             frame: None,
             next_frame: 0,
+            keep_data: true,
         }
+    }
+
+    /// A device that does all the checking and hands out the handles but keeps no buffer or
+    /// texture bytes: writes are range-checked and dropped, clears change nothing and `read_back`
+    /// is `Unsupported`. A GPU device that holds the bytes itself uses it to validate calls and
+    /// streams by the same rules, without a second copy of the data.
+    #[must_use]
+    pub fn bookkeeping_only(capacity: u32) -> Self {
+        Self {
+            keep_data: false,
+            ..Self::with_capacity(capacity)
+        }
+    }
+
+    /// Bytes to keep for a resource of `len` bytes: none for a bookkeeping device.
+    fn data_len(&self, len: usize) -> usize {
+        if self.keep_data { len } else { 0 }
     }
 }
 
@@ -208,7 +228,8 @@ impl IRenderDevice for NullDevice {
         if desc.size == 0 {
             return Err(INVALID);
         }
-        let data = zeroed(usize::try_from(desc.size).unwrap_or(usize::MAX))?;
+        let size = usize::try_from(desc.size).unwrap_or(usize::MAX);
+        let data = zeroed(self.data_len(size))?;
         insert(
             &mut self.resources.buffers,
             BufferRec {
@@ -227,7 +248,8 @@ impl IRenderDevice for NullDevice {
         if !size_ok || desc.mip_count == 0 || desc.mip_count > max_mips(desc.width, desc.height) {
             return Err(INVALID);
         }
-        let data = zeroed(texel_count(desc.width, desc.height).saturating_mul(BYTES_PER_TEXEL))?;
+        let bytes = texel_count(desc.width, desc.height).saturating_mul(BYTES_PER_TEXEL);
+        let data = zeroed(self.data_len(bytes))?;
         insert(&mut self.resources.textures, TextureRec { desc, data })
     }
 
@@ -273,9 +295,11 @@ impl IRenderDevice for NullDevice {
         let start = usize::try_from(offset).map_err(|_| INVALID)?;
         let end = start
             .checked_add(bytes.len())
-            .filter(|end| *end <= record.data.len())
+            .filter(|end| *end <= usize::try_from(record.size).unwrap_or(usize::MAX))
             .ok_or(INVALID)?;
-        record.data[start..end].copy_from_slice(bytes);
+        if !record.data.is_empty() {
+            record.data[start..end].copy_from_slice(bytes);
+        }
         Ok(())
     }
 
@@ -300,6 +324,9 @@ impl IRenderDevice for NullDevice {
         let row = texel_count(region.width, 1) * BYTES_PER_TEXEL;
         if !inside || bytes.len() != row * texel_count(1, region.height) {
             return Err(INVALID);
+        }
+        if record.data.is_empty() {
+            return Ok(());
         }
         let stride = texel_count(width, 1) * BYTES_PER_TEXEL;
         let first = texel_count(1, y) * stride + texel_count(x, 1) * BYTES_PER_TEXEL;
@@ -367,6 +394,9 @@ impl IRenderDevice for NullDevice {
 
     fn read_back(&mut self, texture: TextureId, out: &mut [u8]) -> Result<(), RenderError> {
         let record = lookup(&self.resources.textures, texture)?;
+        if record.data.is_empty() {
+            return Err(RenderError::Unsupported);
+        }
         if out.len() != record.data.len() {
             return Err(INVALID);
         }
