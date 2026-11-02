@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.72 (2026-11-02).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.73 (2026-11-02).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.73** - Shader toolchain spike (card 3-6): new page [spikes/shader-toolchain-spike](spikes/shader-toolchain-spike.md), HLSL + DXC, GLSL + glslang + SPIRV-Cross and Slang compared on one sprite shader (Windows, Linux in WSL2), recommendation for the owner; dev harness `tools/shader-spike`. Nothing adopted; ADR-0009 is card 3-7.
 > - **v0.72** - Phase 3 design note (card 3-1): new page [architecture/render-port-v0](architecture/render-port-v0.md), the render device port `IRenderDevice` v0, the POD command stream, the render graph v0, the 2D sprite batcher and orthographic camera, the Null and OpenGL 4.5 adapters (own context from the native token, run-time loaded declarations), the shader toolchain spike scope (Q25, ADR-0009), the minimal `dtex` texture format (D-6), tests, a proposed card breakdown 3-2 to 3-14 and nine choices for the owner (O1 to O9, accepted with the recommendations on 2026-11-02). Nothing is built; `rendering.md` points to the new page.
 > - **v0.71** - Phase 2 milestone review (card 2-18): new page [spikes/phase2-milestone-review](spikes/phase2-milestone-review.md), exit criteria, hand-measured coverage and mutation of `platform` and `frame` (mutation 141 of 152 viable mutants caught, 11 misses explained; base line coverage reads 84.24% from the tool against 96.26% in the phase 1 audit, cause not established), complexity top 5, dependency graph, ADR status and five adjustment candidates for the owner; risk register: R-12, R-13, R-20, R-22 updated, R-23 (gates not measured by CI on the real crates) and R-24 (CI minutes) added.
 > - **v0.70** - Phase 2 exit recorded (card 2-17): gate G6 FFI is met by the hand-written Win32 and POSIX library-loading calls of the GLFW adapter, run through the contract suite on Windows and Linux (owner decision); platform-ports section 13 corrected (Linux now runs under xvfb) and section 14 added.
@@ -117,6 +118,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 27 | [spikes/simd-benchmark](spikes/simd-benchmark.md) | SIMD benchmark (gate G4, Windows and Linux in WSL2): 8-lane kernel vs plain and opaque scalar loops; owner chose option A, watching D |
 | 28 | [spikes/phase1-exit-audit](spikes/phase1-exit-audit.md) | Phase 1 exit audit (card 1-36): line and branch coverage, mutation score and Miri of the whole `base` crate against the digest section 7 gates |
 | 29 | [architecture/platform-ports](architecture/platform-ports.md) | Platform port family v0 (phase 2 design note): clock, threads, file system, window and events, fixed-step frame loop, GLFW boundary, ARM64; choices for the owner |
+| 30 | [spikes/shader-toolchain-spike](spikes/shader-toolchain-spike.md) | Shader toolchain spike (card 3-6): HLSL + DXC vs GLSL + glslang + SPIRV-Cross vs Slang; evidence for ADR-0009 |
 
 ## Confidence legend used in this wiki
 
