@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.74 (2026-11-02).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.75 (2026-11-02).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.75** - New CI job `gl_linux` (card 3-12, governance task): the OpenGL adapter and its tests on Linux under xvfb with Mesa llvmpipe, reporting the OpenGL version the runner offers; [workflow/ci-diagrams](workflow/ci-diagrams.md) updated. Answers open question O7 of the phase 3 design note once a run has happened.
 > - **v0.74** - ADR-0009 decided by the owner (card 3-7, governance task): new page [decisions/adr-0009-shader-toolchain](decisions/adr-0009-shader-toolchain.md), shader toolchain GLSL 450 + glslang + SPIRV-Cross, DXC at D3D12, Slang re-evaluated then; `THIRD_PARTY.md` planned rows for the three tools (T2).
 > - **v0.73** - Shader toolchain spike (card 3-6): new page [spikes/shader-toolchain-spike](spikes/shader-toolchain-spike.md), HLSL + DXC, GLSL + glslang + SPIRV-Cross and Slang compared on one sprite shader (Windows, Linux in WSL2), recommendation for the owner; dev harness `tools/shader-spike`. Nothing adopted; ADR-0009 is card 3-7.
 > - **v0.72** - Phase 3 design note (card 3-1): new page [architecture/render-port-v0](architecture/render-port-v0.md), the render device port `IRenderDevice` v0, the POD command stream, the render graph v0, the 2D sprite batcher and orthographic camera, the Null and OpenGL 4.5 adapters (own context from the native token, run-time loaded declarations), the shader toolchain spike scope (Q25, ADR-0009), the minimal `dtex` texture format (D-6), tests, a proposed card breakdown 3-2 to 3-14 and nine choices for the owner (O1 to O9, accepted with the recommendations on 2026-11-02). Nothing is built; `rendering.md` points to the new page.
