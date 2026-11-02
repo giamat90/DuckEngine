@@ -1,0 +1,18 @@
+[package]
+name = "tools_shaderc"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Dev-time shader compiler driver (tier T2): GLSL 450 sources to the dshd shader program format through glslang and SPIRV-Cross. Never linked into the engine."
+
+[dependencies]
+assets = { path = "../assets", version = "0.1.0" }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "shaderc"
+path = "src/main.rs"

@@ -7,6 +7,7 @@ name = "adapter_render_gl"
 version = "0.1.0"
 dependencies = [
  "adapter_window_glfw",
+ "assets",
  "base",
  "platform",
  "render",
@@ -110,6 +111,13 @@ version = "0.1.0"
 
 [[package]]
 name = "tools_assetc"
+version = "0.1.0"
+dependencies = [
+ "assets",
+]
+
+[[package]]
+name = "tools_shaderc"
 version = "0.1.0"
 dependencies = [
  "assets",

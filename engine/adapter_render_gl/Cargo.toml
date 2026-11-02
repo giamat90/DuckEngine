@@ -15,6 +15,8 @@ platform = { path = "../platform", version = "0.1.0" }
 [dev-dependencies]
 render = { path = "../render", version = "0.1.0", features = ["contract-tests"] }
 adapter_window_glfw = { path = "../adapter_window_glfw", version = "0.1.0" }
+# Reads the dshd shader container of the sprite shaders (tests/sprite_shader.rs).
+assets = { path = "../assets", version = "0.1.0" }
 
 # Not `workspace = true`: the workspace forbids unsafe code. This adapter denies it instead and
 # allows it in its FFI modules (`dynlib`, `gl`, `wgl`, `glx`), where every block is documented.
