@@ -1,8 +1,10 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.69 (2026-11-01).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.71 (2026-11-02).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.71** - Phase 2 milestone review (card 2-18): new page [spikes/phase2-milestone-review](spikes/phase2-milestone-review.md), exit criteria, hand-measured coverage and mutation of `platform` and `frame` (mutation 141 of 152 viable mutants caught, 11 misses explained; base line coverage reads 84.24% from the tool against 96.26% in the phase 1 audit, cause not established), complexity top 5, dependency graph, ADR status and five adjustment candidates for the owner; risk register: R-12, R-13, R-20, R-22 updated, R-23 (gates not measured by CI on the real crates) and R-24 (CI minutes) added.
+> - **v0.70** - Phase 2 exit recorded (card 2-17): gate G6 FFI is met by the hand-written Win32 and POSIX library-loading calls of the GLFW adapter, run through the contract suite on Windows and Linux (owner decision); platform-ports section 13 corrected (Linux now runs under xvfb) and section 14 added.
 > - **v0.69** - Swap-diff check (card 2-16, governance): `tools/swap-diff` and `gates/swap-diff.toml` count the engine and game files a backend or platform change touches (limit 0, port declarations reported as a port revision, a range with no adapter fails); first measurement: the GLFW adapter touched 0 engine or game files and revised one port file. Closes the swap-diff item of phase 2. ports-and-adapters updated.
 > - **v0.68** - The `pending = true` flag is removed from the `simd/neon.rs` unsafe-budget entry (card 2-15, governance): the file is on `main` since the phase 2 release (v0.3.0), so the stale check applies to it again.
 > - **v0.67** - Unsafe budget: entries may carry `pending = true` (card 2-13, governance), so a new unsafe file can land in two steps under the trusted-config rule (entry first, file next, flag removed after). Needed for `simd/neon.rs` of card 2-7. core-runtime updated.
