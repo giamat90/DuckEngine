@@ -36,6 +36,15 @@ impl<T> Handle<T> {
         }
     }
 
+    /// Rebuilds a handle from the two numbers [`Handle::index`] and
+    /// [`Handle::generation`] returned, for code that stores handles as plain
+    /// bytes (a command stream); use it for decoding only. It grants nothing: a pool still checks the
+    /// generation, so a forged or stale handle is refused like any other.
+    #[must_use]
+    pub fn from_raw(index: u32, generation: u32) -> Self {
+        Self::new(index, generation)
+    }
+
     /// Slot index inside the pool.
     #[must_use]
     pub fn index(self) -> u32 {
@@ -223,6 +232,19 @@ mod tests {
     use std::collections::HashSet;
     use std::collections::hash_map::DefaultHasher;
     use std::rc::Rc;
+
+    #[test]
+    fn from_raw_round_trips_and_a_forged_handle_is_rejected() {
+        let mut pool = Pool::<u32>::with_capacity(2);
+        let real = pool.insert(7).fits();
+        let rebuilt = Handle::<u32>::from_raw(real.index(), real.generation());
+        assert_eq!(rebuilt, real);
+        assert_eq!(pool.get(rebuilt), Some(&7));
+        let forged = Handle::<u32>::from_raw(real.index(), real.generation() + 1);
+        assert_eq!(pool.get(forged), None);
+        let out_of_range = Handle::<u32>::from_raw(99, 0);
+        assert_eq!(pool.get(out_of_range), None);
+    }
 
     /// Unwraps a value that the test knows is there, without `expect`.
     trait Fits<T> {
