@@ -42,3 +42,6 @@ Licences below come from background knowledge and must be re-checked when the en
 | Name | Tier | Licence | Version | Port | Exit plan | Status |
 |---|---|---|---|---|---|---|
 | miniaudio | T1-stopgap | MIT-0 or Unlicense (dual) | pinned when added | audio device port | native WASAPI adapter at the replacement milestone; entry removed when replaced | planned |
+| glslang | T2 | Apache-2.0 (GitHub shows NOASSERTION because of several licences; re-check when added) | 16.6.0 (release archive, SHA-256 checked against the release digest) | none (build-time tool behind `IShaderCompiler`, ADR-0009) | replace with another GLSL to SPIR-V compiler (shaderc wraps it) behind `IShaderCompiler` | planned |
+| SPIRV-Cross | T2 | Apache-2.0 | tag `vulkan-sdk-1.4.363.0` (commit `f11ba9f`), built from source | none (build-time tool behind `IShaderCompiler`, ADR-0009) | write the translation as a Rust crate, or switch to Slang's direct targets, behind `IShaderCompiler` | planned |
+| DXC (DirectX Shader Compiler) | T2 | LLVM Release License (UIUC/NCSA) plus Microsoft terms; re-check when added | v1.9.2609 (release archive, SHA-256 checked); used only once the D3D12 backend starts | none (build-time tool behind `IShaderCompiler`, ADR-0009) | Slang or SPIRV-Cross HLSL route to another DXIL producer; re-evaluated at D3D12 | planned |
