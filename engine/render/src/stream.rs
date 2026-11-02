@@ -5,9 +5,9 @@
 //! 32-bit index then its 32-bit generation). Decoding is a loop over the buffer ([`Commands`]), no
 //! virtual call per command. The buffer keeps its capacity across [`CommandStream::clear`], so
 //! refilling a frame to the same size allocates nothing. Decoding accepts only the canonical form
-//! (unused fields zero), so decode then encode reproduces the bytes. Opcode 11 and up are reserved (barriers).
+//! (unused fields zero), so decode then encode reproduces the bytes. Opcode 12 and up are reserved.
 
-use crate::desc::{IndexType, PassDesc, Rect, RenderTarget};
+use crate::desc::{IndexType, PassDesc, Rect, RenderTarget, ResourceState};
 use crate::ids::{BufferId, PipelineId, SamplerId, TextureId};
 use base::pool::Handle;
 use core::fmt;
@@ -28,6 +28,7 @@ const OP_BIND_VERTEX_BUFFER: u16 = 7;
 const OP_BIND_INDEX_BUFFER: u16 = 8;
 const OP_DRAW: u16 = 9;
 const OP_DRAW_INDEXED: u16 = 10;
+const OP_BARRIER: u16 = 11;
 
 const TARGET_BACKBUFFER: u8 = 0;
 const TARGET_TEXTURE: u8 = 1;
@@ -87,6 +88,15 @@ pub enum Command {
         vertices: u32,
         /// Instance count.
         instances: u32,
+    },
+    /// Move a resource from one state to another, between passes.
+    Barrier {
+        /// The resource.
+        target: RenderTarget,
+        /// State before.
+        from: ResourceState,
+        /// State after.
+        to: ResourceState,
     },
     /// Draw indexed.
     DrawIndexed {
@@ -171,6 +181,30 @@ fn put_pass(out: &mut Vec<u8>, pass: &PassDesc) {
         RenderTarget::Backbuffer => out.extend_from_slice(&[0; 8]),
         RenderTarget::Texture(texture) => put_handle(out, texture),
     }
+}
+
+fn state_tag(state: ResourceState) -> u32 {
+    match state {
+        ResourceState::Undefined => 0,
+        ResourceState::ColorTarget => 1,
+        ResourceState::ShaderRead => 2,
+        ResourceState::Present => 3,
+    }
+}
+
+fn put_barrier(out: &mut Vec<u8>, target: RenderTarget, from: ResourceState, to: ResourceState) {
+    match target {
+        RenderTarget::Backbuffer => {
+            put_u32(out, u32::from(TARGET_BACKBUFFER));
+            out.extend_from_slice(&[0; 8]);
+        }
+        RenderTarget::Texture(texture) => {
+            put_u32(out, u32::from(TARGET_TEXTURE));
+            put_handle(out, texture);
+        }
+    }
+    put_u32(out, state_tag(from));
+    put_u32(out, state_tag(to));
 }
 
 fn index_tag(index_type: IndexType) -> u32 {
@@ -314,6 +348,11 @@ impl CommandStream {
             put_u32(out, offset);
             put_u32(out, index_tag(index_type));
         });
+    }
+
+    /// Records a state change of a resource (between passes).
+    pub fn barrier(&mut self, target: RenderTarget, from: ResourceState, to: ResourceState) {
+        self.record(OP_BARRIER, |out| put_barrier(out, target, from, to));
     }
 
     /// Records a draw.
@@ -463,6 +502,33 @@ fn decode_pass(r: &mut Reader<'_>) -> Result<PassDesc, StreamError> {
     })
 }
 
+fn decode_state(r: &mut Reader<'_>) -> Result<ResourceState, StreamError> {
+    match r.u32()? {
+        0 => Ok(ResourceState::Undefined),
+        1 => Ok(ResourceState::ColorTarget),
+        2 => Ok(ResourceState::ShaderRead),
+        3 => Ok(ResourceState::Present),
+        _ => Err(StreamError::BadValue),
+    }
+}
+
+fn decode_barrier(r: &mut Reader<'_>) -> Result<Command, StreamError> {
+    let tag = r.u32()?;
+    let texture = r.handle()?;
+    let target = match u8::try_from(tag) {
+        Ok(TARGET_BACKBUFFER) if (texture.index(), texture.generation()) == (0, 0) => {
+            RenderTarget::Backbuffer
+        }
+        Ok(TARGET_TEXTURE) => RenderTarget::Texture(texture),
+        _ => return Err(StreamError::BadValue),
+    };
+    Ok(Command::Barrier {
+        target,
+        from: decode_state(r)?,
+        to: decode_state(r)?,
+    })
+}
+
 fn decode_index_type(r: &mut Reader<'_>) -> Result<IndexType, StreamError> {
     match r.u32()? {
         INDEX_U16 => Ok(IndexType::U16),
@@ -517,6 +583,7 @@ fn decode(opcode: u16, payload: &[u8]) -> Result<Command, StreamError> {
             vertices: r.u32()?,
             instances: r.u32()?,
         },
+        OP_BARRIER => decode_barrier(&mut r)?,
         OP_DRAW_INDEXED => Command::DrawIndexed {
             indices: r.u32()?,
             instances: r.u32()?,

@@ -11,6 +11,7 @@ pub mod desc;
 pub mod device;
 pub mod dump;
 pub mod error;
+pub mod graph;
 pub mod ids;
 pub mod null;
 pub mod stream;

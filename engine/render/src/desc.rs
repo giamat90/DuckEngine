@@ -218,3 +218,18 @@ pub struct SubmitStats {
     /// Draw calls executed.
     pub draws: u32,
 }
+
+/// The state a resource is in, as far as the graph tracks it. A barrier moves a resource from one
+/// state to another; Vulkan and D3D12 map these to layouts and access masks, OpenGL to no-ops or
+/// memory barriers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResourceState {
+    /// Contents undefined (never written, or just created).
+    Undefined,
+    /// Written as the colour target of a pass.
+    ColorTarget,
+    /// Read by shaders (sampled).
+    ShaderRead,
+    /// Ready to be presented (meant for the backbuffer; the Null device does not enforce it).
+    Present,
+}

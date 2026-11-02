@@ -115,6 +115,9 @@ impl PassState {
             self.begin(res, pass)?;
             return Ok(false);
         }
+        if let Command::Barrier { target, .. } = command {
+            return self.barrier(res, *target);
+        }
         if !self.open {
             return Err(INVALID);
         }
@@ -130,6 +133,17 @@ impl PassState {
                 return Ok(true);
             }
             other => self.bind(res, other)?,
+        }
+        Ok(false)
+    }
+
+    /// Barriers sit between passes and name a live texture (or the backbuffer).
+    fn barrier(&self, res: &Resources, target: RenderTarget) -> Result<bool, RenderError> {
+        if self.open {
+            return Err(INVALID);
+        }
+        if let RenderTarget::Texture(texture) = target {
+            lookup(&res.textures, texture)?;
         }
         Ok(false)
     }

@@ -1,7 +1,7 @@
 use super::*;
 use crate::desc::{
     AddressMode, BlendMode, BufferUsage, DepthState, Filter, IndexType, PassDesc, Rect,
-    RenderTarget, ShaderStage, TextureFormat, VertexAttribute, VertexFormat,
+    RenderTarget, ResourceState, ShaderStage, TextureFormat, VertexAttribute, VertexFormat,
 };
 
 fn device() -> NullDevice {
@@ -835,4 +835,55 @@ fn an_index_offset_must_be_a_multiple_of_the_index_size() {
     assert_eq!(submit(&mut d, &odd32), Err(RenderError::InvalidDescription));
     let aligned = indexed_draw(p, vb, Some((ib, 4, IndexType::U32)), 2);
     assert!(submit(&mut d, &aligned).is_ok());
+}
+
+#[test]
+fn barriers_between_passes_are_accepted_and_counted() {
+    let mut d = device();
+    let t = texture(&mut d, 2, 2);
+    let mut s = CommandStream::new();
+    s.barrier(
+        RenderTarget::Texture(t),
+        ResourceState::Undefined,
+        ResourceState::ColorTarget,
+    );
+    s.begin_pass(pass_to(t, None));
+    s.end_pass();
+    s.barrier(
+        RenderTarget::Backbuffer,
+        ResourceState::ColorTarget,
+        ResourceState::Present,
+    );
+    assert_eq!(
+        submit(&mut d, &s),
+        Ok(SubmitStats {
+            commands: 4,
+            draws: 0
+        })
+    );
+}
+
+#[test]
+fn a_barrier_inside_a_pass_or_on_a_stale_texture_is_refused() {
+    let mut d = device();
+    let t = texture(&mut d, 2, 2);
+    let inside = in_pass(|s| {
+        s.barrier(
+            RenderTarget::Backbuffer,
+            ResourceState::Undefined,
+            ResourceState::ColorTarget,
+        );
+    });
+    let mut stale = CommandStream::new();
+    stale.barrier(
+        RenderTarget::Texture(t),
+        ResourceState::Undefined,
+        ResourceState::ColorTarget,
+    );
+    assert_eq!(
+        submit(&mut d, &inside),
+        Err(RenderError::InvalidDescription)
+    );
+    d.destroy_texture(t);
+    assert_eq!(submit(&mut d, &stale), Err(RenderError::InvalidHandle));
 }

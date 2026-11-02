@@ -338,16 +338,15 @@ fn viewport_extremes_round_trip() {
 }
 
 #[test]
-fn opcode_zero_and_the_reserved_barrier_opcode_are_refused() {
-    for opcode in [0u16, 11] {
-        let mut bytes = STREAM_VERSION.to_le_bytes().to_vec();
-        bytes.extend_from_slice(&opcode.to_le_bytes());
-        bytes.extend_from_slice(&[0, 0]);
-        assert_eq!(
-            CommandStream::from_bytes(&bytes).err(),
-            Some(StreamError::UnknownOpcode(opcode))
-        );
-    }
+fn opcode_zero_is_refused() {
+    let opcode = 0u16;
+    let mut bytes = STREAM_VERSION.to_le_bytes().to_vec();
+    bytes.extend_from_slice(&opcode.to_le_bytes());
+    bytes.extend_from_slice(&[0, 0]);
+    assert_eq!(
+        CommandStream::from_bytes(&bytes).err(),
+        Some(StreamError::UnknownOpcode(opcode))
+    );
 }
 
 #[test]
@@ -420,4 +419,78 @@ fn largest_payload_fits_the_length_field() {
     stream.bind_vertex_buffer(0, b, 0);
     let longest = stream.as_bytes()[HEADER_LEN + 2..HEADER_LEN + 4].to_vec();
     assert_eq!(u16::from_le_bytes([longest[0], longest[1]]), 30);
+}
+
+#[test]
+fn barriers_round_trip() {
+    let (_, t, ..) = ids();
+    let mut stream = CommandStream::new();
+    stream.barrier(
+        RenderTarget::Texture(t),
+        ResourceState::Undefined,
+        ResourceState::ColorTarget,
+    );
+    stream.barrier(
+        RenderTarget::Backbuffer,
+        ResourceState::ColorTarget,
+        ResourceState::Present,
+    );
+    stream.barrier(
+        RenderTarget::Texture(t),
+        ResourceState::ShaderRead,
+        ResourceState::ColorTarget,
+    );
+    let expected = vec![
+        Command::Barrier {
+            target: RenderTarget::Texture(t),
+            from: ResourceState::Undefined,
+            to: ResourceState::ColorTarget,
+        },
+        Command::Barrier {
+            target: RenderTarget::Backbuffer,
+            from: ResourceState::ColorTarget,
+            to: ResourceState::Present,
+        },
+        Command::Barrier {
+            target: RenderTarget::Texture(t),
+            from: ResourceState::ShaderRead,
+            to: ResourceState::ColorTarget,
+        },
+    ];
+    assert_eq!(decode_all(&stream), Ok(expected));
+    assert_eq!(
+        stream.as_bytes()[HEADER_LEN..HEADER_LEN + 2],
+        11u16.to_le_bytes()
+    );
+}
+
+#[test]
+fn a_barrier_with_an_unknown_state_or_target_is_refused() {
+    let mut stream = CommandStream::new();
+    stream.barrier(
+        RenderTarget::Backbuffer,
+        ResourceState::Undefined,
+        ResourceState::Present,
+    );
+    let first = HEADER_LEN + COMMAND_HEADER_LEN;
+    // target tag, handle (must be zero for the backbuffer), from, to.
+    for offset in [first, first + 4, first + 12, first + 16] {
+        let mut bytes = stream.as_bytes().to_vec();
+        bytes[offset] = 9;
+        assert_eq!(
+            CommandStream::from_bytes(&bytes).err(),
+            Some(StreamError::BadValue),
+            "byte {offset}"
+        );
+    }
+}
+
+#[test]
+fn opcodes_after_the_barrier_are_still_reserved() {
+    let mut bytes = STREAM_VERSION.to_le_bytes().to_vec();
+    bytes.extend_from_slice(&[12, 0, 0, 0]);
+    assert_eq!(
+        CommandStream::from_bytes(&bytes).err(),
+        Some(StreamError::UnknownOpcode(12))
+    );
 }

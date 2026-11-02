@@ -4,7 +4,7 @@
 //! print as `#index.generation`; floats print with `{:?}` so `1.0` stays `1.0`. A stream that does
 //! not decode ends with an `error:` line, so a broken stream is a visible diff, not a panic.
 
-use crate::desc::{IndexType, PassDesc, Rect, RenderTarget};
+use crate::desc::{IndexType, PassDesc, Rect, RenderTarget, ResourceState};
 use crate::stream::{Command, CommandStream, Commands, STREAM_VERSION};
 use base::pool::Handle;
 use core::fmt::Write;
@@ -51,11 +51,24 @@ fn option<T: core::fmt::Debug>(value: Option<T>) -> String {
     value.map_or_else(|| "none".to_owned(), |v| format!("{v:?}"))
 }
 
-fn pass(p: &PassDesc) -> String {
-    let target = match p.target {
+fn state(s: ResourceState) -> &'static str {
+    match s {
+        ResourceState::Undefined => "undefined",
+        ResourceState::ColorTarget => "color_target",
+        ResourceState::ShaderRead => "shader_read",
+        ResourceState::Present => "present",
+    }
+}
+
+fn target(t: RenderTarget) -> String {
+    match t {
         RenderTarget::Backbuffer => "backbuffer".to_owned(),
-        RenderTarget::Texture(t) => format!("texture({})", handle(t)),
-    };
+        RenderTarget::Texture(texture) => format!("texture({})", handle(texture)),
+    }
+}
+
+fn pass(p: &PassDesc) -> String {
+    let target = target(p.target);
     format!(
         "target={target} clear_color={} clear_depth={}",
         option(p.clear_color),
@@ -67,9 +80,23 @@ fn viewport(r: &Rect) -> String {
     format!("x={} y={} w={} h={}", r.x, r.y, r.width, r.height)
 }
 
+fn barrier(t: RenderTarget, from: ResourceState, to: ResourceState) -> String {
+    format!(
+        "barrier target={} from={} to={}",
+        target(t),
+        state(from),
+        state(to)
+    )
+}
+
 fn line(out: &mut String, command: &Command) {
     let text = match command {
         Command::BeginPass(p) => format!("begin_pass {}", pass(p)),
+        Command::Barrier {
+            target: t,
+            from,
+            to,
+        } => barrier(*t, *from, *to),
         Command::EndPass => "end_pass".to_owned(),
         Command::SetPipeline(p) => format!("set_pipeline {}", handle(*p)),
         Command::SetViewport(r) => format!("set_viewport {}", viewport(r)),

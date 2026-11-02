@@ -1,5 +1,5 @@
 use super::*;
-use crate::desc::{IndexType, PassDesc, Rect, RenderTarget};
+use crate::desc::{IndexType, PassDesc, Rect, RenderTarget, ResourceState};
 use base::pool::Handle;
 
 const GOLDEN: &str = include_str!("../../golden/basic_scene.txt");
@@ -72,4 +72,33 @@ fn a_broken_stream_ends_with_an_error_line() {
     let text = dump_bytes(&bytes);
     assert_eq!(text, "render-stream v1\nerror: unknown opcode 238\n");
     assert_eq!(dump_bytes(&[1]), "error: stream is truncated\n");
+}
+
+#[test]
+fn barriers_are_dumped_with_their_states() {
+    let mut s = CommandStream::new();
+    s.barrier(
+        RenderTarget::Texture(h(3, 1)),
+        ResourceState::Undefined,
+        ResourceState::ColorTarget,
+    );
+    s.barrier(
+        RenderTarget::Backbuffer,
+        ResourceState::ColorTarget,
+        ResourceState::Present,
+    );
+    assert_eq!(
+        dump(&s),
+        "render-stream v1
+barrier target=texture(#3.1) from=undefined to=color_target
+barrier target=backbuffer from=color_target to=present
+"
+    );
+    let mut s = CommandStream::new();
+    s.barrier(
+        RenderTarget::Backbuffer,
+        ResourceState::ShaderRead,
+        ResourceState::ShaderRead,
+    );
+    assert!(dump(&s).contains("from=shader_read to=shader_read"));
 }
