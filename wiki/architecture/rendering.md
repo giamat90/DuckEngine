@@ -2,6 +2,8 @@
 
 Goal: engine and game code are written once; OpenGL, Vulkan, D3D12 (and Metal later) are adapters.
 
+The phase 3 shape of the port, the command stream, the graph, the sprite batcher and the OpenGL adapter (signatures, cards, choices for the owner) is proposed in [render-port-v0](render-port-v0.md).
+
 ## 1. Three tiers
 
 ```mermaid
