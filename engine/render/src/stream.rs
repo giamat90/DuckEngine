@@ -209,6 +209,12 @@ impl CommandStream {
         Ok(stream)
     }
 
+    /// Wraps bytes without checking them, to build malformed streams in tests.
+    #[cfg(test)]
+    pub(crate) fn from_bytes_unchecked(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+
     /// Drops all commands and keeps the buffer's capacity.
     pub fn clear(&mut self) {
         self.bytes.clear();
@@ -335,7 +341,9 @@ pub struct Commands<'a> {
 }
 
 impl<'a> Commands<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
+    /// Iterates the commands of a raw buffer (header included), without copying it.
+    #[must_use]
+    pub fn new(bytes: &'a [u8]) -> Self {
         let Some((version, rest)) = bytes.split_first_chunk::<HEADER_LEN>() else {
             return Self {
                 rest: &[],
