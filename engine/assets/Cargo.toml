@@ -1,0 +1,13 @@
+[package]
+name = "assets"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Layer 2 assets crate: the runtime texture format dtex v0, a validating reader and a writer."
+
+[dependencies]
+
+[lints]
+workspace = true

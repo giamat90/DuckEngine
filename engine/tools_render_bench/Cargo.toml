@@ -1,0 +1,15 @@
+[package]
+name = "tools_render_bench"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Dev-time CPU benchmark of one 2D frame (sort, batch, stream, Null submit), card 3-13; report only."
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+render = { path = "../render", version = "0.1.0" }
+
+[lints]
+workspace = true

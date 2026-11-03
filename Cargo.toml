@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["engine/skeleton", "engine/skeleton-unsafe", "engine/g1-control", "engine/base", "engine/platform", "engine/adapter_window_glfw", "engine/frame", "engine/app_runtime", "engine/tools_simd_bench"]
+members = ["engine/skeleton", "engine/skeleton-unsafe", "engine/g1-control", "engine/base", "engine/platform", "engine/render", "engine/adapter_window_glfw", "engine/frame", "engine/app_runtime", "engine/tools_simd_bench", "engine/assets", "engine/tools_assetc", "engine/adapter_render_gl", "engine/tools_shaderc", "engine/tools_render_bench", "engine/app_sprite_sample"]
 
 [workspace.package]
 edition = "2024"

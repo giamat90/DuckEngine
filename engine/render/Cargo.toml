@@ -1,0 +1,18 @@
+[package]
+name = "render"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Layer 2 render crate: the IRenderDevice port v0, resource handles and descriptions, and the POD command stream."
+
+[features]
+# The generic contract suite in `render::contract` (added with the Null device), for adapters' tests.
+contract-tests = []
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+
+[lints]
+workspace = true

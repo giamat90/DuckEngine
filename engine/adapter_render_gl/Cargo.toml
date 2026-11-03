@@ -1,0 +1,37 @@
+[package]
+name = "adapter_render_gl"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Layer 3 adapter: OpenGL 4.5 context and device, loaded at run time (card 3-9: context and clear colour)."
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+render = { path = "../render", version = "0.1.0" }
+platform = { path = "../platform", version = "0.1.0" }
+
+[dev-dependencies]
+render = { path = "../render", version = "0.1.0", features = ["contract-tests"] }
+adapter_window_glfw = { path = "../adapter_window_glfw", version = "0.1.0" }
+# Reads the dshd shader container of the sprite shaders (tests/sprite_shader.rs).
+assets = { path = "../assets", version = "0.1.0" }
+
+# Not `workspace = true`: the workspace forbids unsafe code. This adapter denies it instead and
+# allows it in its FFI modules (`dynlib`, `gl`, `wgl`, `glx`), where every block is documented.
+# The rest repeats the workspace lints.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+too_many_lines = "warn"
+too_many_arguments = "deny"
+cognitive_complexity = "deny"
+excessive_nesting = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"

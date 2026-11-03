@@ -11,7 +11,7 @@
 //! `f64` reference within a tolerance, not bit for bit). Results repeat from run to run, and a
 //! SIMD path can be checked against these.
 
-use super::{Scalar, Vec3, Vec4};
+use super::{Scalar, Vec2, Vec3, Vec4};
 use std::ops::Mul;
 
 /// The operations every size shares. `$n` is the dimension, `$len` is `$n * $n`.
@@ -245,6 +245,33 @@ impl Mat4 {
     pub const fn from_mat3(rotation: Mat3) -> Self {
         let [x, y, z] = rotation.cols;
         Self::from_cols(x.extend(0.0), y.extend(0.0), z.extend(0.0), Vec4::W)
+    }
+
+    /// Orthographic projection of the box from `min` to `max` in x and y and from `near` to `far`
+    /// in front of the camera (the camera looks down -Z), right-handed, Y up, depth 0 to 1:
+    /// `z = -near` maps to 0 and `z = -far` to 1. `None` when a value is not finite or an
+    /// extent is zero or so small that the matrix would overflow.
+    #[must_use]
+    pub fn orthographic_rh(min: Vec2, max: Vec2, near: Scalar, far: Scalar) -> Option<Self> {
+        let (width, height, depth) = (max.x - min.x, max.y - min.y, near - far);
+        let finite = [width, height, depth, min.x, min.y, near]
+            .iter()
+            .all(|v| v.is_finite());
+        if !finite {
+            return None;
+        }
+        let matrix = Self::from_cols(
+            Vec4::new(2.0 / width, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, 2.0 / height, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, 1.0 / depth, 0.0),
+            Vec4::new(
+                -(max.x + min.x) / width,
+                -(max.y + min.y) / height,
+                near / depth,
+                1.0,
+            ),
+        );
+        matrix.is_finite().then_some(matrix)
     }
 
     /// Counter-clockwise rotation about +X, see [`Mat3::from_rotation_x`].
@@ -1026,6 +1053,79 @@ mod tests {
             );
             let expected = scale.x * scale.y * scale.z;
             assert_close(&[transform.determinant()], &[expected], TOLERANCE);
+        }
+    }
+
+    fn ortho(extent: [Scalar; 6]) -> Option<Mat4> {
+        let [left, right, bottom, top, near, far] = extent;
+        Mat4::orthographic_rh(Vec2::new(left, bottom), Vec2::new(right, top), near, far)
+    }
+
+    /// The clip-space position of `point` (w stays 1 for an orthographic matrix).
+    fn project(m: Mat4, point: Vec3) -> [Scalar; 3] {
+        let p = m.transform_point3(point);
+        [p.x, p.y, p.z]
+    }
+
+    #[test]
+    fn orthographic_maps_the_view_box_to_the_clip_cube_with_depth_zero_to_one() {
+        let m = ortho([-4.0, 4.0, -3.0, 3.0, 1.0, 11.0]).unwrap_or(Mat4::IDENTITY);
+        assert_close(
+            &project(m, Vec3::new(-4.0, -3.0, -1.0)),
+            &[-1.0, -1.0, 0.0],
+            1e-6,
+        );
+        assert_close(
+            &project(m, Vec3::new(4.0, 3.0, -11.0)),
+            &[1.0, 1.0, 1.0],
+            1e-6,
+        );
+        assert_close(
+            &project(m, Vec3::new(0.0, 0.0, -6.0)),
+            &[0.0, 0.0, 0.5],
+            1e-6,
+        );
+    }
+
+    #[test]
+    fn orthographic_is_off_centre_when_the_box_is() {
+        let m = ortho([10.0, 30.0, 0.0, 10.0, 0.0, 1.0]).unwrap_or(Mat4::IDENTITY);
+        assert_close(
+            &project(m, Vec3::new(20.0, 5.0, -0.5)),
+            &[0.0, 0.0, 0.5],
+            1e-6,
+        );
+        assert_close(
+            &project(m, Vec3::new(10.0, 10.0, 0.0)),
+            &[-1.0, 1.0, 0.0],
+            1e-6,
+        );
+    }
+
+    #[test]
+    fn orthographic_has_no_perspective_row_and_is_column_major() {
+        let m = ortho([0.0, 2.0, 0.0, 2.0, 0.0, 1.0]).unwrap_or(Mat4::IDENTITY);
+        let e = m.to_cols_array();
+        assert_same(&[e[3], e[7], e[11], e[15]], &[0.0, 0.0, 0.0, 1.0]);
+        assert_close(&[e[12], e[13], e[14]], &[-1.0, -1.0, 0.0], 0.0);
+    }
+
+    #[test]
+    fn orthographic_refuses_extents_so_small_that_the_matrix_overflows() {
+        assert_eq!(ortho([0.0, 1.0e-39, 0.0, 1.0, 0.0, 1.0]), None);
+    }
+
+    #[test]
+    fn orthographic_refuses_an_empty_or_non_finite_box() {
+        for (l, r, b, t, n, f) in [
+            (1.0, 1.0, 0.0, 1.0, 0.0, 1.0),
+            (0.0, 1.0, 2.0, 2.0, 0.0, 1.0),
+            (0.0, 1.0, 0.0, 1.0, 3.0, 3.0),
+            (0.0, Scalar::NAN, 0.0, 1.0, 0.0, 1.0),
+            (0.0, Scalar::INFINITY, 0.0, 1.0, 0.0, 1.0),
+            (0.0, 1.0, 0.0, 1.0, 0.0, Scalar::INFINITY),
+        ] {
+            assert_eq!(ortho([l, r, b, t, n, f]), None);
         }
     }
 }
