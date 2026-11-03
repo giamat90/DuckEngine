@@ -22,7 +22,7 @@
 
 ## 3. Job system (ADR-0004)
 
-The phase 4 shape of `IScheduler`, the test schedulers and the scheduler spike is proposed in [physics-and-jobs-v0](physics-and-jobs-v0.md).
+The phase 4 shape of `IScheduler`, the test schedulers and the scheduler spike is proposed in [physics-and-jobs-v0](physics-and-jobs-v0.md). The spike result is recorded in [ADR-0004](../decisions/adr-0004-job-system.md): a lock-free work-stealing pool with a bounded spin-then-park wait; fibers are excluded in phase 4, so the "spike compares them" line below is settled by that ADR.
 
 - Interface `IScheduler` (submit job, parallel-for, dependency/counter, wait-help) so the implementation is replaceable and tests can use a deterministic single-thread scheduler.
 - Candidate implementations: (a) **work-stealing thread pool** with task counters (proposed first), (b) **fibers** as in Naughty Dog's engine [S listing](https://www.gdcvault.com/play/1022186). A spike compares them on real workloads (ECS iteration, physics solve, mixer) before committing.
