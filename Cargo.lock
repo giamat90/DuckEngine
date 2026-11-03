@@ -151,6 +151,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tools_scheduler_spike"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "jobs",
+ "platform",
+]
+
+[[package]]
 name = "tools_shaderc"
 version = "0.1.0"
 dependencies = [
