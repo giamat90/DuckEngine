@@ -1,0 +1,21 @@
+[package]
+name = "tools_physics_spike"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Throw-away harness of the ADR-0018 spike (card 4-2): one stacking scene in a locked-axis 3D, a dimension-generic and a native 2D layout; report only."
+
+[features]
+default = ["variant-a", "variant-b", "variant-b3", "variant-c"]
+variant-a = []
+variant-b = []
+variant-b3 = []
+variant-c = []
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+
+[lints]
+workspace = true

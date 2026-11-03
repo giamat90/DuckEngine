@@ -76,6 +76,13 @@ name = "g1-control"
 version = "0.1.0"
 
 [[package]]
+name = "jobs"
+version = "0.1.0"
+dependencies = [
+ "base",
+]
+
+[[package]]
 name = "libmimalloc-sys"
 version = "0.1.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -129,11 +136,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tools_physics_spike"
+version = "0.1.0"
+dependencies = [
+ "base",
+]
+
+[[package]]
 name = "tools_render_bench"
 version = "0.1.0"
 dependencies = [
  "base",
  "render",
+]
+
+[[package]]
+name = "tools_scheduler_spike"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "jobs",
+ "platform",
 ]
 
 [[package]]

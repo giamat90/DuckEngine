@@ -1,0 +1,32 @@
+[package]
+name = "tools_scheduler_spike"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Throw-away harness of the ADR-0004 spike (card 4-5): four std-only work distribution candidates behind the jobs IScheduler, synthetic workloads, report only."
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+jobs = { path = "../jobs", version = "0.1.0", features = ["contract-tests"] }
+platform = { path = "../platform", version = "0.1.0" }
+
+# Not `workspace = true`: the workspace forbids unsafe code. This crate denies it and waives it
+# once, at the crate root, for the one lifetime erasure every pool needs (module `erased`), with
+# every block documented (same pattern as `base` and `skeleton-unsafe`). The rest repeats the
+# workspace lints.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+too_many_lines = "warn"
+too_many_arguments = "deny"
+cognitive_complexity = "deny"
+excessive_nesting = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"

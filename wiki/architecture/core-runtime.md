@@ -22,11 +22,15 @@
 
 ## 3. Job system (ADR-0004)
 
+The phase 4 shape of `IScheduler`, the test schedulers and the scheduler spike is proposed in [physics-and-jobs-v0](physics-and-jobs-v0.md).
+
 - Interface `IScheduler` (submit job, parallel-for, dependency/counter, wait-help) so the implementation is replaceable and tests can use a deterministic single-thread scheduler.
 - Candidate implementations: (a) **work-stealing thread pool** with task counters (proposed first), (b) **fibers** as in Naughty Dog's engine [S listing](https://www.gdcvault.com/play/1022186). A spike compares them on real workloads (ECS iteration, physics solve, mixer) before committing.
 - Frame structured as a **task graph**: systems declare read/write component sets, the scheduler derives ordering and runs independent systems in parallel.
 - `Caps.hasThreads` may be false (the headless/test configuration); the scheduler then runs jobs inline in dependency order - the same deterministic scheduler used in tests.
 - Rules: no blocking I/O or locks inside jobs; blocking work goes to an I/O pool; audio thread is *outside* the job system (hard real-time).
+
+**As built (card 4-4, crate `engine/jobs`, layer 1, depends on `base` only).** `IScheduler: Send + Sync` has `worker_count`, `parallel_for(count, grain, body)`, `run_scope(tasks)` and the provided `for_each(count, grain, body)`. Bodies and tasks are borrowed `&dyn Fn + Sync` (no `'static`, no `Box`), so a call allocates nothing; `run_scope` takes a slice of tasks instead of a spawning closure for the same reason. Fork-join: every call returns only when all its jobs finished. A call is refused with an error value (`InvalidGrain`, `TooManyChunks`, `Busy`) before any job runs; a panic in a job aborts (`panic = abort`). Chunks are disjoint, non-empty, cover `0..count` once, and all but the one ending at `count` have at least `grain` indices; the port promises no order and no thread, so a body must be a pure function of its range (D0 and D1). Implementations: `InlineScheduler` (ascending, the Null path), `ReversedScheduler`, and `ShuffledScheduler` (a fresh Fisher-Yates permutation per call from `base::rng::Pcg32`, buffer sized at construction, a nested call returns `Busy`). The contract suite `jobs::contract` (feature `contract-tests`) checks exactly-once, chunk shape, join visibility, refusals and order independence, and is itself tested against deliberately faulty schedulers. No threads and no `unsafe` yet; the pool of card 4-7 keeps the same port because the closure bounds already are what a pool needs, and the lifetime erasure it requires stays inside the pool. Details and decisions: `reviews/4-4.md`.
 
 ## 4. ECS (ADR-0003)
 

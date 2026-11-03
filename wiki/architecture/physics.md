@@ -2,6 +2,8 @@
 
 Templates studied: Box2D v3 and Jolt (see [state of the art](../01-state-of-the-art.md)). We write our own, using their published design lessons, not their code.
 
+The phase 4 shape of the crates, the job system, the determinism harness, the cards and the choices for the owner is proposed in [physics-and-jobs-v0](physics-and-jobs-v0.md).
+
 ## 1. Boundaries
 
 - `physics` is a **standalone L2 module**: depends only on `base` and `jobs`. It does **not** know about the ECS, scene, or renderer. This keeps its internal data layout free to be optimal and makes it testable in isolation.
