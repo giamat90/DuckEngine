@@ -1,0 +1,18 @@
+[package]
+name = "jobs"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Layer 1 jobs crate: the IScheduler port, the inline scheduler, the order-changing test schedulers and the scheduler contract suite."
+
+[features]
+# The generic contract suite in `jobs::contract`, for the tests of other schedulers (the pool, card 4-7).
+contract-tests = []
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+
+[lints]
+workspace = true
