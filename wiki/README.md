@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.77 (2026-11-03).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.78 (2026-11-03).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.78** - Physics core spike (card 4-2): new page [spikes/physics-core-spike](spikes/physics-core-spike.md), the same stacking scene in a locked-axis 3D world, a dimension-generic core (`D=2` and `D=3`) and a native 2D world (throw-away harness `engine/tools_physics_spike`): bytes per body and contact, step time (locked-axis 3D 2 to 9 times slower than 2D depending on the build, generic core 1 to 5% over hand-written code), code shared, compile time, the four Rust frictions of the generic design with reproduced compiler errors, an unexplained 4.5 to 5.2 times slowdown of the 2D variants, generic or not, when all variants share one binary; recommendation for the owner (keep option B with a narrow trait, C as fallback); the ADR text is card 4-3.
 > - **v0.77** - Phase 4 design note (card 4-1): new page [architecture/physics-and-jobs-v0](architecture/physics-and-jobs-v0.md), where the `jobs` and `physics` crates live (one `physics` crate with modules, because the layer table and the scan rules name it), `IScheduler` and the test schedulers, the sketch of the 2D world API, algorithm choices for v0, the determinism harness (D0/D1 tests, D2 facade, golden file and job, which parts are governance edits), TSan and Miri expectations, test levels, a proposed card breakdown 4-2 to 4-25 and twelve choices for the owner (O1 to O12, each with a recommendation). Nothing is built and nothing is decided on the owner's behalf.
 > - **v0.76** - Phase 3 milestone review (card 3-14): new page [spikes/phase3-milestone-review](spikes/phase3-milestone-review.md), exit criteria checked item by item (the visible triangle and sprites and the image test are pending on card 3-15, not met), hand-measured coverage, mutation, complexity top 5, dependency graph, first CPU frame benchmark, ADR status and thirteen adjustment candidates for the owner; risk register: R-4, R-7, R-8, R-12, R-21, R-23 updated, R-25 (evidence from one developer machine) added.
 > - **v0.75** - New CI job `gl_linux` (card 3-12, governance task): the OpenGL adapter and its tests on Linux under xvfb with Mesa llvmpipe, reporting the OpenGL version the runner offers; [workflow/ci-diagrams](workflow/ci-diagrams.md) updated. Answers open question O7 of the phase 3 design note once a run has happened.
@@ -126,6 +127,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 31 | [decisions/adr-0009-shader-toolchain](decisions/adr-0009-shader-toolchain.md) | ADR-0009 (decided): GLSL 450 + glslang + SPIRV-Cross, DXC at D3D12 |
 | 32 | [spikes/phase3-milestone-review](spikes/phase3-milestone-review.md) | Phase 3 milestone review (card 3-14): exit criteria, metrics, complexity, dependency graph, benchmark, ADR status, risks and go/adjust for the owner; the visible result and image test pending on 3-15 |
 | 33 | [architecture/physics-and-jobs-v0](architecture/physics-and-jobs-v0.md) | Phase 4 design note (card 4-1): `jobs` and `physics` crates, `IScheduler`, determinism harness, TSan, cards 4-2 to 4-25, choices for the owner |
+| 34 | [spikes/physics-core-spike](spikes/physics-core-spike.md) | Physics core spike (card 4-2): locked-axis 3D vs dimension-generic core vs native 2D on one stacking scene; evidence for ADR-0018 |
 
 ## Confidence legend used in this wiki
 

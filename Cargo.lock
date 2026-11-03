@@ -129,6 +129,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tools_physics_spike"
+version = "0.1.0"
+dependencies = [
+ "base",
+]
+
+[[package]]
 name = "tools_render_bench"
 version = "0.1.0"
 dependencies = [
