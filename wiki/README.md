@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.75 (2026-11-02).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.76 (2026-11-02).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.76** - Phase 3 milestone review (card 3-14): new page [spikes/phase3-milestone-review](spikes/phase3-milestone-review.md), exit criteria checked item by item (the visible triangle and sprites and the image test are pending on card 3-15, not met), hand-measured coverage, mutation, complexity top 5, dependency graph, first CPU frame benchmark, ADR status and thirteen adjustment candidates for the owner; risk register: R-4, R-7, R-8, R-12, R-21, R-23 updated, R-25 (evidence from one developer machine) added.
 > - **v0.75** - New CI job `gl_linux` (card 3-12, governance task): the OpenGL adapter and its tests on Linux under xvfb with Mesa llvmpipe, reporting the OpenGL version the runner offers; [workflow/ci-diagrams](workflow/ci-diagrams.md) updated. Answers open question O7 of the phase 3 design note once a run has happened.
 > - **v0.74** - ADR-0009 decided by the owner (card 3-7, governance task): new page [decisions/adr-0009-shader-toolchain](decisions/adr-0009-shader-toolchain.md), shader toolchain GLSL 450 + glslang + SPIRV-Cross, DXC at D3D12, Slang re-evaluated then; `THIRD_PARTY.md` planned rows for the three tools (T2).
 > - **v0.73** - Shader toolchain spike (card 3-6): new page [spikes/shader-toolchain-spike](spikes/shader-toolchain-spike.md), HLSL + DXC, GLSL + glslang + SPIRV-Cross and Slang compared on one sprite shader (Windows, Linux in WSL2), recommendation for the owner; dev harness `tools/shader-spike`. Nothing adopted; ADR-0009 is card 3-7.
@@ -122,6 +123,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 29 | [architecture/platform-ports](architecture/platform-ports.md) | Platform port family v0 (phase 2 design note): clock, threads, file system, window and events, fixed-step frame loop, GLFW boundary, ARM64; choices for the owner |
 | 30 | [spikes/shader-toolchain-spike](spikes/shader-toolchain-spike.md) | Shader toolchain spike (card 3-6): HLSL + DXC vs GLSL + glslang + SPIRV-Cross vs Slang; evidence for ADR-0009 |
 | 31 | [decisions/adr-0009-shader-toolchain](decisions/adr-0009-shader-toolchain.md) | ADR-0009 (decided): GLSL 450 + glslang + SPIRV-Cross, DXC at D3D12 |
+| 32 | [spikes/phase3-milestone-review](spikes/phase3-milestone-review.md) | Phase 3 milestone review (card 3-14): exit criteria, metrics, complexity, dependency graph, benchmark, ADR status, risks and go/adjust for the owner; the visible result and image test pending on 3-15 |
 
 ## Confidence legend used in this wiki
 
