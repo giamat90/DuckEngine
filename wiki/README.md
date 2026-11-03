@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v0.76 (2026-11-02).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v0.77 (2026-11-03).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v0.77** - Phase 4 design note (card 4-1): new page [architecture/physics-and-jobs-v0](architecture/physics-and-jobs-v0.md), where the `jobs` and `physics` crates live (one `physics` crate with modules, because the layer table and the scan rules name it), `IScheduler` and the test schedulers, the sketch of the 2D world API, algorithm choices for v0, the determinism harness (D0/D1 tests, D2 facade, golden file and job, which parts are governance edits), TSan and Miri expectations, test levels, a proposed card breakdown 4-2 to 4-25 and twelve choices for the owner (O1 to O12, each with a recommendation). Nothing is built and nothing is decided on the owner's behalf.
 > - **v0.76** - Phase 3 milestone review (card 3-14): new page [spikes/phase3-milestone-review](spikes/phase3-milestone-review.md), exit criteria checked item by item (the visible triangle and sprites and the image test are pending on card 3-15, not met), hand-measured coverage, mutation, complexity top 5, dependency graph, first CPU frame benchmark, ADR status and thirteen adjustment candidates for the owner; risk register: R-4, R-7, R-8, R-12, R-21, R-23 updated, R-25 (evidence from one developer machine) added.
 > - **v0.75** - New CI job `gl_linux` (card 3-12, governance task): the OpenGL adapter and its tests on Linux under xvfb with Mesa llvmpipe, reporting the OpenGL version the runner offers; [workflow/ci-diagrams](workflow/ci-diagrams.md) updated. Answers open question O7 of the phase 3 design note once a run has happened.
 > - **v0.74** - ADR-0009 decided by the owner (card 3-7, governance task): new page [decisions/adr-0009-shader-toolchain](decisions/adr-0009-shader-toolchain.md), shader toolchain GLSL 450 + glslang + SPIRV-Cross, DXC at D3D12, Slang re-evaluated then; `THIRD_PARTY.md` planned rows for the three tools (T2).
@@ -124,6 +125,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 30 | [spikes/shader-toolchain-spike](spikes/shader-toolchain-spike.md) | Shader toolchain spike (card 3-6): HLSL + DXC vs GLSL + glslang + SPIRV-Cross vs Slang; evidence for ADR-0009 |
 | 31 | [decisions/adr-0009-shader-toolchain](decisions/adr-0009-shader-toolchain.md) | ADR-0009 (decided): GLSL 450 + glslang + SPIRV-Cross, DXC at D3D12 |
 | 32 | [spikes/phase3-milestone-review](spikes/phase3-milestone-review.md) | Phase 3 milestone review (card 3-14): exit criteria, metrics, complexity, dependency graph, benchmark, ADR status, risks and go/adjust for the owner; the visible result and image test pending on 3-15 |
+| 33 | [architecture/physics-and-jobs-v0](architecture/physics-and-jobs-v0.md) | Phase 4 design note (card 4-1): `jobs` and `physics` crates, `IScheduler`, determinism harness, TSan, cards 4-2 to 4-25, choices for the owner |
 
 ## Confidence legend used in this wiki
 
