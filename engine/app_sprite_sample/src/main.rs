@@ -1,0 +1,20 @@
+//! The triangle and sprite sample: `app_sprite_sample [--frames N]`.
+//!
+//! Opens a window, draws a triangle and then sprites with the OpenGL 4.5 device, until the window
+//! is closed or `N` frames are drawn. Needs GLFW (`DUCK_GLFW_LIB` or `glfw3.dll` / `libglfw.so.3`),
+//! a display and an OpenGL 4.5 driver; without them it prints `not run: device not set up (...)`
+//! and exits with code 3. Exit codes: 0 done, 1 failed, 2 bad arguments, 3 no device.
+
+use app_sprite_sample::app;
+use app_sprite_sample::cli::{EXIT_OK, execute};
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    let outcome = execute(std::env::args().skip(1), app::run);
+    if outcome.code == EXIT_OK {
+        println!("{}", outcome.message);
+    } else {
+        eprintln!("{}", outcome.message);
+    }
+    ExitCode::from(outcome.code)
+}
