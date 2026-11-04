@@ -199,7 +199,7 @@ D0 (same machine, same thread count) and D1 (any thread count) are required; D2 
 | Seeded scenes | pyramid, row of boxes, chain, scatter of mixed shapes from `Pcg32`, a sleeping and waking scene, a scene with body creation and destruction between steps | no |
 | Hash/scan bans | `HashMap`/`HashSet`, unstable sort, libm functions, `mul_add`, fused and estimate intrinsics in `physics`: already refused by arch-check (`gates/architecture.toml`) | no change needed |
 | Clippy `disallowed-methods` for `physics` | planned second line for the same bans ([ports-and-adapters](ports-and-adapters.md)); `clippy.toml` is a protected path and is workspace-wide, so a per-crate `disallowed-methods` needs a crate-level `clippy.toml` (also protected, `**/clippy.toml`) | **yes** (governance card) |
-| Facade of deterministic math in `base` | one signature per function (`sin`, `cos`, `tan`, `atan2`, `exp`, `log`, `pow`, `powi`), two implementations: platform `std` with the feature off, own functions built from `+ - * /`, `sqrt` and comparisons with the feature on; `madd(a, b, c)`: fused when the CPU has FMA and the feature is off, `a * b + c` otherwise; tested against a high-precision oracle with a stated ULP bound and bit for bit against stored test vectors. Module name decided when it is built | no (Class 2: determinism math; `base` may call libm, so the scan does not apply) |
+| Facade of deterministic math in `base` | one signature per function (`sin`, `cos`, `tan`, `atan2`, `exp`, `log`, `pow`, `powi`), two implementations: platform `std` with the feature off, own functions built from `+ - * /`, `sqrt` and comparisons with the feature on; `madd(a, b, c)`: fused when the CPU has FMA and the feature is off, `a * b + c` otherwise; tested against a high-precision oracle with a stated ULP bound and bit for bit against stored test vectors. Module `base::dmath` (card 4-8) | no (Class 2: determinism math; `base` may call libm, so the scan does not apply) |
 | Cargo feature `cross-platform-determinism` | in `base` (switch of the facade) and in `physics` (forwards to `base`); off by default | no (`Cargo.toml` of a crate is not a protected path; a workspace `.cargo/config.toml` would be) |
 | Build guard | `compile_error!` when the feature is on and `target_feature = "fma"` is enabled (for example through `RUSTFLAGS` with `-C target-cpu=native`) **[K that `cfg(target_feature)` reflects `target-cpu=native`; to be tested on both targets]**, plus a CI check of `RUSTFLAGS` | the `compile_error!` no; the CI check **yes** (workflow) |
 | `base` math that calls libm (`Mat3` rotation constructors, `Quat::from_axis_angle`, `Quat::slerp`) | routed through the facade when the feature is on; scan does not see libm reached through `base` ([physics §3](physics.md) Limits), so this must land before D2 is claimed | no (Class 2) |
@@ -235,6 +235,59 @@ flowchart TB
 **Lesson from phase 3 (R-21), for this phase.** A hand-started `ci` run showed a pinned vertex hash of rotated sprites differing between Linux x86-64 and AArch64, because `f32::sin_cos` is not bit-identical across platforms (review 3-13, [phase 3 review §8](../spikes/phase3-milestone-review.md)). Consequences here: (1) the physics step avoids `sin`/`cos` entirely by keeping the rotation as a pair (section 2); (2) the D0/D1 replay test never stores a hash, so it cannot fail for that reason; (3) every stored hash (D2 golden) is taken with the feature on, where the physics path calls no libm; (4) a rotated-sprite golden in the render benchmark (adjustment A12 of the phase 3 review) can use the facade once it exists, and is not a phase 4 requirement; (5) the test for each facade function must include the platform pair that failed, Linux x86-64 against Windows x86-64, which the D2 job gives.
 
 **Toolchain.** The pinned `rust-toolchain.toml` is part of the D2 promise (physics §3 rule 10): a compiler update is accepted only when the golden hash still matches on both platforms. A toolchain change is already a governance change (`rust-toolchain.toml` is protected).
+
+**As built in card 4-8.** The facade is the module `base::dmath` ([engine/base/src/dmath](../../engine/base/src/dmath/mod.rs)): the free functions `sin`, `cos`, `sin_cos`, `tan`, `atan2`, `asin`, `acos`, `exp`, `log`, `pow`, `powi` and `madd`, one signature each, switched by the Cargo feature `cross-platform-determinism` of `base` (off by default; `physics` will forward it). Off: the `std` function of the platform. On: the own function of `base::dmath::portable`, which does all arithmetic in IEEE `f64` with `+ - * /` and `sqrt` only (Cody-Waite reduction by `pi/2` and `ln 2`, Taylor series whose coefficients are computed at compile time, argument halving for the arctangent), and rounds once to `f32` in integer arithmetic, so the result depends on neither a libm nor the rounding-mode register. Measured: at most 0.5000 `f32` ulp against the `f64` functions of `std` for every function over dense sweeps (the documented bound is 0.51; `powi` 1 ulp for `|n| <= 2^16`), and identical bit patterns on Windows x86-64 and Linux x86-64 (WSL) for the pinned table and a 40960-value hash. `sin`, `cos` and `tan` are accurate for every finite `f32` (Cody-Waite up to `2^20`, an exact Payne-Hanek reduction with 256 bits of `2/pi` above it); NaN and the infinities give NaN. `Mat3::from_rotation_x/y/z`, `Quat::from_axis_angle` and `Quat::slerp` call the facade, so they are deterministic with the feature on and unchanged with it off. A `compile_error!` refuses the feature together with `target_feature = "fma"`; it is a conservative policy guard (Rust never fuses by itself and the own functions call no `mul_add`), kept so that the build is the one the reference results are taken with; a second one refuses 32-bit x86 without SSE2 (x87; this one is not tested, no such target is built). The FMA guard was checked: `-C target-feature=+fma` and `-C target-cpu=native` on the reference machine both trigger it. The CI check of `RUSTFLAGS` and the D2 job stay with cards 4-19 and 4-20. Details and measurements: [review 4-8](../../reviews/4-8.md).
+
+```mermaid
+classDiagram
+  class dmath {
+    <<facade in base>>
+    DETERMINISTIC
+    sin cos sin_cos tan
+    atan2 asin acos
+    exp log pow powi
+    madd
+  }
+  class portable {
+    <<own, f64 inside, one rounding>>
+    trig inverse explog
+  }
+  class series {
+    <<const coefficients, horner>>
+  }
+  class convert {
+    <<to_f32 in integer arithmetic>>
+  }
+  class StdLibm {
+    <<platform libm, feature off>>
+  }
+  class Mat3 {
+    from_rotation_x y z
+  }
+  class Quat {
+    from_axis_angle
+    slerp
+  }
+  class Physics {
+    <<crate, phase 4>>
+  }
+  dmath ..> portable : feature on
+  dmath ..> StdLibm : feature off
+  portable --> series
+  portable --> convert
+  Mat3 ..> dmath
+  Quat ..> dmath
+  Physics ..> dmath : never calls std sin or cos
+```
+
+```mermaid
+flowchart LR
+  B["cargo build base"] --> F{"feature cross-platform-determinism?"}
+  F -->|"off"| S["facade calls std; madd fused only with target_feature fma"]
+  F -->|"on"| G{"target_feature fma?"}
+  G -->|"yes"| E["compile_error!"]
+  G -->|"no"| P["facade calls portable; madd is a * b + c"]
+```
 
 ## 6. TSan and Miri expectations
 
@@ -286,7 +339,7 @@ Proposed; no card exists yet. The main session creates them in Backlog after the
 | 4-5 | **scheduler spike** (ADR-0004): candidates (a) to (d) of section 4, a `wiki/spikes/` page | spike | no |
 | 4-6 | record the result in ADR-0004 | 3 | **yes** (ADRs) |
 | 4-7 | `jobs` work-stealing pool (the chosen candidate), contract suite at several worker counts, per-thread allocation assertion, Miri on its `unsafe` | 2 (concurrency, `unsafe`) | step: `gates/unsafe-budget.toml` row |
-| 4-8 | `base` deterministic math facade (own `sin/cos/tan/atan2/exp/log/pow`, `madd`), feature `cross-platform-determinism`, `compile_error!` guard, `Quat`/`Mat3` routed through it | 2 (determinism math, public API of layer 0) | no |
+| 4-8 | `base` deterministic math facade (own `sin/cos/tan/atan2/exp/log/pow`, `madd`), feature `cross-platform-determinism`, `compile_error!` guard, `Quat`/`Mat3` routed through it (done: module `base::dmath`, see section 5) | 2 (determinism math, public API of layer 0) | no |
 | 4-9 | floating-point control state helper (set and assert, both targets) | 2 (`unsafe`) | step: `gates/unsafe-budget.toml` |
 | 4-10 | `physics` crate: world, handles, bodies, shapes, integration, fixed capacities, state hash, the first free-fall and momentum tests | 2 (new module) | no, unless arch-check needs a row |
 | 4-11 | broadphase tree and pair list | 2 | no |

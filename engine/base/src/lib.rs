@@ -4,6 +4,7 @@
 pub mod alloc;
 pub mod arena;
 pub mod assert;
+pub mod dmath;
 pub mod log;
 pub mod map;
 pub mod math;

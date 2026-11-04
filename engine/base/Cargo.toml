@@ -10,6 +10,11 @@ description = "Layer 0 base crate: deterministic RNG, logging and assertions (st
 [features]
 # Scope markers of the profiling hook (`profile_scope!`) compile to nothing unless this is on.
 profiling = []
+# Switch of the deterministic math facade (`dmath`): off (default) the facade calls the platform `std`
+# functions, on it calls the own implementations built from `+ - * /` and `sqrt`, whose results are
+# bit-identical on every IEEE-754 platform (D2, physics-and-jobs-v0 section 5). `physics` will forward
+# it to this crate. Building with it on and `target_feature = "fma"` is refused (`compile_error!` in `dmath`).
+cross-platform-determinism = []
 
 # Not `workspace = true`: the workspace forbids unsafe code. This crate denies
 # it instead and allows it in three modules (`alloc`, `arena`, `simd::sse2`), with every block

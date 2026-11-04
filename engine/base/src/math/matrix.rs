@@ -12,6 +12,7 @@
 //! SIMD path can be checked against these.
 
 use super::{Scalar, Vec2, Vec3, Vec4};
+use crate::dmath;
 use std::ops::Mul;
 
 /// The operations every size shares. `$n` is the dimension, `$len` is `$n * $n`.
@@ -145,7 +146,7 @@ impl Mat3 {
     #[inline]
     #[must_use]
     pub fn from_rotation_x(angle: Scalar) -> Self {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = dmath::sin_cos(angle);
         Self::from_cols(Vec3::X, Vec3::new(0.0, cos, sin), Vec3::new(0.0, -sin, cos))
     }
 
@@ -153,7 +154,7 @@ impl Mat3 {
     #[inline]
     #[must_use]
     pub fn from_rotation_y(angle: Scalar) -> Self {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = dmath::sin_cos(angle);
         Self::from_cols(Vec3::new(cos, 0.0, -sin), Vec3::Y, Vec3::new(sin, 0.0, cos))
     }
 
@@ -161,7 +162,7 @@ impl Mat3 {
     #[inline]
     #[must_use]
     pub fn from_rotation_z(angle: Scalar) -> Self {
-        let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = dmath::sin_cos(angle);
         Self::from_cols(Vec3::new(cos, sin, 0.0), Vec3::new(-sin, cos, 0.0), Vec3::Z)
     }
 
