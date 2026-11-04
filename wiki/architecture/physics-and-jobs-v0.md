@@ -224,6 +224,71 @@ sequenceDiagram
   B->>P: heap sort by (lower, higher) slot
 ```
 
+- **As built in card 4-12.** After the broadphase the step runs the narrowphase: every pair of the pair list, in list order, is collided by `Dim::collide(a, b, margin)` (`Dim` gains one associated type, `Manifold`, and this one method; `Placed<D>` is the shape, position and rotation of a body) and the result goes into a fixed-capacity buffer owned by the world (`core::manifolds::ManifoldList<D>`, capacity `WorldConfig::max_manifolds`, at most 2^24, overflow counted by `missing()` and `is_complete()` like the pair list). A pair with no contact (further apart than the speculative margin, `WorldConfig::speculative_margin`, default 0.02 m) leaves no entry, so the list is a subsequence of the pair list in the same order. The 2D narrowphase (`d2::narrowphase`, `d2::polygon`) handles the four pairs of the shapes that exist: circle-circle in closed form, circle-box by the Box2D face and vertex regions of the box, box-box by the separating axis test on the face normals of both boxes with reference and incident face clipping (up to two points); the roles of the two boxes are fixed by a small bias (`REFERENCE_FACE_BIAS`, 0.0005 m) that keeps the first body's face as the reference when two faces are almost equally good, ties go to the lower index, and a circle and a box give bit-identical results in either order (the result is computed with the box as first shape and flipped). All work is done in a frame whose origin is the first body's centre, so moving both bodies by the same exact amount changes no relative bit. A `Manifold2` has the unit normal (from the first body to the second), up to `MAX_MANIFOLD_POINTS` = 2 points, and per point the world position (the middle between the two surfaces), the separation (negative when overlapping), the two anchors (the point relative to each body centre, in world axes) and a 16-bit `FeatureId` (kind, and the vertex or face indices that produced the point) that stays the same while the same features touch, which the solver needs for warm starting (card 4-13). Only `+ - * /` and `sqrt` are used, no `sin`, `cos` or `atan2`, no libm, and a result that is not finite (huge coordinates) is `None`, so there is no NaN in a manifold. Degenerate cases are values: coincident centres give the x axis as the normal, zero-radius circles are valid, touching shapes give separation 0. There is **no polygon shape**: this note fixes no vertex limit, so none was invented; the clipping code works on up to 8 vertices internally and is tested with a hexagon and a triangle, but the public shape set is still circle and box. Nothing is applied to the bodies (no force, no impulse; the solver is card 4-13), the state hash is unchanged (pinned test), and the list has its own hash (`ManifoldList::hash`, separate from the state hash). Nothing allocates (per-thread counting allocator test, overflow included). Narrowphase performance is not measured here (card 4-22). Class and sequence views below; evidence and numbers: [reviews/4-12](../../reviews/4-12.md).
+
+```mermaid
+classDiagram
+  class World~D~ {
+    +step(dt) Result
+    +collide()
+    +manifolds() ManifoldList
+  }
+  class ManifoldList~D~ {
+    <<fixed capacity>>
+    +as_slice() ContactManifold
+    +missing() usize
+    +is_complete() bool
+    +hash() u64
+  }
+  class ContactManifold~D~ { first second manifold }
+  class Placed~D~ { shape position rotation }
+  class Dim {
+    <<trait>>
+    +collide(a, b, margin) Option~Manifold~
+  }
+  class D2 { <<2D instance>> }
+  class Manifold2 { normal count points }
+  class ContactPoint2 { point anchor_a anchor_b separation id }
+  class FeatureId { <<u16>> kind first second }
+  class Narrowphase2 {
+    <<d2, private>>
+    circles / circle-box / box-box
+  }
+  class Polygon2 {
+    <<d2, private>>
+    SAT, reference and incident face, clipping
+  }
+  World~D~ *-- ManifoldList~D~
+  ManifoldList~D~ *-- ContactManifold~D~
+  ContactManifold~D~ ..> Manifold2
+  Manifold2 *-- ContactPoint2
+  ContactPoint2 *-- FeatureId
+  D2 ..|> Dim
+  D2 ..> Narrowphase2
+  Narrowphase2 ..> Polygon2
+  Dim ..> Placed~D~
+```
+
+```mermaid
+sequenceDiagram
+  participant W as World::step
+  participant B as Broadphase
+  participant M as ManifoldList
+  participant D as Dim::collide (D2)
+  participant N as narrowphase
+  W->>B: move_proxies, find_pairs (4-11)
+  B-->>W: pairs in canonical order
+  W->>M: clear
+  loop each pair, in list order
+    W->>D: collide(placed first, placed second, margin)
+    D->>N: circles / box-box / circle-box
+    N-->>D: Option of Manifold2 (normal, up to 2 points, ids)
+    D-->>W: Some manifold within the margin, else None
+    W->>M: push (counts missing when full)
+  end
+  Note over W,M: no force is applied; the solver reads the list (card 4-13)
+```
+
 - **Borrowed closures.** `parallel_for` and `run_scope` take closures that borrow the caller's data, so that no `Box` is allocated per frame (the existing `platform::threads::Job` is a `Box<dyn FnOnce() + 'static>`, which allocates). Running a borrowing closure on a worker thread needs a small amount of `unsafe` (lifetime erasure guarded by the scope waiting for completion). This is the one place where `jobs` is expected to use `unsafe` (section 8).
 - **`World<D>`.** The step takes a scheduler and a per-step scratch `Arena` as parameters, so there is no global state and no hidden thread. `WorldConfig` fixes the capacities (bodies, shapes, joints, contacts, tree nodes) at creation; creating a body past the capacity returns an error value and never reallocates, so a steady-state frame allocates nothing (section 7). `dt` is `f32` seconds computed once from `FixedStep::step_ticks`.
 - **Body state.** 2D rotation is stored as a `(cos, sin)` pair, not an angle, and is advanced in the step by a first-order update followed by a normalisation, so the step itself calls no `sin`, `cos` or `atan2`. Those are needed only to create a body from an angle and to read an angle back, and both go through the facade (section 5). This follows Box2D v3 **[K, from background knowledge, not re-read this session]** and is a design choice made so that the hot loop needs no libm at all.

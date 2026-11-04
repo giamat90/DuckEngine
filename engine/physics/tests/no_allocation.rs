@@ -5,8 +5,8 @@
 use base::alloc::{CountingAllocator, count_allocations};
 use base::math::Vec2;
 use physics::d2::{
-    BodyDesc, BodyHandle, BodyKind, DEFAULT_BROADPHASE_MARGIN, PhysicsError, Rot2,
-    STANDARD_GRAVITY, Shape2, World, WorldConfig,
+    BodyDesc, BodyHandle, BodyKind, DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN,
+    PhysicsError, Rot2, STANDARD_GRAVITY, Shape2, World, WorldConfig,
 };
 use std::alloc::System;
 
@@ -23,6 +23,8 @@ fn build_world() -> Result<World, PhysicsError> {
         gravity: STANDARD_GRAVITY,
         max_pairs: 256,
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
+        max_manifolds: 256,
+        speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
     })
 }
 
@@ -142,6 +144,8 @@ fn moving_bodies_in_the_broadphase_finding_pairs_and_overflowing_the_list_alloca
         gravity: STANDARD_GRAVITY,
         max_pairs: 8,
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
+        max_manifolds: 256,
+        speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
     })?;
     let handles = fill(&mut world)?;
     // Every body moves sideways so each one leaves its fat box about every other step and is
@@ -166,6 +170,46 @@ fn moving_bodies_in_the_broadphase_finding_pairs_and_overflowing_the_list_alloca
     });
     assert!(matches!(result, Ok(changes) if changes > 100), "{result:?}");
     assert!(!world.pairs().is_empty() && !world.pairs().is_complete());
+    assert_eq!(counts.calls(), 0, "{counts:?}");
+    Ok(())
+}
+
+#[test]
+fn finding_contacts_and_overflowing_the_manifold_list_allocate_nothing() -> Result<(), PhysicsError>
+{
+    // Eight manifolds fit, a row of 64 overlapping boxes makes far more, so the overflow path runs
+    // on every step; the boxes also fall onto a floor, so contacts of every kind come and go.
+    let mut world = World::new(WorldConfig {
+        max_bodies: CAPACITY + 1,
+        gravity: STANDARD_GRAVITY,
+        max_pairs: 256,
+        broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
+        max_manifolds: 8,
+        speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+    })?;
+    world.create_body(&BodyDesc::new(
+        BodyKind::Static,
+        Vec2::new(0.0, 8.0),
+        Shape2::Box {
+            half_extents: Vec2::new(100.0, 1.0),
+        },
+    ))?;
+    fill(&mut world)?;
+    world.step(DT)?; // warm-up
+    let (result, counts) = count_allocations(|| {
+        let (mut contacts, mut overflowed) = (0, false);
+        for _ in 0..300 {
+            world.step(DT)?;
+            world.collide();
+            contacts += world.manifolds().len();
+            overflowed |= !world.manifolds().is_complete();
+        }
+        Ok::<(usize, bool), PhysicsError>((contacts, overflowed))
+    });
+    assert!(
+        matches!(result, Ok((contacts, true)) if contacts > 100),
+        "{result:?}"
+    );
     assert_eq!(counts.calls(), 0, "{counts:?}");
     Ok(())
 }

@@ -31,6 +31,11 @@ pub enum PhysicsError {
         /// The most pairs one world may hold.
         max: u32,
     },
+    /// The requested manifold capacity is above [`MAX_PAIRS`](crate::core::MAX_PAIRS).
+    ManifoldCapacityTooLarge {
+        /// The most manifolds one world may hold.
+        max: u32,
+    },
 }
 
 impl fmt::Display for PhysicsError {
@@ -48,6 +53,12 @@ impl fmt::Display for PhysicsError {
             Self::InvalidMargin => f.write_str("the margin must be finite and zero or more"),
             Self::PairCapacityTooLarge { max } => {
                 write!(f, "pair capacity too large, at most {max} pairs allowed")
+            }
+            Self::ManifoldCapacityTooLarge { max } => {
+                write!(
+                    f,
+                    "manifold capacity too large, at most {max} manifolds allowed"
+                )
             }
         }
     }
@@ -94,6 +105,10 @@ mod tests {
             (
                 PhysicsError::PairCapacityTooLarge { max: 9 },
                 "pair capacity too large, at most 9 pairs allowed",
+            ),
+            (
+                PhysicsError::ManifoldCapacityTooLarge { max: 3 },
+                "manifold capacity too large, at most 3 manifolds allowed",
             ),
         ];
         for (error, message) in cases {

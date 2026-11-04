@@ -3,14 +3,20 @@
 //! shapes of [`Shape2`]. Applications use the aliases of this module.
 
 mod aabb;
+mod manifold;
+mod narrowphase;
+mod polygon;
 mod rot;
 mod shape;
 
-use crate::core::{Dim, MassProperties};
+use crate::core::{Dim, MassProperties, Placed};
 use base::math::Vec2;
 
-pub use crate::core::{BodyKind, DEFAULT_BROADPHASE_MARGIN, MAX_PAIRS, PhysicsError};
+pub use crate::core::{
+    BodyKind, DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN, MAX_PAIRS, PhysicsError,
+};
 pub use aabb::Aabb2;
+pub use manifold::{ContactPoint2, FeatureId, MAX_MANIFOLD_POINTS, Manifold2};
 pub use rot::Rot2;
 pub use shape::Shape2;
 
@@ -26,6 +32,12 @@ pub type Body = crate::core::Body<D2>;
 pub type Pair = crate::core::Pair<D2>;
 /// The pairs of a 2D world, in canonical order.
 pub type PairList = crate::core::PairList<D2>;
+/// A 2D shape put in the world (see [`Dim::collide`]).
+pub type Placed2 = Placed<D2>;
+/// The manifold of one pair of a 2D world.
+pub type ContactManifold = crate::core::ContactManifold<D2>;
+/// The manifolds of a 2D world, in the order of the pair list.
+pub type ManifoldList = crate::core::ManifoldList<D2>;
 /// Names one body of a 2D world.
 pub type BodyHandle = crate::core::BodyHandle<D2>;
 
@@ -43,6 +55,7 @@ impl Dim for D2 {
     type InvInertia = f32;
     type Shape = Shape2;
     type Bounds = Aabb2;
+    type Manifold = Manifold2;
 
     fn apply_inverse_inertia(_rot: Rot2, inv_inertia: f32, torque: f32) -> f32 {
         inv_inertia * torque
@@ -54,6 +67,10 @@ impl Dim for D2 {
 
     fn shape_bounds(shape: &Shape2, position: Vec2, rot: Rot2) -> Aabb2 {
         shape::bounds(shape, position, rot)
+    }
+
+    fn collide(a: &Placed<Self>, b: &Placed<Self>, margin: f32) -> Option<Manifold2> {
+        narrowphase::collide(a, b, margin)
     }
 
     fn mass_properties(shape: &Shape2, density: f32) -> Result<MassProperties<Self>, PhysicsError> {

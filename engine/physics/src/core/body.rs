@@ -5,7 +5,7 @@
 //! `x_n = x_0 + g dt^2 n (n + 1) / 2`, which is the continuous `x_0 + g t^2 / 2` plus the documented
 //! error `g t dt / 2`: first order in `dt`.
 
-use super::dim::{Dim, Quantity};
+use super::dim::{Dim, Placed, Quantity};
 use super::error::PhysicsError;
 use super::hash::{HashBits, StateHasher};
 use base::pool::Handle;
@@ -254,6 +254,12 @@ impl<D: Dim> Body<D> {
         D::shape_bounds(&self.shape, self.position, self.rotation)
     }
 
+    /// The shape at the body's position and orientation, as the narrowphase reads it.
+    #[must_use]
+    pub fn placed(&self) -> Placed<D> {
+        Placed::new(self.shape, self.position, self.rotation)
+    }
+
     /// Sets the linear velocity.
     pub(super) fn set_linear_velocity(&mut self, velocity: D::Vec) -> Result<(), PhysicsError> {
         self.check_motion(velocity.is_finite())?;
@@ -354,10 +360,25 @@ impl<D: Dim> Body<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::Must;
 
     #[test]
     fn the_kind_tags_are_distinct_and_fixed() {
         assert_eq!(BodyKind::Static.tag(), 0);
         assert_eq!(BodyKind::Dynamic.tag(), 1);
+    }
+
+    #[test]
+    fn a_body_is_placed_with_its_shape_position_and_rotation() {
+        use crate::d2::{D2, Rot2, Shape2};
+        use base::math::Vec2;
+        let shape = Shape2::Circle { radius: 0.5 };
+        let mut desc = BodyDesc::<D2>::new(BodyKind::Dynamic, Vec2::new(1.0, 2.0), shape);
+        desc.rotation = Rot2::from_angle(0.5);
+        let body = Body::from_desc(&desc).must("a valid body");
+        let placed = body.placed();
+        assert_eq!(placed.shape, shape);
+        assert_eq!(placed.position, Vec2::new(1.0, 2.0));
+        assert_eq!(placed.rotation, desc.rotation);
     }
 }

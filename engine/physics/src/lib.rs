@@ -11,3 +11,6 @@
 
 pub mod core;
 pub mod d2;
+
+#[cfg(test)]
+mod test_support;

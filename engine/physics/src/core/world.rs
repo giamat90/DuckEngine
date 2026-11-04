@@ -11,13 +11,19 @@ use super::broadphase::Broadphase;
 use super::dim::{Dim, Quantity};
 use super::error::PhysicsError;
 use super::hash::{HashBits, StateHasher};
-use super::pairs::PairList;
+use super::manifolds::{ContactManifold, ManifoldList};
+use super::pairs::{Pair, PairList};
 use super::tree::ProxyId;
 use base::pool::Pool;
 
 /// The margin, in metres, a fat box is grown by when the configuration does not say otherwise: a
 /// body that moves less than this since its box was last stored costs the tree nothing.
 pub const DEFAULT_BROADPHASE_MARGIN: f32 = 0.1;
+
+/// The distance, in metres, within which two shapes that do not touch yet still get a contact (a
+/// speculative contact, for bodies that would move into each other within the step): 2 centimetres,
+/// four times the slop of `Box2D` v3.
+pub const DEFAULT_SPECULATIVE_MARGIN: f32 = 0.02;
 
 /// What a world is built from. The capacities are fixed for the life of the world.
 pub struct WorldConfig<D: Dim> {
@@ -32,6 +38,17 @@ pub struct WorldConfig<D: Dim> {
     /// ([`DEFAULT_BROADPHASE_MARGIN`]). Pairs are pairs of grown boxes, so a larger margin finds
     /// more pairs and re-inserts a moving body less often.
     pub broadphase_margin: f32,
+    /// The most manifolds the manifold list holds, at most [`MAX_PAIRS`](super::MAX_PAIRS). A
+    /// manifold exists only for a pair whose shapes touch or are within the speculative margin, so
+    /// this is normally far below `max_pairs`. Manifolds past it are counted, not stored (see
+    /// [`ManifoldList`]).
+    pub max_manifolds: u32,
+    /// The distance, in metres, up to which shapes that do not touch still get a contact, zero or
+    /// more ([`DEFAULT_SPECULATIVE_MARGIN`]). A pair is a candidate only when the fat boxes of the
+    /// broadphase overlap, so a margin above the broadphase margin is not reached for every pair; it
+    /// is not checked. A box pair can also give no contact inside the margin when the closest
+    /// corners are further apart than the margin (the separating axes alone are within it).
+    pub speculative_margin: f32,
 }
 
 // Written by hand: `#[derive]` would add the bound `D: Clone` (ADR-0018, Rust friction 3).
@@ -59,6 +76,8 @@ pub struct World<D: Dim> {
     gravity: D::Vec,
     steps: u64,
     broadphase: Broadphase<D>,
+    manifolds: ManifoldList<D>,
+    speculative_margin: f32,
 }
 
 /// The live body `handle` names in `slots`, or `StaleHandle`.
@@ -71,6 +90,22 @@ fn live_slot<D: Dim>(
         .and_then(Option::as_ref)
         .filter(|slot| slot.handle == handle)
         .ok_or(PhysicsError::StaleHandle)
+}
+
+/// The manifold of `pair`, or `None` when a body of the pair is gone or the shapes do not touch.
+fn contact_of<D: Dim>(
+    slots: &[Option<Slot<D>>],
+    pair: &Pair<D>,
+    margin: f32,
+) -> Option<ContactManifold<D>> {
+    let first = live_slot(slots, pair.first).ok()?;
+    let second = live_slot(slots, pair.second).ok()?;
+    let manifold = D::collide(&first.body.placed(), &second.body.placed(), margin)?;
+    Some(ContactManifold {
+        first: first.handle,
+        second: second.handle,
+        manifold,
+    })
 }
 
 /// Mutable form of [`live_slot`].
@@ -90,7 +125,9 @@ impl<D: Dim> World<D> {
     ///
     /// # Errors
     /// [`PhysicsError::CapacityTooLarge`] when `max_bodies` is above [`MAX_BODIES`];
-    /// [`PhysicsError::NotFinite`] when the gravity is not finite.
+    /// [`PhysicsError::NotFinite`] when the gravity is not finite;
+    /// [`PhysicsError::InvalidMargin`] when the broadphase or speculative margin is not a finite
+    /// number of zero or more; the pair and manifold capacities have their own errors.
     pub fn new(config: WorldConfig<D>) -> Result<Self, PhysicsError> {
         if config.max_bodies > MAX_BODIES {
             return Err(PhysicsError::CapacityTooLarge { max: MAX_BODIES });
@@ -103,6 +140,10 @@ impl<D: Dim> World<D> {
             config.broadphase_margin,
             config.max_pairs,
         )?;
+        if !(config.speculative_margin.is_finite() && config.speculative_margin >= 0.0) {
+            return Err(PhysicsError::InvalidMargin);
+        }
+        let manifolds = ManifoldList::new(config.max_manifolds)?;
         let mut slots = Vec::with_capacity(config.max_bodies as usize);
         slots.resize_with(config.max_bodies as usize, || None);
         Ok(Self {
@@ -112,6 +153,8 @@ impl<D: Dim> World<D> {
             gravity: config.gravity,
             steps: 0,
             broadphase,
+            manifolds,
+            speculative_margin: config.speculative_margin,
         })
     }
 
@@ -232,6 +275,14 @@ impl<D: Dim> World<D> {
         self.broadphase.pairs()
     }
 
+    /// The manifolds of the pairs of [`World::pairs`] whose shapes touch or are within the
+    /// speculative margin, as the last [`World::step`] or [`World::collide`] made them, in the order
+    /// of the pair list.
+    #[must_use]
+    pub fn manifolds(&self) -> &ManifoldList<D> {
+        &self.manifolds
+    }
+
     /// The box the broadphase holds for a body: its tight box grown by the margin when the box was
     /// stored (it is stored again only when the body leaves it), or the tight box itself for a
     /// static body.
@@ -255,6 +306,21 @@ impl<D: Dim> World<D> {
     /// step. Allocates nothing.
     pub fn find_pairs(&mut self) {
         self.broadphase.find_pairs(&self.slots);
+    }
+
+    /// Makes the manifolds again from the pairs the pair list holds now and the bodies as they are
+    /// now. [`World::step`] does this after finding the pairs; call it after [`World::find_pairs`]
+    /// to see the contacts of a scene without a step. Applies no force. Allocates nothing.
+    pub fn collide(&mut self) {
+        self.manifolds.clear();
+        let (slots, margin) = (&self.slots, self.speculative_margin);
+        let pairs = self.broadphase.pairs().as_slice();
+        for entry in pairs
+            .iter()
+            .filter_map(|pair| contact_of(slots, pair, margin))
+        {
+            self.manifolds.push(entry);
+        }
     }
 
     /// Sets the linear velocity of a dynamic body.
@@ -314,7 +380,8 @@ impl<D: Dim> World<D> {
     }
 
     /// Advances every dynamic body by `dt` seconds, moves their boxes in the broadphase and finds
-    /// the pairs again ([`World::pairs`]). The caller passes the same `dt` every step (the fixed step
+    /// the pairs again ([`World::pairs`]) and makes the manifolds of the pairs ([`World::manifolds`];
+    /// no force is applied yet). The caller passes the same `dt` every step (the fixed step
     /// of the application); allocates nothing.
     ///
     /// # Errors
@@ -342,6 +409,7 @@ impl<D: Dim> World<D> {
         self.broadphase.move_proxies(&self.slots)?;
         self.steps += 1;
         self.find_pairs();
+        self.collide();
         Ok(())
     }
 
@@ -385,6 +453,8 @@ mod tests {
             gravity,
             max_pairs: 256,
             broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
+            max_manifolds: 256,
+            speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         }) {
             Ok(world) => world,
             Err(error) => panic!("world must build: {error}"),
@@ -451,6 +521,8 @@ mod tests {
             gravity: Vec2::ZERO,
             max_pairs: 256,
             broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
+            max_manifolds: 256,
+            speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         };
         assert!(matches!(
             World::new(config).err(),
@@ -466,6 +538,8 @@ mod tests {
                 gravity,
                 max_pairs: 256,
                 broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
+                max_manifolds: 256,
+                speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
             };
             assert_eq!(World::new(config).err(), Some(PhysicsError::NotFinite));
         }
@@ -648,6 +722,8 @@ mod tests {
             gravity: Vec2::new(0.0, G),
             max_pairs: 256,
             broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
+            max_manifolds: 256,
+            speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         };
         let mut world = world(1, Vec2::ZERO);
         let handle = create(&mut world, &cloned(&desc));
@@ -1153,6 +1229,8 @@ mod tests {
             gravity: Vec2::ZERO,
             max_pairs,
             broadphase_margin: margin,
+            max_manifolds: 256,
+            speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         }) {
             Ok(world) => world,
             Err(error) => panic!("world must build: {error}"),
@@ -1179,12 +1257,64 @@ mod tests {
     }
 
     #[test]
+    fn a_manifold_capacity_above_the_maximum_or_a_bad_speculative_margin_refuses_the_world() {
+        let config = |max_manifolds, speculative_margin| WorldConfig::<D2> {
+            max_bodies: 4,
+            gravity: Vec2::ZERO,
+            max_pairs: 4,
+            broadphase_margin: 0.1,
+            max_manifolds,
+            speculative_margin,
+        };
+        assert_eq!(
+            World::new(config(MAX_PAIRS + 1, 0.02)).err(),
+            Some(PhysicsError::ManifoldCapacityTooLarge { max: MAX_PAIRS })
+        );
+        for margin in [-1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(
+                World::new(config(4, margin)).err(),
+                Some(PhysicsError::InvalidMargin)
+            );
+        }
+        assert!(World::new(config(MAX_PAIRS, 0.0)).is_ok());
+        let world = World::new(config(7, DEFAULT_SPECULATIVE_MARGIN));
+        assert_eq!(world.map(|w| w.manifolds().capacity()).ok(), Some(7));
+    }
+
+    #[test]
+    fn a_step_makes_the_manifolds_of_the_pairs_and_collide_makes_them_again() {
+        let mut world = world(4, Vec2::ZERO);
+        let first = create(&mut world, &dynamic(0.0, 0.0));
+        let second = create(&mut world, &dynamic(0.9, 0.0));
+        create(&mut world, &dynamic(5.0, 0.0));
+        assert!(world.manifolds().is_empty());
+        step_n(&mut world, 1);
+        let [entry] = world.manifolds().as_slice() else {
+            panic!("one manifold expected");
+        };
+        assert_eq!((entry.first, entry.second), (first, second));
+        let before = world.manifolds().hash();
+        world.collide();
+        assert_eq!(
+            (world.manifolds().len(), world.manifolds().hash()),
+            (1, before)
+        );
+        // Moving a body far away and finding the pairs again leaves nothing to collide.
+        assert!(world.contains(second));
+        assert_eq!(world.destroy_body(second), Ok(()));
+        world.collide();
+        assert!(world.manifolds().is_empty());
+    }
+
+    #[test]
     fn a_pair_capacity_above_the_maximum_or_a_bad_margin_refuses_the_world() {
         let config = |max_pairs, broadphase_margin| WorldConfig::<D2> {
             max_bodies: 4,
             gravity: Vec2::ZERO,
             max_pairs,
             broadphase_margin,
+            max_manifolds: 256,
+            speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         };
         assert_eq!(
             World::new(config(MAX_PAIRS + 1, 0.1)).err(),

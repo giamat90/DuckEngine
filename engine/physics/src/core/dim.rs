@@ -10,6 +10,7 @@ use super::bounds::Bounds;
 use super::error::PhysicsError;
 use super::hash::{HashBits, StateHasher};
 use base::math::{Vec2, Vec3};
+use std::fmt::Debug;
 use std::ops::{Add, Mul};
 
 /// A number-like value the world stores: it can be zero (`Default`), checked for finiteness and
@@ -75,6 +76,37 @@ impl<D: Dim> Clone for MassProperties<D> {
 
 impl<D: Dim> Copy for MassProperties<D> {}
 
+/// A shape put in the world: what the narrowphase reads of a body.
+pub struct Placed<D: Dim> {
+    /// The shape, in the body frame.
+    pub shape: D::Shape,
+    /// Where the body's centre of mass is.
+    pub position: D::Vec,
+    /// How the body is turned.
+    pub rotation: D::Rot,
+}
+
+// Written by hand: `#[derive]` would add the bound `D: Clone` (ADR-0018, Rust friction 3).
+impl<D: Dim> Clone for Placed<D> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<D: Dim> Copy for Placed<D> {}
+
+impl<D: Dim> Placed<D> {
+    /// A shape at `position`, turned by `rotation`.
+    #[must_use]
+    pub const fn new(shape: D::Shape, position: D::Vec, rotation: D::Rot) -> Self {
+        Self {
+            shape,
+            position,
+            rotation,
+        }
+    }
+}
+
 /// Everything that depends on the dimension.
 pub trait Dim: Sized {
     /// Position, velocity, force, gravity.
@@ -89,6 +121,8 @@ pub trait Dim: Sized {
     type Shape: Copy + HashBits;
     /// The axis-aligned box the broadphase stores.
     type Bounds: Bounds;
+    /// What the narrowphase makes of two touching shapes: the contact normal and points.
+    type Manifold: Copy + Debug + PartialEq + HashBits;
 
     /// The angular acceleration a `torque` gives a body of inverse inertia `inv_inertia` at
     /// orientation `rot`.
@@ -105,6 +139,12 @@ pub trait Dim: Sized {
     /// The tightest axis-aligned box around `shape` placed at `position` with orientation `rot`.
     /// Not valid (see [`Bounds::is_valid`]) when an input is not finite or a coordinate overflows.
     fn shape_bounds(shape: &Self::Shape, position: Self::Vec, rot: Self::Rot) -> Self::Bounds;
+
+    /// The contact manifold of two placed shapes, or `None` when they are further apart than
+    /// `margin` (a speculative distance, zero or more) or the input is not valid (a shape out of
+    /// range, a value not finite, an intermediate result that overflows). The normal points from
+    /// `a` to `b`. Never returns a manifold with a value that is not finite.
+    fn collide(a: &Placed<Self>, b: &Placed<Self>, margin: f32) -> Option<Self::Manifold>;
 
     /// Mass and inverse inertia of `shape` at `density` kilograms per unit of volume (per square
     /// metre in 2D).

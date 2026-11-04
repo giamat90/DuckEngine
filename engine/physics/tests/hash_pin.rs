@@ -6,8 +6,8 @@
 
 use base::math::Vec2;
 use physics::d2::{
-    BodyDesc, BodyKind, DEFAULT_BROADPHASE_MARGIN, PhysicsError, STANDARD_GRAVITY, Shape2, World,
-    WorldConfig,
+    BodyDesc, BodyKind, DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN, PhysicsError,
+    STANDARD_GRAVITY, Shape2, World, WorldConfig,
 };
 
 const DT: f32 = 1.0 / 60.0;
@@ -24,6 +24,8 @@ fn scene() -> Result<World, PhysicsError> {
         gravity: STANDARD_GRAVITY,
         max_pairs: 256,
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
+        max_manifolds: 256,
+        speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
     })?;
     world.create_body(&BodyDesc::new(
         BodyKind::Static,
@@ -63,6 +65,35 @@ fn the_state_hash_of_a_reference_scene_is_the_one_of_card_4_10() -> Result<(), P
             taken += 1;
         }
         assert_eq!(world.state_hash(), expected, "after {steps} steps");
+    }
+    Ok(())
+}
+
+/// (steps taken, hash of the manifold buffer after them, manifolds then), measured with this card
+/// (4-12) on Windows and Linux, feature off and on. The bodies fall through the floor and each
+/// other (there is no solver yet), so contacts exist only for a while, from step 45 to 96.
+const MANIFOLD_CHECKPOINTS: [(usize, u64, usize); 3] = [
+    (50, 0x9eff_1804_b4f4_fba1, 1),
+    (60, 0xb3d9_1793_4f15_fe0f, 3),
+    (75, 0xef5a_6fc7_901b_48e1, 2),
+];
+
+#[test]
+fn the_manifold_buffer_of_a_reference_scene_hashes_to_the_pinned_values() -> Result<(), PhysicsError>
+{
+    let mut world = scene()?;
+    let mut taken = 0;
+    for (steps, expected, count) in MANIFOLD_CHECKPOINTS {
+        while taken < steps {
+            world.step(DT)?;
+            taken += 1;
+        }
+        assert_eq!(
+            (world.manifolds().hash(), world.manifolds().len()),
+            (expected, count),
+            "after {steps} steps"
+        );
+        assert!(world.manifolds().is_complete());
     }
     Ok(())
 }

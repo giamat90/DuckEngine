@@ -60,7 +60,7 @@ fn positive(size: f32) -> bool {
 
 /// True when every size of the shape is finite and above zero. Sizes are checked here and not left
 /// to the mass check, because two negative half extents give a positive area.
-fn is_valid(shape: &Shape2) -> bool {
+pub(super) fn is_valid(shape: &Shape2) -> bool {
     match *shape {
         Shape2::Circle { radius } => positive(radius),
         Shape2::Box { half_extents } => [half_extents.x, half_extents.y].into_iter().all(positive),

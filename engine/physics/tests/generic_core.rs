@@ -6,8 +6,8 @@
 
 use base::math::Vec3;
 use physics::core::{
-    BodyDesc, BodyKind, Bounds, DEFAULT_BROADPHASE_MARGIN, Dim, HashBits, MassProperties,
-    PhysicsError, StateHasher, World, WorldConfig,
+    BodyDesc, BodyKind, Bounds, DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN, Dim,
+    HashBits, MassProperties, PhysicsError, Placed, StateHasher, World, WorldConfig,
 };
 use std::f32::consts::PI;
 
@@ -41,6 +41,16 @@ impl HashBits for Box3 {
         for value in self.min.into_iter().chain(self.max) {
             hasher.write_f32(value);
         }
+    }
+}
+
+/// The depth two spheres overlap by; a second dimension needs only this much of a manifold.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Depth(f32);
+
+impl HashBits for Depth {
+    fn write_bits(&self, hasher: &mut StateHasher) {
+        hasher.write_f32(self.0);
     }
 }
 
@@ -86,6 +96,7 @@ impl Dim for Planar3 {
     type InvInertia = f32;
     type Shape = Sphere;
     type Bounds = Box3;
+    type Manifold = Depth;
 
     fn apply_inverse_inertia(_rot: f32, inv_inertia: f32, torque: f32) -> f32 {
         inv_inertia * torque
@@ -101,6 +112,12 @@ impl Dim for Planar3 {
             min: [position.x - r, position.y - r, position.z - r],
             max: [position.x + r, position.y + r, position.z + r],
         }
+    }
+
+    fn collide(a: &Placed<Self>, b: &Placed<Self>, margin: f32) -> Option<Depth> {
+        let distance = (b.position - a.position).length();
+        let depth = a.shape.radius + b.shape.radius - distance;
+        (depth >= -margin).then_some(Depth(depth))
     }
 
     fn mass_properties(shape: &Sphere, density: f32) -> Result<MassProperties<Self>, PhysicsError> {
@@ -130,6 +147,8 @@ fn build() -> Result<World3, PhysicsError> {
         gravity: Vec3::new(0.0, -10.0, 0.0),
         max_pairs: 256,
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
+        max_manifolds: 256,
+        speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
     })
 }
 
@@ -192,6 +211,8 @@ fn the_second_dimension_gets_its_pairs_from_the_same_tree_and_pair_list() -> Res
         gravity: Vec3::ZERO,
         max_pairs: 16,
         broadphase_margin: 0.0,
+        max_manifolds: 256,
+        speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
     })?;
     let ball = |x: f32, y: f32, z: f32| {
         BodyDesc::<Planar3>::new(BodyKind::Dynamic, Vec3::new(x, y, z), sphere(1.0))
