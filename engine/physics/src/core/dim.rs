@@ -6,6 +6,7 @@
 //! Rule kept from physics.md section 4: specialise rather than branch on the dimension; there is no
 //! `if D == 2` anywhere in the core.
 
+use super::bounds::Bounds;
 use super::error::PhysicsError;
 use super::hash::{HashBits, StateHasher};
 use base::math::{Vec2, Vec3};
@@ -86,6 +87,8 @@ pub trait Dim: Sized {
     type InvInertia: Quantity;
     /// The shape descriptor, plain data.
     type Shape: Copy + HashBits;
+    /// The axis-aligned box the broadphase stores.
+    type Bounds: Bounds;
 
     /// The angular acceleration a `torque` gives a body of inverse inertia `inv_inertia` at
     /// orientation `rot`.
@@ -98,6 +101,10 @@ pub trait Dim: Sized {
     /// The orientation after turning with `angular_velocity` for `dt` seconds. Must return a valid
     /// orientation (normalised) without calling `sin`, `cos` or `atan2`.
     fn advance_rotation(rot: Self::Rot, angular_velocity: Self::Ang, dt: f32) -> Self::Rot;
+
+    /// The tightest axis-aligned box around `shape` placed at `position` with orientation `rot`.
+    /// Not valid (see [`Bounds::is_valid`]) when an input is not finite or a coordinate overflows.
+    fn shape_bounds(shape: &Self::Shape, position: Self::Vec, rot: Self::Rot) -> Self::Bounds;
 
     /// Mass and inverse inertia of `shape` at `density` kilograms per unit of volume (per square
     /// metre in 2D).

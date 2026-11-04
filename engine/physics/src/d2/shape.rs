@@ -1,7 +1,7 @@
 //! 2D shape descriptors and their mass properties.
 
 use crate::core::{HashBits, MassProperties, PhysicsError, StateHasher};
-use crate::d2::D2;
+use crate::d2::{Aabb2, D2, Rot2};
 use base::math::Vec2;
 use std::f32::consts::PI;
 
@@ -65,6 +65,24 @@ fn is_valid(shape: &Shape2) -> bool {
         Shape2::Circle { radius } => positive(radius),
         Shape2::Box { half_extents } => [half_extents.x, half_extents.y].into_iter().all(positive),
     }
+}
+
+/// The tightest axis-aligned box around `shape` at `position`, turned by `rot`. A circle is as wide
+/// as its diameter at any angle; a box of half extents `(hx, hy)` turned by `(c, s)` reaches
+/// `|c| hx + |s| hy` along x and `|s| hx + |c| hy` along y.
+pub(super) fn bounds(shape: &Shape2, position: Vec2, rot: Rot2) -> Aabb2 {
+    let reach = match *shape {
+        Shape2::Circle { radius } => Vec2::new(radius, radius),
+        Shape2::Box { half_extents } => {
+            let (cos, sin) = rot.direction();
+            let (cos, sin) = (cos.abs(), sin.abs());
+            Vec2::new(
+                cos * half_extents.x + sin * half_extents.y,
+                sin * half_extents.x + cos * half_extents.y,
+            )
+        }
+    };
+    Aabb2::new(position - reach, position + reach)
 }
 
 /// Mass and inverse inertia of `shape` at `density` kilograms per square metre.

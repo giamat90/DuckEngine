@@ -7,10 +7,17 @@
 
 use super::MAX_BODIES;
 use super::body::{Body, BodyDesc, BodyHandle, BodyTag};
+use super::broadphase::Broadphase;
 use super::dim::{Dim, Quantity};
 use super::error::PhysicsError;
 use super::hash::{HashBits, StateHasher};
+use super::pairs::PairList;
+use super::tree::ProxyId;
 use base::pool::Pool;
+
+/// The margin, in metres, a fat box is grown by when the configuration does not say otherwise: a
+/// body that moves less than this since its box was last stored costs the tree nothing.
+pub const DEFAULT_BROADPHASE_MARGIN: f32 = 0.1;
 
 /// What a world is built from. The capacities are fixed for the life of the world.
 pub struct WorldConfig<D: Dim> {
@@ -18,6 +25,13 @@ pub struct WorldConfig<D: Dim> {
     pub max_bodies: u32,
     /// Acceleration of gravity in metres per second squared.
     pub gravity: D::Vec,
+    /// The most overlapping pairs the pair list holds, at most [`MAX_PAIRS`](super::MAX_PAIRS).
+    /// Pairs past it are counted, not stored (see [`PairList`]).
+    pub max_pairs: u32,
+    /// How far, in metres, the broadphase grows a body's box on every side, zero or more
+    /// ([`DEFAULT_BROADPHASE_MARGIN`]). Pairs are pairs of grown boxes, so a larger margin finds
+    /// more pairs and re-inserts a moving body less often.
+    pub broadphase_margin: f32,
 }
 
 // Written by hand: `#[derive]` would add the bound `D: Clone` (ADR-0018, Rust friction 3).
@@ -30,9 +44,11 @@ impl<D: Dim> Clone for WorldConfig<D> {
 impl<D: Dim> Copy for WorldConfig<D> {}
 
 /// A live body and the handle that names it.
-struct Slot<D: Dim> {
-    handle: BodyHandle<D>,
-    body: Body<D>,
+pub(super) struct Slot<D: Dim> {
+    pub(super) handle: BodyHandle<D>,
+    pub(super) body: Body<D>,
+    /// The body's leaf in the static or the dynamic tree, by its kind. The leaf id is the slot index.
+    pub(super) proxy: ProxyId,
 }
 
 /// A rigid-body world.
@@ -42,6 +58,7 @@ pub struct World<D: Dim> {
     capacity: u32,
     gravity: D::Vec,
     steps: u64,
+    broadphase: Broadphase<D>,
 }
 
 /// The live body `handle` names in `slots`, or `StaleHandle`.
@@ -81,6 +98,11 @@ impl<D: Dim> World<D> {
         if !config.gravity.is_finite() {
             return Err(PhysicsError::NotFinite);
         }
+        let broadphase = Broadphase::new(
+            config.max_bodies,
+            config.broadphase_margin,
+            config.max_pairs,
+        )?;
         let mut slots = Vec::with_capacity(config.max_bodies as usize);
         slots.resize_with(config.max_bodies as usize, || None);
         Ok(Self {
@@ -89,6 +111,7 @@ impl<D: Dim> World<D> {
             capacity: config.max_bodies,
             gravity: config.gravity,
             steps: 0,
+            broadphase,
         })
     }
 
@@ -136,27 +159,49 @@ impl<D: Dim> World<D> {
     /// nothing: no slot is used up.
     pub fn create_body(&mut self, desc: &BodyDesc<D>) -> Result<BodyHandle<D>, PhysicsError> {
         let body = Body::from_desc(desc)?;
+        if !self.broadphase.can_hold(body.kind(), &body.bounds()) {
+            return Err(PhysicsError::NotFinite);
+        }
         let handle = self
             .handles
             .insert(BodyTag::new())
             .map_err(|_| PhysicsError::CapacityExhausted)?;
-        if let Some(slot) = self.slots.get_mut(handle.index() as usize) {
-            *slot = Some(Slot { handle, body });
-            return Ok(handle);
+        if let Err(error) = self.place(handle, body) {
+            // Not reachable: the pool, the slot vector and both trees have the same capacity and
+            // the box was checked above.
+            self.handles.remove(handle);
+            return Err(error);
         }
-        // Not reachable: the pool and the slot vector have the same length.
-        self.handles.remove(handle);
-        Err(PhysicsError::CapacityExhausted)
+        Ok(handle)
+    }
+
+    /// Stores `body` in the slot of `handle` and in the tree of its kind.
+    fn place(&mut self, handle: BodyHandle<D>, body: Body<D>) -> Result<(), PhysicsError> {
+        let slot = self
+            .slots
+            .get_mut(handle.index() as usize)
+            .ok_or(PhysicsError::CapacityExhausted)?;
+        let proxy = self
+            .broadphase
+            .insert(body.kind(), &body.bounds(), handle.index())?;
+        *slot = Some(Slot {
+            handle,
+            body,
+            proxy,
+        });
+        Ok(())
     }
 
     /// Destroys a body; its slot is reused by a later body with a higher generation, unless the
     /// generation cannot advance any more: such a slot is retired for good and the number of bodies
-    /// that can exist at once then falls below `capacity`.
+    /// that can exist at once then falls below `capacity`. The pair list keeps the pairs of the
+    /// destroyed body until the next [`World::find_pairs`] or [`World::step`].
     ///
     /// # Errors
     /// [`PhysicsError::StaleHandle`].
     pub fn destroy_body(&mut self, handle: BodyHandle<D>) -> Result<(), PhysicsError> {
-        live_slot(&self.slots, handle)?;
+        let slot = live_slot(&self.slots, handle)?;
+        self.broadphase.remove(slot.body.kind(), slot.proxy)?;
         self.handles.remove(handle);
         if let Some(slot) = self.slots.get_mut(handle.index() as usize) {
             *slot = None;
@@ -178,6 +223,38 @@ impl<D: Dim> World<D> {
             .iter()
             .flatten()
             .map(|slot| (slot.handle, &slot.body))
+    }
+
+    /// The pairs of bodies whose broadphase boxes overlapped at the last [`World::step`] or
+    /// [`World::find_pairs`], in canonical order (see [`PairList`]).
+    #[must_use]
+    pub fn pairs(&self) -> &PairList<D> {
+        self.broadphase.pairs()
+    }
+
+    /// The box the broadphase holds for a body: its tight box grown by the margin when the box was
+    /// stored (it is stored again only when the body leaves it), or the tight box itself for a
+    /// static body.
+    ///
+    /// # Errors
+    /// [`PhysicsError::StaleHandle`].
+    pub fn broadphase_bounds(&self, handle: BodyHandle<D>) -> Result<D::Bounds, PhysicsError> {
+        let slot = live_slot(&self.slots, handle)?;
+        self.broadphase.bounds(slot.body.kind(), slot.proxy)
+    }
+
+    /// A hash of the structure of both trees (see [`Tree::structure_hash`]); two worlds built and
+    /// stepped by the same calls have the same one. It is not part of [`World::state_hash`].
+    #[must_use]
+    pub fn broadphase_hash(&self) -> u64 {
+        self.broadphase.structure_hash()
+    }
+
+    /// Finds the pairs again from the boxes the trees hold now. [`World::step`] does this after
+    /// moving the bodies; call it after creating or destroying bodies to see their pairs without a
+    /// step. Allocates nothing.
+    pub fn find_pairs(&mut self) {
+        self.broadphase.find_pairs(&self.slots);
     }
 
     /// Sets the linear velocity of a dynamic body.
@@ -236,14 +313,16 @@ impl<D: Dim> World<D> {
             .apply_torque(torque)
     }
 
-    /// Advances every dynamic body by `dt` seconds. The caller passes the same `dt` every step (the
-    /// fixed step of the application); allocates nothing.
+    /// Advances every dynamic body by `dt` seconds, moves their boxes in the broadphase and finds
+    /// the pairs again ([`World::pairs`]). The caller passes the same `dt` every step (the fixed step
+    /// of the application); allocates nothing.
     ///
     /// # Errors
     /// [`PhysicsError::InvalidTimeStep`] when `dt` is not finite and above zero;
     /// [`PhysicsError::NotFinite`] when the step would make a position, rotation or velocity
-    /// overflow. In both cases nothing changes (the step is computed once on copies to check it,
-    /// then again to commit, so a step costs two integrations).
+    /// overflow, or a broadphase box not representable. In both cases nothing changes (the step is
+    /// computed once on copies to check it, then again to commit, so a step costs two integrations).
+    /// A pair list that is too small is not an error of the step: see [`PairList::is_complete`].
     pub fn step(&mut self, dt: f32) -> Result<(), PhysicsError> {
         if !dt.is_finite() || dt <= 0.0 {
             return Err(PhysicsError::InvalidTimeStep);
@@ -252,7 +331,7 @@ impl<D: Dim> World<D> {
         let stays_finite = self.slots.iter().flatten().all(|slot| {
             let mut next = slot.body;
             next.integrate(gravity, dt);
-            next.motion_is_finite()
+            next.motion_is_finite() && self.broadphase.can_hold(next.kind(), &next.bounds())
         });
         if !stays_finite {
             return Err(PhysicsError::NotFinite);
@@ -260,7 +339,9 @@ impl<D: Dim> World<D> {
         for slot in self.slots.iter_mut().flatten() {
             slot.body.integrate(gravity, dt);
         }
+        self.broadphase.move_proxies(&self.slots)?;
         self.steps += 1;
+        self.find_pairs();
         Ok(())
     }
 
@@ -286,8 +367,9 @@ impl<D: Dim> World<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::MAX_PAIRS;
     use crate::core::{BodyKind, Dim};
-    use crate::d2::{D2, Rot2, Shape2};
+    use crate::d2::{Aabb2, D2, Rot2, Shape2};
     use base::math::Vec2;
     use base::pool::Handle;
 
@@ -301,6 +383,8 @@ mod tests {
         match World::new(WorldConfig {
             max_bodies,
             gravity,
+            max_pairs: 256,
+            broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         }) {
             Ok(world) => world,
             Err(error) => panic!("world must build: {error}"),
@@ -365,6 +449,8 @@ mod tests {
         let config = WorldConfig::<D2> {
             max_bodies: MAX_BODIES + 1,
             gravity: Vec2::ZERO,
+            max_pairs: 256,
+            broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         };
         assert!(matches!(
             World::new(config).err(),
@@ -378,6 +464,8 @@ mod tests {
             let config = WorldConfig::<D2> {
                 max_bodies: 1,
                 gravity,
+                max_pairs: 256,
+                broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
             };
             assert_eq!(World::new(config).err(), Some(PhysicsError::NotFinite));
         }
@@ -558,6 +646,8 @@ mod tests {
         let config = WorldConfig::<D2> {
             max_bodies: 3,
             gravity: Vec2::new(0.0, G),
+            max_pairs: 256,
+            broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         };
         let mut world = world(1, Vec2::ZERO);
         let handle = create(&mut world, &cloned(&desc));
@@ -1053,5 +1143,271 @@ mod tests {
             world.state_hash()
         };
         assert_ne!(build(1.0, 2.0), build(2.0, 1.0));
+    }
+
+    // ---- broadphase and pairs ---------------------------------------------------------------
+
+    fn broadphase_world(max_bodies: u32, max_pairs: u32, margin: f32) -> World2 {
+        match World::new(WorldConfig {
+            max_bodies,
+            gravity: Vec2::ZERO,
+            max_pairs,
+            broadphase_margin: margin,
+        }) {
+            Ok(world) => world,
+            Err(error) => panic!("world must build: {error}"),
+        }
+    }
+
+    fn body_at(world: &mut World2, kind: BodyKind, x: f32, radius: f32) -> BodyHandle<D2> {
+        create(world, &Desc2::new(kind, Vec2::new(x, 0.0), circle(radius)))
+    }
+
+    /// The pair list as slot-index pairs.
+    fn pair_indices(world: &World2) -> Vec<(u32, u32)> {
+        world
+            .pairs()
+            .as_slice()
+            .iter()
+            .map(|pair| (pair.first.index(), pair.second.index()))
+            .collect()
+    }
+
+    fn found(world: &mut World2) -> Vec<(u32, u32)> {
+        world.find_pairs();
+        pair_indices(world)
+    }
+
+    #[test]
+    fn a_pair_capacity_above_the_maximum_or_a_bad_margin_refuses_the_world() {
+        let config = |max_pairs, broadphase_margin| WorldConfig::<D2> {
+            max_bodies: 4,
+            gravity: Vec2::ZERO,
+            max_pairs,
+            broadphase_margin,
+        };
+        assert_eq!(
+            World::new(config(MAX_PAIRS + 1, 0.1)).err(),
+            Some(PhysicsError::PairCapacityTooLarge { max: MAX_PAIRS })
+        );
+        for margin in [-1.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                World::new(config(4, margin)).err(),
+                Some(PhysicsError::InvalidMargin)
+            );
+        }
+        assert!(World::new(config(MAX_PAIRS, 0.0)).is_ok());
+    }
+
+    #[test]
+    fn a_new_world_has_an_empty_complete_pair_list_of_the_configured_capacity() {
+        let world = broadphase_world(4, 7, 0.1);
+        assert_eq!(world.pairs().capacity(), 7);
+        assert!(world.pairs().is_empty() && world.pairs().is_complete());
+    }
+
+    #[test]
+    fn the_broadphase_box_of_a_dynamic_body_is_grown_by_the_margin_and_a_static_one_is_not() {
+        let mut world = broadphase_world(4, 4, 0.5);
+        let moving = body_at(&mut world, BodyKind::Dynamic, 2.0, 1.0);
+        let fixed = body_at(&mut world, BodyKind::Static, 2.0, 1.0);
+        let aabb =
+            |x0: f32, y0: f32, x1: f32, y1: f32| Aabb2::new(Vec2::new(x0, y0), Vec2::new(x1, y1));
+        assert_eq!(
+            world.broadphase_bounds(moving),
+            Ok(aabb(0.5, -1.5, 3.5, 1.5))
+        );
+        assert_eq!(
+            world.broadphase_bounds(fixed),
+            Ok(aabb(1.0, -1.0, 3.0, 1.0))
+        );
+        assert_eq!(world.destroy_body(moving), Ok(()));
+        assert_eq!(
+            world.broadphase_bounds(moving),
+            Err(PhysicsError::StaleHandle)
+        );
+    }
+
+    #[test]
+    fn pairs_appear_only_after_find_pairs_or_a_step() {
+        let mut world = broadphase_world(4, 4, 0.0);
+        body_at(&mut world, BodyKind::Dynamic, 0.0, 1.0);
+        body_at(&mut world, BodyKind::Dynamic, 1.0, 1.0);
+        assert!(world.pairs().is_empty());
+        assert_eq!(found(&mut world), vec![(0, 1)]);
+        assert_eq!(world.step(DT), Ok(()));
+        assert_eq!(pair_indices(&world), vec![(0, 1)]);
+    }
+
+    #[test]
+    fn boxes_that_touch_exactly_pair_and_boxes_with_a_gap_do_not() {
+        let mut world = broadphase_world(4, 4, 0.0);
+        body_at(&mut world, BodyKind::Dynamic, 0.0, 0.5);
+        body_at(&mut world, BodyKind::Dynamic, 1.0, 0.5); // touches the first at x = 0.5
+        body_at(&mut world, BodyKind::Dynamic, 2.25, 0.5); // gap of 0.25 to the second
+        assert_eq!(found(&mut world), vec![(0, 1)]);
+    }
+
+    #[test]
+    fn a_margin_that_overflows_a_box_refuses_the_body_or_the_step_and_changes_nothing() {
+        let mut world = broadphase_world(2, 4, f32::MAX);
+        let far = BodyDesc::new(
+            BodyKind::Dynamic,
+            Vec2::new(3.0e38, 0.0),
+            Shape2::Circle { radius: 1.0 },
+        );
+        assert_eq!(world.create_body(&far).err(), Some(PhysicsError::NotFinite));
+        assert!(world.is_empty());
+        let mut runner = BodyDesc::new(
+            BodyKind::Dynamic,
+            Vec2::ZERO,
+            Shape2::Circle { radius: 1.0 },
+        );
+        runner.linear_velocity = Vec2::new(3.0e38, 0.0);
+        assert!(world.create_body(&runner).is_ok());
+        let (hash, tree, steps) = (
+            world.state_hash(),
+            world.broadphase_hash(),
+            world.step_count(),
+        );
+        assert_eq!(world.step(1.0), Err(PhysicsError::NotFinite));
+        assert_eq!(
+            (
+                world.state_hash(),
+                world.broadphase_hash(),
+                world.step_count()
+            ),
+            (hash, tree, steps)
+        );
+        // The slot was not used up by the refused body: the next one still gets generation 0.
+        let again = world.create_body(&BodyDesc::new(
+            BodyKind::Static,
+            Vec2::ZERO,
+            Shape2::Circle { radius: 1.0 },
+        ));
+        assert_eq!(again.map(base::pool::Handle::generation), Ok(0));
+    }
+
+    #[test]
+    fn the_margin_makes_pairs_of_bodies_that_do_not_touch_yet() {
+        let mut world = broadphase_world(4, 4, 0.5);
+        body_at(&mut world, BodyKind::Dynamic, 0.0, 0.5);
+        body_at(&mut world, BodyKind::Dynamic, 1.5, 0.5); // a gap of 0.5, but the grown boxes overlap
+        body_at(&mut world, BodyKind::Dynamic, 4.0, 0.5); // a gap of 1.5 to the second, boxes apart
+        assert_eq!(found(&mut world), vec![(0, 1)]);
+    }
+
+    #[test]
+    fn two_static_bodies_never_pair_and_a_static_and_a_dynamic_body_do() {
+        let mut world = broadphase_world(8, 8, 0.0);
+        body_at(&mut world, BodyKind::Static, 0.0, 1.0); // slot 0
+        body_at(&mut world, BodyKind::Static, 1.0, 1.0); // slot 1
+        body_at(&mut world, BodyKind::Dynamic, 0.5, 1.0); // slot 2
+        assert_eq!(found(&mut world), vec![(0, 2), (1, 2)]);
+    }
+
+    #[test]
+    fn every_dynamic_pair_is_listed_once_with_the_lower_slot_first() {
+        let mut world = broadphase_world(8, 8, 0.0);
+        for _ in 0..4 {
+            body_at(&mut world, BodyKind::Dynamic, 0.0, 1.0);
+        }
+        assert_eq!(
+            found(&mut world),
+            vec![(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
+        );
+        for pair in world.pairs().as_slice() {
+            assert!(pair.first.index() < pair.second.index());
+        }
+    }
+
+    #[test]
+    fn a_step_updates_the_pairs_of_bodies_that_moved() {
+        let mut world = broadphase_world(4, 4, 0.0);
+        let runner = body_at(&mut world, BodyKind::Dynamic, 0.0, 0.5);
+        body_at(&mut world, BodyKind::Dynamic, 5.0, 0.5);
+        assert_eq!(
+            world.set_linear_velocity(runner, Vec2::new(4.0, 0.0)),
+            Ok(())
+        );
+        assert_eq!(world.step(1.0), Ok(()));
+        // x = 4: the runner's box reaches 4.5, where the other one starts.
+        assert_eq!(pair_indices(&world), vec![(0, 1)]);
+        assert_eq!(world.step(1.0), Ok(()));
+        // x = 8: the runner has passed.
+        assert!(pair_indices(&world).is_empty());
+    }
+
+    #[test]
+    fn destroying_a_body_removes_its_pairs_at_the_next_find_and_its_slot_pairs_again_when_reused() {
+        let mut world = broadphase_world(4, 4, 0.0);
+        body_at(&mut world, BodyKind::Dynamic, 0.0, 1.0);
+        let middle = body_at(&mut world, BodyKind::Dynamic, 1.0, 1.0);
+        assert_eq!(found(&mut world), vec![(0, 1)]);
+        assert_eq!(world.destroy_body(middle), Ok(()));
+        assert_eq!(
+            pair_indices(&world),
+            vec![(0, 1)],
+            "stale until the next find"
+        );
+        assert!(found(&mut world).is_empty());
+        let again = body_at(&mut world, BodyKind::Dynamic, 1.0, 1.0);
+        assert_eq!((again.index(), again.generation()), (1, 1));
+        assert_eq!(found(&mut world), vec![(0, 1)]);
+        assert_eq!(world.pairs().as_slice()[0].second, again);
+    }
+
+    #[test]
+    fn a_full_pair_list_counts_the_pairs_it_could_not_take_and_the_step_still_succeeds() {
+        let mut world = broadphase_world(8, 2, 0.0);
+        for _ in 0..4 {
+            body_at(&mut world, BodyKind::Dynamic, 0.0, 1.0);
+        }
+        assert_eq!(world.step(DT), Ok(()));
+        let pairs = world.pairs();
+        assert_eq!(
+            (pairs.len(), pairs.missing(), pairs.is_complete()),
+            (2, 4, false)
+        );
+        let mut roomy = broadphase_world(8, 6, 0.0);
+        for _ in 0..4 {
+            body_at(&mut roomy, BodyKind::Dynamic, 0.0, 1.0);
+        }
+        roomy.find_pairs();
+        assert!(roomy.pairs().is_complete());
+        assert_eq!(roomy.pairs().len(), 6);
+    }
+
+    /// A world of five bodies that move up at different speeds.
+    fn moving_world() -> World2 {
+        let mut world = broadphase_world(8, 8, 0.1);
+        for i in 0..5_u8 {
+            moving_body(&mut world, i);
+        }
+        world
+    }
+
+    /// A dynamic body at x = 0.8 i that moves up with speed i.
+    fn moving_body(world: &mut World2, i: u8) {
+        let body = body_at(world, BodyKind::Dynamic, f32::from(i) * 0.8, 0.5);
+        assert_eq!(
+            world.set_linear_velocity(body, Vec2::new(0.0, f32::from(i))),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_broadphase_hash_is_the_same_for_the_same_calls_and_moves_with_the_bodies() {
+        let (mut first, mut second) = (moving_world(), moving_world());
+        assert_eq!(first.broadphase_hash(), second.broadphase_hash());
+        for _ in 0..10 {
+            assert_eq!(first.step(DT), Ok(()));
+            assert_eq!(second.step(DT), Ok(()));
+            assert_eq!(first.broadphase_hash(), second.broadphase_hash());
+            assert_eq!(pair_indices(&first), pair_indices(&second));
+        }
+        let before = first.broadphase_hash();
+        assert_eq!(first.step(1.0), Ok(()));
+        assert_ne!(first.broadphase_hash(), before);
     }
 }

@@ -37,6 +37,13 @@ impl StateHasher {
         }
     }
 
+    /// Mixes the eight little-endian bytes of `value` in.
+    pub fn write_u64(&mut self, value: u64) {
+        for byte in value.to_le_bytes() {
+            self.write_u8(byte);
+        }
+    }
+
     /// Mixes the bit pattern of `value` in.
     pub fn write_f32(&mut self, value: f32) {
         self.write_u32(value.to_bits());
@@ -92,6 +99,13 @@ mod tests {
         let mut hasher = StateHasher::new();
         hasher.write_u32(0x0403_0201);
         assert_eq!(hasher.finish(), hash_bytes(&[1, 2, 3, 4]));
+    }
+
+    #[test]
+    fn a_u64_is_hashed_as_eight_little_endian_bytes() {
+        let mut hasher = StateHasher::new();
+        hasher.write_u64(0x0807_0605_0403_0201);
+        assert_eq!(hasher.finish(), hash_bytes(&[1, 2, 3, 4, 5, 6, 7, 8]));
     }
 
     #[test]

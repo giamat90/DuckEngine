@@ -5,8 +5,8 @@
 use base::alloc::{CountingAllocator, count_allocations};
 use base::math::Vec2;
 use physics::d2::{
-    BodyDesc, BodyHandle, BodyKind, PhysicsError, Rot2, STANDARD_GRAVITY, Shape2, World,
-    WorldConfig,
+    BodyDesc, BodyHandle, BodyKind, DEFAULT_BROADPHASE_MARGIN, PhysicsError, Rot2,
+    STANDARD_GRAVITY, Shape2, World, WorldConfig,
 };
 use std::alloc::System;
 
@@ -21,6 +21,8 @@ fn build_world() -> Result<World, PhysicsError> {
     World::new(WorldConfig {
         max_bodies: CAPACITY,
         gravity: STANDARD_GRAVITY,
+        max_pairs: 256,
+        broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
     })
 }
 
@@ -119,5 +121,51 @@ fn creating_destroying_stepping_hashing_and_querying_make_no_allocator_call()
     assert!(result.is_ok());
     assert_eq!(counts.calls(), 0, "{counts:?}");
     assert!(world.is_empty());
+    Ok(())
+}
+
+/// Reads the stored box of the first body of the first pair, when there is a pair.
+fn first_pair_bounds(world: &World) -> Result<(), PhysicsError> {
+    match world.pairs().as_slice().first() {
+        Some(pair) => world.broadphase_bounds(pair.first).map(drop),
+        None => Ok(()),
+    }
+}
+
+#[test]
+fn moving_bodies_in_the_broadphase_finding_pairs_and_overflowing_the_list_allocate_nothing()
+-> Result<(), PhysicsError> {
+    // A list of 8 pairs is smaller than the pairs of a row of 64 touching boxes, so the overflow
+    // path runs on every step.
+    let mut world = World::new(WorldConfig {
+        max_bodies: CAPACITY,
+        gravity: STANDARD_GRAVITY,
+        max_pairs: 8,
+        broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
+    })?;
+    let handles = fill(&mut world)?;
+    // Every body moves sideways so each one leaves its fat box about every other step and is
+    // inserted again.
+    for (i, handle) in handles.iter().enumerate() {
+        let direction = if i % 2 == 0 { 3.0 } else { -3.0 };
+        world.set_linear_velocity(*handle, Vec2::new(direction, 0.0))?;
+    }
+    world.step(DT)?; // warm-up
+    let (result, counts) = count_allocations(|| {
+        let mut changes = 0_u32;
+        let mut last = world.broadphase_hash();
+        for _ in 0..500 {
+            world.step(DT)?;
+            world.find_pairs();
+            let now = world.broadphase_hash();
+            changes += u32::from(now != last);
+            last = now;
+            first_pair_bounds(&world)?;
+        }
+        Ok::<u32, PhysicsError>(changes)
+    });
+    assert!(matches!(result, Ok(changes) if changes > 100), "{result:?}");
+    assert!(!world.pairs().is_empty() && !world.pairs().is_complete());
+    assert_eq!(counts.calls(), 0, "{counts:?}");
     Ok(())
 }

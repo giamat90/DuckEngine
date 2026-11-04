@@ -159,6 +159,71 @@ classDiagram
   D2 ..> Shape2
 ```
 
+- **As built in card 4-11.** The world has a broadphase: two dynamic AABB trees (one for static bodies with margin 0, one for dynamic bodies with the margin of `WorldConfig`, default 0.1 m) and a canonical pair list. `Dim` gains one associated type (`Bounds`, an axis-aligned box with the six operations of the `Bounds` trait) and one method (`shape_bounds`); 2D uses `Aabb2`. The tree (`core::tree::Tree<B>`) is a Box2D v2.4 style tree on an arena of `2 * capacity - 1` nodes allocated once: sibling choice by the surface-area heuristic (a tie goes to the second child), AVL rotations after every insert and remove (the validator test checks height <= floor(log2(n + 2)) * 1.44 + 1), fat box = tight box + margin, a leaf is re-inserted only when its tight box leaves its fat box, queries walk the tree without a stack (parent links), the leaf id is the body slot index. Nothing allocates after `World::new`. The pair list (`core::pairs::PairList<D>`) has a fixed capacity (`WorldConfig::max_pairs`, at most 2^24); each step regenerates it: every dynamic body asks the dynamic tree (only for bodies with a higher slot index, so a pair is found once) and the static tree, so two static bodies are never paired, and the list is sorted by (lower slot index, higher slot index) with an in-place heap sort (`core::sort`; the standard stable sort allocates and the unstable one is banned). Touching boxes count as overlapping. When the list is full, further pairs are counted (`missing()`), `is_complete()` is false and the step still returns `Ok`; this is the documented overflow flag. There is no collision filtering because this note defines none. The state hash is unchanged (a pinned test compares it with the value of card 4-10); `broadphase_hash()` hashes the tree structure and is separate. Tree performance is not measured here (card 4-22). Class and sequence views below; evidence and numbers: [reviews/4-11](../../reviews/4-11.md).
+
+```mermaid
+classDiagram
+  class World~D~ {
+    +step(dt) Result
+    +find_pairs()
+    +pairs() PairList
+    +broadphase_hash() u64
+  }
+  class Broadphase~D~ {
+    <<core, private>>
+    static_tree dynamic_tree pairs
+    +move_proxies(slots) Result
+    +find_pairs(slots)
+  }
+  class Tree~B~ {
+    <<arena, fixed capacity>>
+    +insert(bounds, id) Result~ProxyId~
+    +remove(proxy) Result
+    +update(proxy, bounds) Result~bool~
+    +query(region, visit)
+    +structure_hash() u64
+  }
+  class PairList~D~ {
+    <<fixed capacity>>
+    +as_slice() Pair
+    +missing() usize
+    +is_complete() bool
+  }
+  class Bounds {
+    <<trait>>
+    overlaps union contains measure fattened is_valid
+  }
+  class Aabb2 { min max }
+  class Dim { <<trait>> +shape_bounds(shape, pos, rot) Bounds }
+  World~D~ *-- Broadphase~D~
+  Broadphase~D~ *-- Tree~B~
+  Broadphase~D~ *-- PairList~D~
+  Tree~B~ ..> Bounds
+  Aabb2 ..|> Bounds
+  Dim ..> Bounds
+```
+
+```mermaid
+sequenceDiagram
+  participant W as World::step
+  participant B as Broadphase
+  participant D as dynamic Tree
+  participant S as static Tree
+  participant P as PairList
+  W->>W: integrate bodies (semi-implicit Euler)
+  W->>B: move_proxies(slots)
+  B->>D: update(proxy, tight box) for each dynamic body
+  W->>B: find_pairs(slots)
+  B->>P: clear
+  loop each dynamic body, in slot order
+    B->>D: query(fat box): other slot above own
+    D-->>P: push(own, other)
+    B->>S: query(fat box)
+    S-->>P: push(own, static)
+  end
+  B->>P: heap sort by (lower, higher) slot
+```
+
 - **Borrowed closures.** `parallel_for` and `run_scope` take closures that borrow the caller's data, so that no `Box` is allocated per frame (the existing `platform::threads::Job` is a `Box<dyn FnOnce() + 'static>`, which allocates). Running a borrowing closure on a worker thread needs a small amount of `unsafe` (lifetime erasure guarded by the scope waiting for completion). This is the one place where `jobs` is expected to use `unsafe` (section 8).
 - **`World<D>`.** The step takes a scheduler and a per-step scratch `Arena` as parameters, so there is no global state and no hidden thread. `WorldConfig` fixes the capacities (bodies, shapes, joints, contacts, tree nodes) at creation; creating a body past the capacity returns an error value and never reallocates, so a steady-state frame allocates nothing (section 7). `dt` is `f32` seconds computed once from `FixedStep::step_ticks`.
 - **Body state.** 2D rotation is stored as a `(cos, sin)` pair, not an angle, and is advanced in the step by a first-order update followed by a normalisation, so the step itself calls no `sin`, `cos` or `atan2`. Those are needed only to create a body from an angle and to read an angle back, and both go through the facade (section 5). This follows Box2D v3 **[K, from background knowledge, not re-read this session]** and is a design choice made so that the hot loop needs no libm at all.

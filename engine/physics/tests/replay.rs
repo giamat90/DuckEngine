@@ -3,7 +3,8 @@
 
 use base::math::Vec2;
 use physics::d2::{
-    BodyDesc, BodyKind, PhysicsError, Rot2, STANDARD_GRAVITY, Shape2, World, WorldConfig,
+    BodyDesc, BodyKind, DEFAULT_BROADPHASE_MARGIN, PhysicsError, Rot2, STANDARD_GRAVITY, Shape2,
+    World, WorldConfig,
 };
 
 const DT: f32 = 1.0 / 60.0;
@@ -15,6 +16,8 @@ fn run() -> Result<Vec<u64>, PhysicsError> {
     let mut world = World::new(WorldConfig {
         max_bodies: 32,
         gravity: STANDARD_GRAVITY,
+        max_pairs: 256,
+        broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
     })?;
     world.create_body(&BodyDesc::new(
         BodyKind::Static,

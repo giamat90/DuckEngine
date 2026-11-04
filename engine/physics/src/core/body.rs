@@ -248,6 +248,12 @@ impl<D: Dim> Body<D> {
         self.shape
     }
 
+    /// The axis-aligned box around the shape at the body's position and orientation.
+    #[must_use]
+    pub fn bounds(&self) -> D::Bounds {
+        D::shape_bounds(&self.shape, self.position, self.rotation)
+    }
+
     /// Sets the linear velocity.
     pub(super) fn set_linear_velocity(&mut self, velocity: D::Vec) -> Result<(), PhysicsError> {
         self.check_motion(velocity.is_finite())?;

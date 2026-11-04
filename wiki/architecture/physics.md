@@ -6,6 +6,8 @@ The phase 4 shape of the crates, the job system, the determinism harness, the ca
 
 **As built in card 4-10:** the `physics` crate (`engine/physics`) holds the dimension-generic world core and the 2D instance: fixed-capacity bodies with generation-checked handles, static and dynamic bodies, circle and box shapes with mass properties, semi-implicit Euler with gravity, forces and damping, the 2D rotation as a (cos, sin) pair advanced without `sin`/`cos`/`atan2`, and the FNV-1a state hash used by the D0 replay tests. No broadphase, narrowphase, solver or joints yet (cards 4-11 to 4-16). See [physics-and-jobs-v0](physics-and-jobs-v0.md) section 2 and [reviews/4-10](../../reviews/4-10.md).
 
+**As built in card 4-11:** the world has a broadphase: a dimension-generic dynamic AABB tree (fixed capacity, no allocation after creation, fat boxes with a margin, one tree for static and one for dynamic bodies) and a duplicate-free pair list in the canonical order (lower slot, higher slot) with a documented overflow flag; static-static pairs are skipped; the state hash is unchanged. Tree performance is not measured yet (card 4-22). See [physics-and-jobs-v0](physics-and-jobs-v0.md) section 2 and [reviews/4-11](../../reviews/4-11.md).
+
 ## 1. Boundaries
 
 - `physics` is a **standalone L2 module**: depends only on `base` and `jobs`. It does **not** know about the ECS, scene, or renderer. This keeps its internal data layout free to be optimal and makes it testable in isolation.

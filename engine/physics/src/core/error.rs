@@ -24,6 +24,13 @@ pub enum PhysicsError {
     InvalidTimeStep,
     /// The call changes the motion of a body that is static.
     StaticBody,
+    /// The broadphase margin is not a finite number of zero or more.
+    InvalidMargin,
+    /// The requested pair capacity is above [`MAX_PAIRS`](crate::core::MAX_PAIRS).
+    PairCapacityTooLarge {
+        /// The most pairs one world may hold.
+        max: u32,
+    },
 }
 
 impl fmt::Display for PhysicsError {
@@ -38,6 +45,10 @@ impl fmt::Display for PhysicsError {
             Self::InvalidShape => f.write_str("shape, density or damping is out of range"),
             Self::InvalidTimeStep => f.write_str("the time step must be finite and above zero"),
             Self::StaticBody => f.write_str("the body is static and does not move"),
+            Self::InvalidMargin => f.write_str("the margin must be finite and zero or more"),
+            Self::PairCapacityTooLarge { max } => {
+                write!(f, "pair capacity too large, at most {max} pairs allowed")
+            }
         }
     }
 }
@@ -75,6 +86,14 @@ mod tests {
             (
                 PhysicsError::StaticBody,
                 "the body is static and does not move",
+            ),
+            (
+                PhysicsError::InvalidMargin,
+                "the margin must be finite and zero or more",
+            ),
+            (
+                PhysicsError::PairCapacityTooLarge { max: 9 },
+                "pair capacity too large, at most 9 pairs allowed",
             ),
         ];
         for (error, message) in cases {
