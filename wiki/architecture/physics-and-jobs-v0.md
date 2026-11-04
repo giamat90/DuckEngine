@@ -119,6 +119,46 @@ classDiagram
 - **`IScheduler`.** Three needs, from [core-runtime §3](core-runtime.md): run a loop over a range in parallel (`parallel_for`, chunks of at least `grain` indices), run a set of independent tasks to completion (`run_scope`), and ask how many workers there are. A task counter and a `wait_help` call (the waiting thread executes jobs) are the internal mechanism, not the first public surface. Dispatch is `&dyn IScheduler`: one virtual call per phase of the step (a few per step), never per body or per contact (ADR-0005).
 - **As built in card 4-4.** `run_scope` takes a slice of borrowed tasks (`&[&dyn Fn() + Sync]`), not a closure that spawns, and `for_each` is added; the signatures and bounds are in [core-runtime](core-runtime.md) section 3.
 - **As built in card 4-7.** `jobs::pool::WorkStealingPool` is the pool decided in [ADR-0004](../decisions/adr-0004-job-system.md) (lock-free Chase-Lev deques, binary splitting, threads only through `IThreads`, a 200 microsecond spin-yield-park budget); its description, class and state views are in [core-runtime](core-runtime.md) section 3.
+- **As built in card 4-10.** The `physics` crate exists (`engine/physics`, layer 2, depends on `base` only; the edge to `jobs` is not used yet; arch-check needed no new row). Modules `core` (generic: `Dim`, `World<D>`, `Body<D>`, `BodyDesc<D>`, `BodyHandle<D>`, `PhysicsError`, `StateHasher`) and `d2` (`D2`, `Rot2`, `Shape2`, aliases `World`, `Body`, `BodyDesc`, `BodyHandle`, `WorldConfig`); no `d3` yet (phase 8), a test instance in `tests/generic_core.rs` proves the core steps for a second dimension. Differences from the sketch above: `step(dt)` takes no scheduler and no scratch arena yet (nothing to parallelise before cards 4-11 to 4-15), `WorldConfig` has `max_bodies` and `gravity` only (shapes, joints and contacts get capacities with their cards), bodies are static or dynamic (kinematic is not built), shapes are a circle and a box (polygons come with the narrowphase, card 4-12), and `body()` returns a read-only view with accessors, not a `BodyState` copy. `Dim` has five associated types and three methods (ADR-0018 trigger: about 30 methods). Details, the class and sequence views and the numbers: [reviews/4-10](../../reviews/4-10.md).
+
+```mermaid
+classDiagram
+  class Dim {
+    <<trait, core>>
+    Vec Ang Rot InvInertia Shape
+    +apply_inverse_inertia(rot, inv, torque) Ang
+    +advance_rotation(rot, w, dt) Rot
+    +mass_properties(shape, density) Result
+  }
+  class World~D~ {
+    <<core, fixed capacity>>
+    +new(WorldConfig) Result
+    +create_body(BodyDesc) Result~BodyHandle~
+    +destroy_body(BodyHandle) Result
+    +body(BodyHandle) Result~Body~
+    +step(dt) Result
+    +state_hash() u64
+  }
+  class Body~D~ {
+    <<core, state>>
+    kind position rotation velocities
+    force torque mass inv_inertia
+  }
+  class BodyHandle~D~ {
+    <<base Handle, 8 bytes>>
+    index generation
+  }
+  class D2 { <<instance>> Vec2 f32 Rot2 Shape2 }
+  class Rot2 { <<cos, sin pair>> }
+  class Shape2 { <<Circle, Box>> }
+  Dim <|.. D2
+  World~D~ ..> Dim
+  World~D~ *-- Body~D~
+  World~D~ ..> BodyHandle~D~
+  D2 ..> Rot2
+  D2 ..> Shape2
+```
+
 - **Borrowed closures.** `parallel_for` and `run_scope` take closures that borrow the caller's data, so that no `Box` is allocated per frame (the existing `platform::threads::Job` is a `Box<dyn FnOnce() + 'static>`, which allocates). Running a borrowing closure on a worker thread needs a small amount of `unsafe` (lifetime erasure guarded by the scope waiting for completion). This is the one place where `jobs` is expected to use `unsafe` (section 8).
 - **`World<D>`.** The step takes a scheduler and a per-step scratch `Arena` as parameters, so there is no global state and no hidden thread. `WorldConfig` fixes the capacities (bodies, shapes, joints, contacts, tree nodes) at creation; creating a body past the capacity returns an error value and never reallocates, so a steady-state frame allocates nothing (section 7). `dt` is `f32` seconds computed once from `FixedStep::step_ticks`.
 - **Body state.** 2D rotation is stored as a `(cos, sin)` pair, not an angle, and is advanced in the step by a first-order update followed by a normalisation, so the step itself calls no `sin`, `cos` or `atan2`. Those are needed only to create a body from an angle and to read an angle back, and both go through the facade (section 5). This follows Box2D v3 **[K, from background knowledge, not re-read this session]** and is a design choice made so that the hot loop needs no libm at all.
@@ -341,7 +381,7 @@ Proposed; no card exists yet. The main session creates them in Backlog after the
 | 4-7 | `jobs` work-stealing pool (the chosen candidate), contract suite at several worker counts, per-thread allocation assertion, Miri on its `unsafe` | 2 (concurrency, `unsafe`) | step: `gates/unsafe-budget.toml` row |
 | 4-8 | `base` deterministic math facade (own `sin/cos/tan/atan2/exp/log/pow`, `madd`), feature `cross-platform-determinism`, `compile_error!` guard, `Quat`/`Mat3` routed through it (done: module `base::dmath`, see section 5) | 2 (determinism math, public API of layer 0) | no |
 | 4-9 | floating-point control state helper (set and assert, both targets) | 2 (`unsafe`) | step: `gates/unsafe-budget.toml` |
-| 4-10 | `physics` crate: world, handles, bodies, shapes, integration, fixed capacities, state hash, the first free-fall and momentum tests | 2 (new module) | no, unless arch-check needs a row |
+| 4-10 | `physics` crate: world, handles, bodies, shapes, integration, fixed capacities, state hash, the first free-fall and momentum tests (done, see section 2; arch-check needed no row) | 2 (new module) | no, unless arch-check needs a row |
 | 4-11 | broadphase tree and pair list | 2 | no |
 | 4-12 | 2D narrowphase and manifolds, brute-force oracle | 2 | no |
 | 4-13 | solver: soft contacts, sub-stepping, friction, restitution, scalar reference, pyramid settles | 2 | no |
