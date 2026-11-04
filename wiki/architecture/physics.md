@@ -120,7 +120,7 @@ The within-run test reads no stored value, so a libm chosen at run time by CPU f
 
 **Restored with D2 (v0.36, narrower than v0.7 to v0.24: physics only, opt-in, no ARM64 gate):** own deterministic `sin/cos/tan/atan2/exp/log/pow` behind the facade, the ban on reciprocal or rsqrt estimates (arch-check, `physics` and `base`), the ban on calling FMA directly in `physics` (it is used through the facade, and only with the feature off), the cross-platform golden hash on Windows x86-64 and Linux x86-64, and the D2 cost report (D-10: measure the feature on and off). **Stays withdrawn:** the ARM64 replay gate (N-10), and any promise for code outside the physics crate. The arch-check bans on libm functions were removed from `gates/architecture.toml` in card 1-13 and are restored in card 1-23 for the `physics` crate only; `base` may call libm because the facade lives there. The bans that serve D0 and D1 (`HashMap`/`HashSet`, unstable sort) stay.
 
-## 4. Dimensionality: 2D and 3D, 2D first (Q3 answered; option B accepted by owner as the default, Q20; the ADR-0018 spike may revert to C)
+## 4. Dimensionality: 2D and 3D, 2D first (Q3 answered; option B accepted by owner as the default, Q20; the ADR-0018 spike recommended B and kept C as the fallback, see [ADR-0018](../decisions/adr-0018-physics-core.md))
 
 Owner decision: **both 2D and 3D**; start with 2D physics + 2D graphics, ideally as a *subcase* of 3D; then add 3D.
 
@@ -144,7 +144,7 @@ Owner decision: **both 2D and 3D**; start with 2D physics + 2D graphics, ideally
 
 **Bonus for TDD (limited, M2):** option A becomes a *test oracle* for **short, non-chaotic scenes** with stated tolerances: a scene simulated in the 2D instance must match the same scene in the 3D instance constrained to a plane. It is not used for stacking or other chaotic scenes, where a 3D solver drifts off the plane.
 
-**Spike before phase 4 (ADR-0018):** minimal body + solver for a stacking scene in A and B; measure bytes/body, step time, and code shared. Decide with data. Keep rule: share only what is demonstrably the same; if a template needs `if constexpr (D == 2)` branches throughout, that part should be specialised instead.
+**Spike before phase 4 (ADR-0018, done in card 4-2, recorded in [ADR-0018](../decisions/adr-0018-physics-core.md)):** minimal body + solver for a stacking scene in A and B; measure bytes/body, step time, and code shared. Decide with data. Keep rule: share only what is demonstrably the same; if a template needs `if constexpr (D == 2)` branches throughout, that part should be specialised instead.
 
 ## 5. TDD plan
 
