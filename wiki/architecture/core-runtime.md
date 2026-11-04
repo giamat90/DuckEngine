@@ -32,6 +32,80 @@ The phase 4 shape of `IScheduler`, the test schedulers and the scheduler spike i
 
 **As built (card 4-4, crate `engine/jobs`, layer 1, depends on `base` only).** `IScheduler: Send + Sync` has `worker_count`, `parallel_for(count, grain, body)`, `run_scope(tasks)` and the provided `for_each(count, grain, body)`. Bodies and tasks are borrowed `&dyn Fn + Sync` (no `'static`, no `Box`), so a call allocates nothing; `run_scope` takes a slice of tasks instead of a spawning closure for the same reason. Fork-join: every call returns only when all its jobs finished. A call is refused with an error value (`InvalidGrain`, `TooManyChunks`, `Busy`) before any job runs; a panic in a job aborts (`panic = abort`). Chunks are disjoint, non-empty, cover `0..count` once, and all but the one ending at `count` have at least `grain` indices; the port promises no order and no thread, so a body must be a pure function of its range (D0 and D1). Implementations: `InlineScheduler` (ascending, the Null path), `ReversedScheduler`, and `ShuffledScheduler` (a fresh Fisher-Yates permutation per call from `base::rng::Pcg32`, buffer sized at construction, a nested call returns `Busy`). The contract suite `jobs::contract` (feature `contract-tests`) checks exactly-once, chunk shape, join visibility, refusals and order independence, and is itself tested against deliberately faulty schedulers. No threads and no `unsafe` yet; the pool of card 4-7 keeps the same port because the closure bounds already are what a pool needs, and the lifetime erasure it requires stays inside the pool. Details and decisions: `reviews/4-4.md`.
 
+**As built (card 4-7, `engine/jobs/src/pool`, depends on `base` and `platform`).** `WorkStealingPool` is the first scheduler with threads and implements the decision of [ADR-0004](../decisions/adr-0004-job-system.md): per-worker lock-free Chase-Lev deques (fixed 64 slots of `AtomicU64`, safe code, no allocation after construction) hold packed item ranges; a call starts with the range of all items on the caller's deque, whoever holds a range of more than one item pushes its upper half and keeps the lower (binary splitting), idle workers steal the oldest range. The caller is worker 0 and joins on a latch after its own share. `WorkStealingPool::new(workers, &dyn IThreads)` creates `workers - 1` threads only through the `IThreads` port (the Null platform is refused with `Unsupported`; zero workers means one, more than 256 are capped), and `Drop` closes the parker and joins every thread. `JobError` is as in the inline scheduler (`InvalidGrain`; `Busy` for a nested call or a call from another thread while one runs, which the inline scheduler accepts but the port allows to refuse). The wait policy is `WaitPolicy`: a time budget in which an idle worker spins (the first quarter) and yields, then parks; the default is **200 microseconds**, chosen from a benchmark (`cargo run --release -p tools_scheduler_spike --example wait_budget`, numbers in `reviews/4-7.md`), measured with the `IClock` port (`StdClock`), and the budget is zero (park at once) when the pool has more workers than `IThreads::parallelism()`. The only `unsafe` is one line in `pool/erased.rs` (the borrowed job read through an erased pointer, protocol in the module comment) plus an abort-on-unwind guard that ends the process (through `platform::process::abort`) if a job panics under `cargo test`, which unwinds (the workspace builds with `panic = abort`). Tests: the contract suite at 1, 2, 3, 4 and 7 workers (ADR-0004 section 6.2), order independence and the D1 result against the inline scheduler, refusals, shutdown with parked workers, thread-creation failure, stress, zero allocation per call on the caller and on every worker thread (counting allocator), workers that really run items (distinct threads, a rendezvous of as many tasks as threads), the abort in a child process (a test of the `tools_scheduler_spike` crate, because only `platform` may use `std::process`), and Miri on the pool tests (status in `reviews/4-7.md`).
+
+```mermaid
+classDiagram
+  class IScheduler {
+    <<trait, jobs>>
+    +worker_count()
+    +parallel_for(count, grain, body)
+    +run_scope(tasks)
+  }
+  class WorkStealingPool {
+    +new(workers, threads)
+    +with_policy(workers, policy, threads)
+    +wait_policy()
+  }
+  class Shared {
+    deques: Vec~Deque~
+    busy: AtomicBool
+    policy: WaitPolicy
+  }
+  class Worker {
+    me: usize
+    executed: u32
+    backoff: Backoff
+  }
+  class Deque {
+    <<Chase-Lev, safe, 64 slots>>
+    +push(item)
+    +pop()
+    +steal()
+  }
+  class Published {
+    <<erased.rs, the one unsafe line>>
+    +publish(job)
+    +run_item(index)
+    +clear()
+  }
+  class Latch
+  class Parker
+  class WaitPolicy {
+    spin
+    yielding
+  }
+  class IThreads {
+    <<platform port>>
+    +spawn(name, job)
+  }
+  IScheduler <|.. WorkStealingPool
+  WorkStealingPool *-- Shared
+  Shared *-- Deque
+  Shared *-- Published
+  Shared *-- Latch
+  Shared *-- Parker
+  Shared o-- WaitPolicy
+  Worker ..> Shared
+  WorkStealingPool ..> IThreads : spawn at construction
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> Parked: thread created
+  Parked --> Scan: wake_all (new call) or generation moved
+  Scan --> Run: own pop or steal found a range
+  Run --> Scan: range done
+  Scan --> Spin: nothing found, first quarter of the budget
+  Spin --> Scan: scan again
+  Spin --> Yield: quarter spent
+  Yield --> Scan: scan again after yield_now
+  Yield --> Parked: budget spent (200 us default)
+  Scan --> Parked: budget zero (more workers than free cores)
+  Parked --> [*]: parker closed, thread joined
+```
+
+
 ## 4. ECS (ADR-0003)
 
 - **Proposal: hybrid storage like Bevy** (dense tables/archetypes by default for iteration speed, opt-in sparse sets for frequently toggled "tag" components) [S](https://bevy.org/news/bevy-0-5/). Decision is **data-driven**: a benchmark spike implements both minimal storages and measures iteration vs structural-change cost on our workloads. Published evidence says archetypes win iteration, sparse sets win mutation [S](https://diglib.eg.org/handle/10.2312/cgvc20251224).

@@ -9,6 +9,7 @@ pub mod files;
 pub mod headless;
 pub mod memory_files;
 pub mod platform;
+pub mod process;
 pub mod std_files;
 pub mod threads;
 pub mod vpath;

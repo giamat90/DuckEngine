@@ -5,14 +5,30 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license-file.workspace = true
-description = "Layer 1 jobs crate: the IScheduler port, the inline scheduler, the order-changing test schedulers and the scheduler contract suite."
+description = "Layer 1 jobs crate: the IScheduler port, the inline scheduler, the order-changing test schedulers, the work-stealing pool and the scheduler contract suite."
 
 [features]
-# The generic contract suite in `jobs::contract`, for the tests of other schedulers (the pool, card 4-7).
+# The generic contract suite in `jobs::contract`, for the tests of other schedulers.
 contract-tests = []
 
 [dependencies]
 base = { path = "../base", version = "0.1.0" }
+platform = { path = "../platform", version = "0.1.0" }
 
-[lints]
-workspace = true
+# Not `workspace = true`: the workspace forbids unsafe code. This crate denies it instead and
+# allows it in one module (`pool::erased`, the lifetime erasure of the borrowed job), with every
+# block documented (same pattern as `base`). The rest repeats the workspace lints.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+too_many_lines = "warn"
+too_many_arguments = "deny"
+cognitive_complexity = "deny"
+excessive_nesting = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"

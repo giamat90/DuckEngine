@@ -19,3 +19,7 @@ max_unsafe_lines = 16
 [[modules]]
 path = "engine/base/src/simd/neon.rs"
 max_unsafe_lines = 16
+
+[[modules]]
+path = "engine/jobs/src/pool/erased.rs"
+max_unsafe_lines = 1
