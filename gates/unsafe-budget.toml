@@ -13,6 +13,10 @@ path = "engine/base/src/arena.rs"
 max_unsafe_lines = 10
 
 [[modules]]
+path = "engine/base/src/fpenv.rs"
+max_unsafe_lines = 12
+
+[[modules]]
 path = "engine/base/src/simd/sse2.rs"
 max_unsafe_lines = 16
 
