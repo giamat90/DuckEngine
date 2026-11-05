@@ -43,6 +43,20 @@ pub enum PhysicsError {
     InvalidSolverConfig,
     /// A sleep setting outside its range (see [`SleepConfig::validate`](crate::core::SleepConfig::validate)).
     InvalidSleepConfig,
+    /// The world has no free joint slot; the joint capacity is fixed when the world is built.
+    JointCapacityExhausted,
+    /// The requested joint capacity is above [`MAX_JOINTS`](crate::core::MAX_JOINTS).
+    JointCapacityTooLarge {
+        /// The most joints one world may hold.
+        max: u32,
+    },
+    /// The handle names a joint that was destroyed (also with one of its bodies), or one that never
+    /// existed in this world.
+    StaleJoint,
+    /// A joint description outside its ranges: the same body twice, two static bodies, an angle
+    /// limit that is not an ordered pair inside minus pi to pi, a length that is not above zero, a
+    /// spring below zero and so on (a number that is not finite is [`PhysicsError::NotFinite`]).
+    InvalidJoint,
 }
 
 impl fmt::Display for PhysicsError {
@@ -66,6 +80,12 @@ impl fmt::Display for PhysicsError {
             }
             Self::InvalidSolverConfig => f.write_str("a solver setting is out of range"),
             Self::InvalidSleepConfig => f.write_str("a sleep setting is out of range"),
+            Self::JointCapacityExhausted => f.write_str("the world has no free joint slot"),
+            Self::JointCapacityTooLarge { max } => {
+                write!(f, "joint capacity too large, at most {max} joints allowed")
+            }
+            Self::StaleJoint => f.write_str("the handle names no live joint of this world"),
+            Self::InvalidJoint => f.write_str("a joint setting is out of range"),
             Self::ManifoldCapacityTooLarge { max } => {
                 write!(
                     f,
@@ -135,6 +155,33 @@ mod tests {
                 "a sleep setting is out of range",
             ),
         ];
+        check_messages(cases);
+    }
+
+    #[test]
+    fn every_joint_error_has_its_own_readable_message() {
+        let cases = [
+            (
+                PhysicsError::JointCapacityExhausted,
+                "the world has no free joint slot",
+            ),
+            (
+                PhysicsError::JointCapacityTooLarge { max: 5 },
+                "joint capacity too large, at most 5 joints allowed",
+            ),
+            (
+                PhysicsError::StaleJoint,
+                "the handle names no live joint of this world",
+            ),
+            (
+                PhysicsError::InvalidJoint,
+                "a joint setting is out of range",
+            ),
+        ];
+        check_messages(cases);
+    }
+
+    fn check_messages<const N: usize>(cases: [(PhysicsError, &str); N]) {
         for (error, message) in cases {
             assert_eq!(error.to_string(), message);
         }

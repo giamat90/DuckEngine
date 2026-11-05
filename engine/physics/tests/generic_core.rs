@@ -99,6 +99,7 @@ impl Dim for Planar3 {
     type Bounds = Box3;
     type Manifold = Depth;
     type Solver = FreeSolver;
+    type Joint = physics::core::NoJoint;
 
     fn apply_inverse_inertia(_rot: f32, inv_inertia: f32, torque: f32) -> f32 {
         inv_inertia * torque
@@ -150,6 +151,7 @@ fn build() -> Result<World3, PhysicsError> {
         max_pairs: 256,
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         max_manifolds: 256,
+        max_joints: 0,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
         sleep: physics::d2::SleepConfig::DEFAULT,
@@ -216,6 +218,7 @@ fn the_second_dimension_gets_its_pairs_from_the_same_tree_and_pair_list() -> Res
         max_pairs: 16,
         broadphase_margin: 0.0,
         max_manifolds: 256,
+        max_joints: 0,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
         sleep: physics::d2::SleepConfig::DEFAULT,

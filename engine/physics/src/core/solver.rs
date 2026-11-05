@@ -12,6 +12,7 @@ use super::dim::Dim;
 use super::error::PhysicsError;
 use super::execution::SolverExecution;
 use super::hash::StateHasher;
+use super::joint::JointEntry;
 use super::manifolds::ContactManifold;
 
 /// The most sub-steps one step may be divided into (see [`SolverConfig::sub_steps`]).
@@ -33,6 +34,15 @@ pub const DEFAULT_CONTACT_HERTZ: f32 = 30.0;
 /// Damping ratio of a contact: 10 (heavily over-damped, no bounce from the soft constraint), the
 /// value of `Box2D` v3 **[K]**.
 pub const DEFAULT_CONTACT_DAMPING_RATIO: f32 = 10.0;
+
+/// Stiffness of a rigid joint (the point of a revolute joint, a distance joint without a spring)
+/// in hertz: 60, the value of `Box2D` v3 **[K]**. It is capped at a quarter of the sub-step rate,
+/// which is 60 Hz at the default four sub-steps of 60 Hz steps, so the default sits on the cap.
+pub const DEFAULT_JOINT_HERTZ: f32 = 60.0;
+
+/// Damping ratio of a rigid joint: 2, the value of `Box2D` v3.0 **[K]** (later versions use 5).
+/// Chosen again against the chain scene in `reviews/4-16.md`.
+pub const DEFAULT_JOINT_DAMPING_RATIO: f32 = 2.0;
 
 /// The fastest a contact pushes two overlapping shapes apart, in metres per second: 3, the value of
 /// `Box2D` v3 **[K]**. It keeps a deep overlap from throwing the bodies away.
@@ -72,6 +82,11 @@ pub struct SolverConfig {
     pub restitution_threshold: f32,
     /// The overlap, in metres, that is not pushed apart, zero or more ([`DEFAULT_LINEAR_SLOP`]).
     pub linear_slop: f32,
+    /// Stiffness of a rigid joint in hertz, above zero ([`DEFAULT_JOINT_HERTZ`]). Capped like the
+    /// contact stiffness at a quarter of the sub-step rate.
+    pub joint_hertz: f32,
+    /// Damping ratio of a rigid joint, zero or more ([`DEFAULT_JOINT_DAMPING_RATIO`]).
+    pub joint_damping_ratio: f32,
 }
 
 impl SolverConfig {
@@ -84,6 +99,8 @@ impl SolverConfig {
         contact_push_speed: DEFAULT_CONTACT_PUSH_SPEED,
         restitution_threshold: DEFAULT_RESTITUTION_THRESHOLD,
         linear_slop: DEFAULT_LINEAR_SLOP,
+        joint_hertz: DEFAULT_JOINT_HERTZ,
+        joint_damping_ratio: DEFAULT_JOINT_DAMPING_RATIO,
     };
 
     /// Checks every field against its range.
@@ -99,7 +116,10 @@ impl SolverConfig {
             && is_zero_or_more(self.contact_damping_ratio)
             && is_zero_or_more(self.contact_push_speed)
             && is_zero_or_more(self.restitution_threshold)
-            && is_zero_or_more(self.linear_slop);
+            && is_zero_or_more(self.linear_slop)
+            && self.joint_hertz.is_finite()
+            && self.joint_hertz > 0.0
+            && is_zero_or_more(self.joint_damping_ratio);
         if counts && numbers {
             Ok(())
         } else {
@@ -131,6 +151,11 @@ pub struct SolverStats {
     pub colours: usize,
     /// Solved constraints that found no free colour and were solved serially after the colours.
     pub overflow: usize,
+    /// Joints that were solved: those with at least one awake dynamic body. Joints are solved
+    /// serially before the contacts of every pass, not coloured.
+    pub joints_solved: usize,
+    /// Joints that were not solved because every body of them sleeps or is static.
+    pub joints_frozen: usize,
 }
 
 /// What a solver needs to know of the step besides the bodies and contacts.
@@ -143,16 +168,21 @@ pub struct StepFrame<D: Dim> {
 
 /// Moves the bodies of one step and answers their contacts. One value lives in each world.
 pub trait ContactSolver<D: Dim>: Sized {
-    /// A solver for a world of `max_bodies` bodies and `max_manifolds` manifolds. Allocates all it
-    /// needs now; nothing allocates later.
+    /// A solver for a world of `max_bodies` bodies, `max_manifolds` manifolds and `max_joints`
+    /// joints. Allocates all it needs now; nothing allocates later.
     ///
     /// # Errors
     /// [`PhysicsError::InvalidSolverConfig`] when `config` is not valid.
-    fn new(config: SolverConfig, max_bodies: u32, max_manifolds: u32)
-    -> Result<Self, PhysicsError>;
+    fn new(
+        config: SolverConfig,
+        max_bodies: u32,
+        max_manifolds: u32,
+        max_joints: u32,
+    ) -> Result<Self, PhysicsError>;
 
     /// Advances the copies in `bodies` (indexed by slot, `None` for a free slot) by one step under
-    /// `contacts`, which are the manifolds of the bodies as they are. Forces and torques are used
+    /// `contacts`, which are the manifolds of the bodies as they are, and `joints`, the live joints
+    /// in slot order (a joint ties two bodies, which are in one island). Forces and torques are used
     /// and cleared. A sleeping body is not moved. The world has woken every sleeping body that an
     /// awake body touches before the call, so a manifold has either two awake ends or none (a
     /// static end counts as either). The result is not committed: it becomes the warm start of the next step only in
@@ -161,6 +191,7 @@ pub trait ContactSolver<D: Dim>: Sized {
         &mut self,
         bodies: &mut [Option<Body<D>>],
         contacts: &[ContactManifold<D>],
+        joints: &[JointEntry<D>],
         frame: StepFrame<D>,
     );
 
@@ -194,6 +225,7 @@ impl<D: Dim> ContactSolver<D> for FreeSolver {
         config: SolverConfig,
         _max_bodies: u32,
         _max_manifolds: u32,
+        _max_joints: u32,
     ) -> Result<Self, PhysicsError> {
         config.validate()?;
         Ok(Self)
@@ -203,6 +235,7 @@ impl<D: Dim> ContactSolver<D> for FreeSolver {
         &mut self,
         bodies: &mut [Option<Body<D>>],
         _contacts: &[ContactManifold<D>],
+        _joints: &[JointEntry<D>],
         frame: StepFrame<D>,
     ) {
         for body in bodies.iter_mut().flatten() {
@@ -248,6 +281,10 @@ mod tests {
             (3.0, 1.0)
         );
         assert_eq!(config.linear_slop.to_bits(), 0.001_f32.to_bits());
+        assert_eq!(
+            (config.joint_hertz, config.joint_damping_ratio),
+            (60.0, 2.0)
+        );
     }
 
     #[test]
@@ -279,5 +316,15 @@ mod tests {
         assert!(invalid(|c| c.linear_slop = -0.1));
         assert!(invalid(|c| c.linear_slop = f32::NAN));
         assert!(!invalid(|c| c.linear_slop = 0.0));
+    }
+
+    #[test]
+    fn the_joint_numbers_must_be_finite_and_in_range() {
+        assert!(invalid(|c| c.joint_hertz = 0.0));
+        assert!(invalid(|c| c.joint_hertz = f32::NAN));
+        assert!(invalid(|c| c.joint_hertz = f32::INFINITY));
+        assert!(invalid(|c| c.joint_damping_ratio = -0.1));
+        assert!(invalid(|c| c.joint_damping_ratio = f32::NAN));
+        assert!(!invalid(|c| c.joint_damping_ratio = 0.0));
     }
 }

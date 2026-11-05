@@ -13,6 +13,7 @@ use super::error::PhysicsError;
 use super::execution::SolverExecution;
 use super::hash::{HashBits, StateHasher};
 use super::islands::Islands;
+use super::joint::{JointDesc, JointEntry, JointHandle, JointTable};
 use super::manifolds::{ContactManifold, ManifoldList};
 use super::pairs::{Pair, PairList};
 use super::sleep::SleepConfig;
@@ -47,6 +48,9 @@ pub struct WorldConfig<D: Dim> {
     /// this is normally far below `max_pairs`. Manifolds past it are counted, not stored (see
     /// [`ManifoldList`]).
     pub max_manifolds: u32,
+    /// The most joints alive at once, at most [`MAX_JOINTS`](super::MAX_JOINTS); zero for a world
+    /// without joints. Creating a joint past it is an error value, never a reallocation.
+    pub max_joints: u32,
     /// The distance, in metres, up to which shapes that do not touch still get a contact, zero or
     /// more ([`DEFAULT_SPECULATIVE_MARGIN`]). A pair is a candidate only when the fat boxes of the
     /// broadphase overlap, so a margin above the broadphase margin is not reached for every pair; it
@@ -86,6 +90,7 @@ pub struct World<D: Dim> {
     steps: u64,
     broadphase: Broadphase<D>,
     manifolds: ManifoldList<D>,
+    joints: JointTable<D>,
     speculative_margin: f32,
     solver: D::Solver,
     sleep: SleepConfig,
@@ -119,9 +124,13 @@ fn store<D: Dim>(slot: &mut Option<Slot<D>>, copy: Option<&Body<D>>) {
 /// The manifold of `pair`, or `None` when a body of the pair is gone or the shapes do not touch.
 fn contact_of<D: Dim>(
     slots: &[Option<Slot<D>>],
+    joints: &JointTable<D>,
     pair: &Pair<D>,
     margin: f32,
 ) -> Option<ContactManifold<D>> {
+    if joints.forbids_contact(pair.first.index(), pair.second.index()) {
+        return None;
+    }
     let first = live_slot(slots, pair.first).ok()?;
     let second = live_slot(slots, pair.second).ok()?;
     let manifold = D::collide(&first.body.placed(), &second.body.placed(), margin)?;
@@ -199,7 +208,13 @@ impl<D: Dim> World<D> {
             return Err(PhysicsError::InvalidMargin);
         }
         let manifolds = ManifoldList::new(config.max_manifolds)?;
-        let solver = D::Solver::new(config.solver, config.max_bodies, config.max_manifolds)?;
+        let joints = JointTable::new(config.max_joints)?;
+        let solver = D::Solver::new(
+            config.solver,
+            config.max_bodies,
+            config.max_manifolds,
+            config.max_joints,
+        )?;
         config.sleep.validate()?;
         let mut scratch = Vec::with_capacity(config.max_bodies as usize);
         scratch.resize_with(config.max_bodies as usize, || None);
@@ -213,6 +228,7 @@ impl<D: Dim> World<D> {
             steps: 0,
             broadphase,
             manifolds,
+            joints,
             speculative_margin: config.speculative_margin,
             solver,
             sleep: config.sleep,
@@ -318,6 +334,10 @@ impl<D: Dim> World<D> {
         let slot = live_slot(&self.slots, handle)?;
         self.broadphase.remove(slot.body.kind(), slot.proxy)?;
         self.wake_around(handle);
+        let (joints, slots, islands) = (&mut self.joints, &mut self.slots, &mut self.islands);
+        joints.destroy_touching(handle.index(), |other| {
+            wake_island_in(slots, islands, other.index() as usize);
+        });
         self.handles.remove(handle);
         if let Some(slot) = self.slots.get_mut(handle.index() as usize) {
             *slot = None;
@@ -325,6 +345,83 @@ impl<D: Dim> World<D> {
         self.islands.reset_slot(handle.index() as usize);
         self.contacts_stale = true;
         Ok(())
+    }
+
+    /// Creates a joint between two live bodies. Allocates nothing. The island of both bodies wakes
+    /// (a new joint changes what holds them), and unless [`JointDesc::collide_connected`] is set
+    /// the two bodies make no manifold with each other from the next step on.
+    ///
+    /// # Errors
+    /// [`PhysicsError::StaleHandle`] for a body that is gone; [`PhysicsError::InvalidJoint`] when
+    /// the two bodies are the same body or both static, or the shape is out of range;
+    /// [`PhysicsError::NotFinite`] for a number that is not finite;
+    /// [`PhysicsError::JointCapacityExhausted`] when every joint slot is in use. A refused call
+    /// changes nothing.
+    pub fn create_joint(&mut self, desc: &JointDesc<D>) -> Result<JointHandle<D>, PhysicsError> {
+        let first = live_slot(&self.slots, desc.first)?.body.kind();
+        let second = live_slot(&self.slots, desc.second)?.body.kind();
+        let both_static = first == BodyKind::Static && second == BodyKind::Static;
+        if desc.first == desc.second || both_static {
+            return Err(PhysicsError::InvalidJoint);
+        }
+        let handle = self.joints.create(desc)?;
+        self.rouse_dynamic(desc.first);
+        self.rouse_dynamic(desc.second);
+        self.contacts_stale = true;
+        Ok(handle)
+    }
+
+    /// Destroys a joint; the island of its bodies wakes, since they lose a support.
+    ///
+    /// # Errors
+    /// [`PhysicsError::StaleJoint`].
+    pub fn destroy_joint(&mut self, handle: JointHandle<D>) -> Result<(), PhysicsError> {
+        let entry = self.joints.destroy(handle)?;
+        self.rouse_dynamic(entry.first);
+        self.rouse_dynamic(entry.second);
+        self.contacts_stale = true;
+        Ok(())
+    }
+
+    /// True when `handle` names a live joint of this world.
+    #[must_use]
+    pub fn contains_joint(&self, handle: JointHandle<D>) -> bool {
+        self.joints.get(handle).is_ok()
+    }
+
+    /// The number of live joints.
+    #[must_use]
+    pub fn joint_count(&self) -> usize {
+        self.joints.len()
+    }
+
+    /// The most joints the world can hold.
+    #[must_use]
+    pub fn joint_capacity(&self) -> usize {
+        self.joints.capacity()
+    }
+
+    /// A live joint: its bodies, shape and contact flag.
+    ///
+    /// # Errors
+    /// [`PhysicsError::StaleJoint`].
+    pub fn joint(&self, handle: JointHandle<D>) -> Result<&JointEntry<D>, PhysicsError> {
+        self.joints.get(handle)
+    }
+
+    /// Every live joint, in slot-index order.
+    #[must_use]
+    pub fn joints(&self) -> &[JointEntry<D>] {
+        self.joints.live()
+    }
+
+    /// Rouses the body of `handle` unless it is static or gone.
+    fn rouse_dynamic(&mut self, handle: BodyHandle<D>) {
+        let dynamic =
+            live_slot(&self.slots, handle).is_ok_and(|slot| slot.body.kind() == BodyKind::Dynamic);
+        if dynamic {
+            self.rouse(handle.index() as usize);
+        }
     }
 
     /// The state of a body.
@@ -401,15 +498,16 @@ impl<D: Dim> World<D> {
     /// to see the contacts of a scene without a step. Applies no force. Allocates nothing.
     pub fn collide(&mut self) {
         self.manifolds.clear();
-        let (slots, margin) = (&self.slots, self.speculative_margin);
+        let (slots, joints, margin) = (&self.slots, &self.joints, self.speculative_margin);
         let pairs = self.broadphase.pairs().as_slice();
         for entry in pairs
             .iter()
-            .filter_map(|pair| contact_of(slots, pair, margin))
+            .filter_map(|pair| contact_of(slots, joints, pair, margin))
         {
             self.manifolds.push(entry);
         }
-        self.islands.build(&self.slots, self.manifolds.as_slice());
+        self.islands
+            .build(&self.slots, self.manifolds.as_slice(), self.joints.live());
         self.contacts_stale = false;
     }
 
@@ -643,8 +741,12 @@ impl<D: Dim> World<D> {
             gravity: self.gravity,
             dt,
         };
-        self.solver
-            .solve(&mut self.scratch, self.manifolds.as_slice(), frame);
+        self.solver.solve(
+            &mut self.scratch,
+            self.manifolds.as_slice(),
+            self.joints.live(),
+            frame,
+        );
         let broadphase = &self.broadphase;
         let stays_finite = self.solver.is_finite()
             && self.scratch.iter().flatten().all(|body| {
@@ -718,6 +820,7 @@ mod tests {
             max_pairs: 256,
             broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
             max_manifolds: 256,
+            max_joints: 0,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
             solver: SolverConfig::DEFAULT,
             sleep: SleepConfig::DEFAULT,
@@ -788,6 +891,7 @@ mod tests {
             max_pairs: 256,
             broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
             max_manifolds: 256,
+            max_joints: 0,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
             solver: SolverConfig::DEFAULT,
             sleep: SleepConfig::DEFAULT,
@@ -807,6 +911,7 @@ mod tests {
                 max_pairs: 256,
                 broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
                 max_manifolds: 256,
+                max_joints: 0,
                 speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
                 solver: SolverConfig::DEFAULT,
                 sleep: SleepConfig::DEFAULT,
@@ -993,6 +1098,7 @@ mod tests {
             max_pairs: 256,
             broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
             max_manifolds: 256,
+            max_joints: 0,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
             solver: SolverConfig::DEFAULT,
             sleep: SleepConfig::DEFAULT,
@@ -1502,6 +1608,7 @@ mod tests {
             max_pairs,
             broadphase_margin: margin,
             max_manifolds: 256,
+            max_joints: 0,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
             solver: SolverConfig::DEFAULT,
             sleep: SleepConfig::DEFAULT,
@@ -1538,6 +1645,7 @@ mod tests {
             max_pairs: 4,
             broadphase_margin: 0.1,
             max_manifolds,
+            max_joints: 0,
             speculative_margin,
             solver: SolverConfig::DEFAULT,
             sleep: SleepConfig::DEFAULT,
@@ -1590,6 +1698,7 @@ mod tests {
             max_pairs,
             broadphase_margin,
             max_manifolds: 256,
+            max_joints: 0,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
             solver: SolverConfig::DEFAULT,
             sleep: SleepConfig::DEFAULT,

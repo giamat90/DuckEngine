@@ -9,6 +9,7 @@
 use super::bounds::Bounds;
 use super::error::PhysicsError;
 use super::hash::{HashBits, StateHasher};
+use super::joint::JointShape;
 use super::solver::ContactSolver;
 use base::math::{Vec2, Vec3};
 use std::fmt::Debug;
@@ -150,6 +151,8 @@ pub trait Dim: Sized {
     type Manifold: Copy + Debug + PartialEq + HashBits;
     /// The contact solver of this dimension ([`FreeSolver`](super::FreeSolver) answers no contact).
     type Solver: ContactSolver<Self>;
+    /// The kinds of joint of this dimension ([`NoJoint`](super::joint::NoJoint) for none).
+    type Joint: JointShape;
 
     /// The angular acceleration a `torque` gives a body of inverse inertia `inv_inertia` at
     /// orientation `rot`.

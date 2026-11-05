@@ -27,6 +27,7 @@ fn world(max_bodies: u32, max_pairs: u32, margin: f32) -> Result<World, PhysicsE
         max_pairs,
         broadphase_margin: margin,
         max_manifolds: 256,
+        max_joints: 0,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
         sleep: physics::d2::SleepConfig::DEFAULT,

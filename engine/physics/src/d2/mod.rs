@@ -3,6 +3,7 @@
 //! shapes of [`Shape2`]. Applications use the aliases of this module.
 
 mod aabb;
+mod joint;
 mod manifold;
 mod narrowphase;
 mod polygon;
@@ -15,13 +16,16 @@ use base::math::Vec2;
 
 pub use crate::core::{
     BodyKind, Colour, DEFAULT_BROADPHASE_MARGIN, DEFAULT_CHUNK, DEFAULT_CONTACT_DAMPING_RATIO,
-    DEFAULT_CONTACT_HERTZ, DEFAULT_CONTACT_PUSH_SPEED, DEFAULT_FRICTION, DEFAULT_LINEAR_SLOP,
+    DEFAULT_CONTACT_HERTZ, DEFAULT_CONTACT_PUSH_SPEED, DEFAULT_FRICTION,
+    DEFAULT_JOINT_DAMPING_RATIO, DEFAULT_JOINT_HERTZ, DEFAULT_LINEAR_SLOP,
     DEFAULT_RELAX_ITERATIONS, DEFAULT_RESTITUTION, DEFAULT_RESTITUTION_THRESHOLD,
     DEFAULT_SLEEP_ANGULAR_SPEED, DEFAULT_SLEEP_LINEAR_SPEED, DEFAULT_SPECULATIVE_MARGIN,
-    DEFAULT_SUB_STEPS, DEFAULT_TIME_TO_SLEEP, MAX_COLOURS, MAX_PAIRS, MAX_RELAX_ITERATIONS,
-    MAX_SUB_STEPS, PhysicsError, SleepConfig, SolverConfig, SolverExecution, SolverStats,
+    DEFAULT_SUB_STEPS, DEFAULT_TIME_TO_SLEEP, MAX_COLOURS, MAX_JOINTS, MAX_PAIRS,
+    MAX_RELAX_ITERATIONS, MAX_SUB_STEPS, PhysicsError, SleepConfig, SolverConfig, SolverExecution,
+    SolverStats,
 };
 pub use aabb::Aabb2;
+pub use joint::{AngleLimits, DistanceJoint2, Joint2, LengthLimits, Motor, RevoluteJoint2, Spring};
 pub use manifold::{ContactPoint2, FeatureId, MAX_MANIFOLD_POINTS, Manifold2};
 pub use rot::Rot2;
 pub use shape::Shape2;
@@ -47,6 +51,12 @@ pub type ContactManifold = crate::core::ContactManifold<D2>;
 pub type ManifoldList = crate::core::ManifoldList<D2>;
 /// Names one body of a 2D world.
 pub type BodyHandle = crate::core::BodyHandle<D2>;
+/// Names one joint of a 2D world.
+pub type JointHandle = crate::core::JointHandle<D2>;
+/// The description a 2D joint is created from.
+pub type JointDesc = crate::core::JointDesc<D2>;
+/// A live joint of a 2D world.
+pub type JointEntry = crate::core::JointEntry<D2>;
 
 /// Standard gravity as a downward acceleration in metres per second squared (right-handed, Y up).
 pub const STANDARD_GRAVITY: Vec2 = Vec2::new(0.0, -9.806_65);
@@ -64,6 +74,7 @@ impl Dim for D2 {
     type Bounds = Aabb2;
     type Manifold = Manifold2;
     type Solver = Solver2;
+    type Joint = Joint2;
 
     fn apply_inverse_inertia(_rot: Rot2, inv_inertia: f32, torque: f32) -> f32 {
         inv_inertia * torque

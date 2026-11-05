@@ -118,7 +118,7 @@ impl SolverBody {
     }
 
     /// The velocity of the point `anchor` away from the centre.
-    fn velocity_at(&self, anchor: Vec2) -> Vec2 {
+    pub(super) fn velocity_at(&self, anchor: Vec2) -> Vec2 {
         Vec2::new(
             self.velocity.x - self.spin * anchor.y,
             self.velocity.y + self.spin * anchor.x,
@@ -126,7 +126,7 @@ impl SolverBody {
     }
 
     /// Applies `impulse` at the point `anchor` away from the centre.
-    fn push(&mut self, anchor: Vec2, impulse: Vec2) {
+    pub(super) fn push(&mut self, anchor: Vec2, impulse: Vec2) {
         self.velocity += impulse * self.inv_mass;
         self.spin += self.inv_inertia * anchor.cross(impulse);
     }

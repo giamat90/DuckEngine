@@ -48,6 +48,7 @@ fn scene_with(sleep: physics::d2::SleepConfig) -> Result<World, PhysicsError> {
         max_pairs: 256,
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         max_manifolds: 256,
+        max_joints: 0,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
         sleep,

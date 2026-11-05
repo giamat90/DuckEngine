@@ -494,6 +494,66 @@ sequenceDiagram
   S->>S: restitution, finish, warm cache (serial)
 ```
 
+- **As built in card 4-16.** The world has joints: a revolute joint (a hinge, with optional angle limits and a small motor) and a distance joint (a rod, a spring, a rope or a strut), solved in the same soft-step scheme as the contacts. (1) *Handles and descriptions* (`core::joint`, `d2::joint`): `JointHandle` is a generation-checked `base::pool` handle like a body handle; `WorldConfig::max_joints` fixes the capacity (above `MAX_JOINTS` the world is refused, a full table returns `JointCapacityExhausted` as a value, a stale handle `StaleJoint`, a bad number `InvalidJoint` or `NotFinite`); `World::create_joint(&JointDesc)`, `destroy_joint`, `joint`, `joints` (slot order), `contains_joint`, `joint_count`. `Dim` gains one associated type, `Joint` (a `JointShape` that validates itself; 2D: `Joint2` with `Revolute(RevoluteJoint2)` and `Distance(DistanceJoint2)`), so the generic core stores joints without knowing their kinds. One end may be static, two static ends or one body twice is `InvalidJoint`. Destroying a body destroys its joints (their handles go stale) and wakes the bodies at their other ends. Bodies joined by a joint do not collide with each other unless `JointDesc::collide_connected` is set (the Box2D default **[K]**); the exemption is a sorted list of body-slot pairs searched by `contact_of`, so it ends with the joint. (2) *Revolute*: anchors in each body's frame (relative to its centre of mass), a reference angle, optional `AngleLimits` and an optional `Motor` (`max_torque`, `speed`); order of the constraints inside a joint: motor, lower limit, upper limit, then the point constraint (a 2x2 symmetric solve). Limits are speculative while the angle is inside them (the joint may close the gap within one sub-step and no more), soft when violated. (3) *Distance*: a rest length, a rigid rod when `spring` is `None`, a spring with `hertz` above zero (own softness), slack with `hertz` zero (a rope or strut: only the limits act, and limits are allowed only with a spring field), optional `LengthLimits` with `0 <= min <= length <= max`. (4) *In the solver* (`d2::solver::joint`): the joints are prepared after the contacts (so the bodies of a world without joints are touched in the same order as before), carry a `JointWarm` cache matched by joint handle with a forward cursor (no search), and use the rigid softness `SolverConfig::joint_hertz` (`DEFAULT_JOINT_HERTZ` = 60, capped at a quarter of the sub-step rate) and `joint_damping_ratio` (`DEFAULT_JOINT_DAMPING_RATIO` = 2.0), the values of Box2D v3.0 **[K]**. **Ordering decision:** the joints are not coloured. In every pass of every sub-step (warm start, solve, relax) all joints are visited first, serially on the calling thread in joint-slot order, then the contacts colour by colour. A joint therefore never reaches the scheduler or the lanes, so the parallel and SIMD paths equal the scalar serial one by construction, the staged path only has to write its bodies back after every colour (it already does), and the hashes of scenes without joints did not change. The price is that the joints are a serial part of the step (a long chain is solved on one thread; colouring the joints together with the contacts and a SIMD joint path are follow-ups once a benchmark, card 4-22, shows the joints matter). (5) *Islands and sleeping:* a joint between two dynamic bodies unites them in the union-find (a static end joins nothing), so a chain is one island and sleeps and wakes as one; `create_joint` and `destroy_joint` rouse the dynamic ends. A joint is solved when one of its bodies is awake, and its warm start is kept as it is while both sleep. (6) *Hash:* the state hash covers the joint impulses (a count, then per joint its handle and six floats) and nothing at all while there are no joints; joint parameters are not hashed (like body shapes, a replay recreates them). `SolverStats` gains `joints_solved` and `joints_frozen`. The step stays atomic and allocation free (per-thread counters, `tests/joint_allocation.rs`). Measured and tuned numbers, the decisions and the open points: [reviews/4-16](../../reviews/4-16.md).
+
+```mermaid
+classDiagram
+  class World~D~ { +create_joint(JointDesc) +destroy_joint(JointHandle) +joint(JointHandle) +joints() }
+  class JointTable~D~ { <<private>> slots live no_contact +create +destroy +destroy_touching +forbids_contact }
+  class JointDesc~D~ { first second collide_connected shape }
+  class JointShape { <<trait>> validate() }
+  class Joint2 { <<enum>> Revolute Distance }
+  class RevoluteJoint2 { anchor_a anchor_b reference_angle limits motor }
+  class DistanceJoint2 { anchor_a anchor_b length spring limits }
+  class Islands { build(slots, manifolds, joints) }
+  class JointSet { <<d2 solver>> constraints warm next +sweep(bodies, JointPass) }
+  class JointConstraint { hinge rod warm_start solve }
+  class Solver2 { sub_step }
+  World~D~ *-- JointTable~D~
+  World~D~ ..> JointDesc~D~
+  JointDesc~D~ --> JointShape
+  Joint2 ..|> JointShape
+  Joint2 *-- RevoluteJoint2
+  Joint2 *-- DistanceJoint2
+  World~D~ ..> Islands : joints unite dynamic ends
+  World~D~ ..> Solver2 : live joints
+  Solver2 *-- JointSet
+  JointSet *-- JointConstraint
+```
+
+```mermaid
+sequenceDiagram
+  participant S as Solver2 (caller thread)
+  participant J as JointSet (serial)
+  participant C as contacts (colour by colour, maybe parallel)
+  S->>S: prepare contacts, then joints (touch bodies, warm start from the cache)
+  loop each sub-step
+    S->>S: integrate velocities
+    S->>J: warm start, all joints in slot order
+    S->>C: warm start, colour by colour
+    S->>J: solve with bias, all joints in slot order
+    S->>C: solve with bias, colour by colour
+    S->>S: integrate positions
+    S->>J: relax, all joints in slot order
+    S->>C: relax, colour by colour
+  end
+  S->>C: restitution
+  S->>S: finish: keep joint and contact impulses, write bodies back
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> Live : create_joint
+  Live --> Live : step (solved while an end is awake, impulses kept)
+  Live --> Frozen : both dynamic ends asleep
+  Frozen --> Live : island woken, create_joint or destroy_joint on an end
+  Live --> Stale : destroy_joint
+  Frozen --> Stale : destroy_joint
+  Live --> Stale : destroy_body of an end
+  Frozen --> Stale : destroy_body of an end
+  Stale --> [*]
+```
+
 - **Borrowed closures.** `parallel_for` and `run_scope` take closures that borrow the caller's data, so that no `Box` is allocated per frame (the existing `platform::threads::Job` is a `Box<dyn FnOnce() + 'static>`, which allocates). Running a borrowing closure on a worker thread needs a small amount of `unsafe` (lifetime erasure guarded by the scope waiting for completion). This is the one place where `jobs` is expected to use `unsafe` (section 8).
 - **`World<D>`.** The step takes a scheduler and a per-step scratch `Arena` as parameters, so there is no global state and no hidden thread. `WorldConfig` fixes the capacities (bodies, shapes, joints, contacts, tree nodes) at creation; creating a body past the capacity returns an error value and never reallocates, so a steady-state frame allocates nothing (section 7). `dt` is `f32` seconds computed once from `FixedStep::step_ticks`.
 - **Body state.** 2D rotation is stored as a `(cos, sin)` pair, not an angle, and is advanced in the step by a first-order update followed by a normalisation, so the step itself calls no `sin`, `cos` or `atan2`. Those are needed only to create a body from an angle and to read an angle back, and both go through the facade (section 5). This follows Box2D v3 **[K, from background knowledge, not re-read this session]** and is a design choice made so that the hot loop needs no libm at all.
@@ -523,7 +583,7 @@ flowchart LR
 | Solver | Soft-Step-style: soft contact constraints, sub-stepping (a small number of sub-steps per step) instead of velocity and position iteration counts, a relax pass, restitution applied after the solve, contacts built once per step. Scalar reference first, SIMD form after, tested bit for bit against the reference | [S] Box2D v3 (release post and migration notes linked in [physics §2](physics.md)). The reference machine workload W1 is written in iteration counts (section 10, O9) |
 | Parallel solve | graph colouring: constraints are assigned a colour so that no two constraints of one colour touch the same dynamic body; the colours are solved one after the other, and the constraints inside a colour in parallel; constraints that do not fit into the colour limit go to a serial overflow set solved last | colour assignment is a serial pass in a fixed constraint order, so it is the same at any thread count. Inside a colour the constraints share no body, so the arithmetic of each constraint is independent of the others and of the chunking. There is no floating-point reduction across threads in the solve; any sum that must exist (island energy, sleep time) is accumulated serially in handle order |
 | Sleeping | islands built serially by union-find over touching non-static bodies in handle order; an island sleeps when all its bodies stay below a velocity threshold for a time; a sleeping island wakes when a body of another island touches it or a joint or a user call changes it | the island order is the order of the lowest body handle; thresholds are fixed config values, tested |
-| Joints | v0: **revolute** and **distance** joints, soft, in the same solver and colouring (O6) | a chain is a row of revolute joints, which is the "chain stability" exit scene, if read that way |
+| Joints | v0: **revolute** and **distance** joints, soft, in the same soft-step solver (O6); as built in card 4-16 the joints are solved serially before the contacts in every pass and are not coloured | a chain is a row of revolute joints, which is the "chain stability" exit scene, if read that way |
 | Not in v0 | time-of-impact CCD (v0 has a speculative margin for fast bodies **[K]**), prismatic, weld, wheel, motor limits beyond revolute, rounded polygons, compound shapes, sensors beyond overlap events, soft bodies, cloth, vehicles | [physics §6](physics.md) keeps the feature list short on purpose |
 | Large worlds | usable world size documented and tested at the limit; recentring is the caller's job | [physics §2](physics.md) (Box2D notes about 20 km **[S]**) |
 

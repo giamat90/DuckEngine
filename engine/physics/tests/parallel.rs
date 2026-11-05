@@ -35,6 +35,7 @@ fn config(sleep: SleepConfig, gravity: Vec2) -> WorldConfig {
         max_pairs: 8192,
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         max_manifolds: 8192,
+        max_joints: 0,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
         sleep,

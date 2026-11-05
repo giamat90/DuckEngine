@@ -18,6 +18,7 @@ fn world(gravity: Vec2, max_manifolds: u32) -> Result<World, PhysicsError> {
         max_pairs: 256,
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         max_manifolds,
+        max_joints: 0,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
         sleep: physics::d2::SleepConfig::DEFAULT,

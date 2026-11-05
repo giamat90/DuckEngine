@@ -25,6 +25,7 @@
 //! length `dt`, exactly as before the solver existed, so a world without contacts hashes as it did.
 
 mod constraint;
+mod joint;
 mod stage;
 mod warm;
 
@@ -32,14 +33,15 @@ use self::constraint::{
     Constraint, Ends, HERTZ_LIMIT_FRACTION, Link, Pass, STATIC_STIFFNESS_FACTOR, Setup, Softness,
     SolverBody, Staged, StepTerms, Surface, Sweep,
 };
+use self::joint::{JointConstraint, JointPass, JointSet, JointSetup, JointSweep, rigid_softness};
 use self::stage::{ColourJob, Slot, scatter};
 use self::warm::WarmCache;
 use crate::core::cells::{index_u32, put};
 use crate::core::{
-    Body, BodyKind, Colouring, ConstraintEnds, ContactManifold, ContactSolver, Motion,
+    Body, BodyKind, Colouring, ConstraintEnds, ContactManifold, ContactSolver, JointEntry, Motion,
     PhysicsError, SolverConfig, SolverExecution, SolverStats, StateHasher, StepFrame,
 };
-use crate::d2::D2;
+use crate::d2::{D2, Joint2};
 use base::fpenv::FpGuard;
 
 /// The scalar contact solver of the 2D instance. All storage is allocated by [`Solver2::new`].
@@ -63,6 +65,8 @@ pub struct Solver2 {
     warm: WarmCache,
     /// The impulses of the step being solved.
     next: WarmCache,
+    /// The joints of the step. They are solved serially, before the contacts, in every pass.
+    joints: JointSet,
     /// Reorders the constraints inside each colour after the colouring (tests only).
     #[cfg(test)]
     reorder: Option<Reorder>,
@@ -150,6 +154,7 @@ impl ContactSolver<D2> for Solver2 {
         config: SolverConfig,
         max_bodies: u32,
         max_manifolds: u32,
+        max_joints: u32,
     ) -> Result<Self, PhysicsError> {
         config.validate()?;
         let bodies = max_bodies as usize;
@@ -168,6 +173,7 @@ impl ContactSolver<D2> for Solver2 {
             max_constraints: manifolds,
             warm: WarmCache::new(manifolds),
             next: WarmCache::new(manifolds),
+            joints: JointSet::new(max_joints as usize),
             #[cfg(test)]
             reorder: None,
         })
@@ -177,6 +183,7 @@ impl ContactSolver<D2> for Solver2 {
         &mut self,
         bodies: &mut [Option<Body<D2>>],
         contacts: &[ContactManifold<D2>],
+        joints: &[JointEntry<D2>],
         frame: StepFrame<D2>,
     ) {
         // One deterministic floating-point state for the whole solve, whichever path runs; the
@@ -187,7 +194,7 @@ impl ContactSolver<D2> for Solver2 {
             gravity: frame.gravity,
             h,
         };
-        self.prepare(bodies, contacts, terms);
+        self.prepare(bodies, contacts, joints, terms);
         self.colouring.assign();
         #[cfg(test)]
         self.apply_reorder();
@@ -200,24 +207,29 @@ impl ContactSolver<D2> for Solver2 {
     }
 
     fn is_finite(&self) -> bool {
-        self.next.is_finite()
+        self.next.is_finite() && self.joints.is_finite()
     }
 
     fn stats(&self) -> SolverStats {
+        let (joints_solved, joints_frozen) = self.joints.counts();
         SolverStats {
             solved: self.colouring.order().len(),
             frozen: self.constraints.len() - self.colouring.order().len(),
             colours: self.colouring.colour_count(),
             overflow: self.colouring.overflow().len(),
+            joints_solved,
+            joints_frozen,
         }
     }
 
     fn commit(&mut self) {
         std::mem::swap(&mut self.warm, &mut self.next);
+        self.joints.commit();
     }
 
     fn write_bits(&self, hasher: &mut StateHasher) {
         self.warm.write_bits(hasher);
+        self.joints.write_bits(hasher);
     }
 }
 
@@ -269,12 +281,14 @@ impl Solver2 {
         &mut self,
         bodies: &[Option<Body<D2>>],
         contacts: &[ContactManifold<D2>],
+        joints: &[JointEntry<D2>],
         terms: StepTerms,
     ) {
         self.touched.fill(false);
         self.active.clear();
         self.constraints.clear();
         self.colouring.clear();
+        self.joints.clear();
         let (soft, stiff) = self.softness(terms.h);
         let context = Prepare {
             bodies,
@@ -286,6 +300,34 @@ impl Solver2 {
         for entry in contacts {
             self.add_constraint(&context, entry, &mut cursor);
         }
+        for entry in joints {
+            self.add_joint(&context, entry);
+        }
+    }
+
+    /// Adds the joint of `entry`, which is solved when one of its bodies is awake. Joints come after
+    /// the contacts, so the bodies a world without joints touches are touched in the same order.
+    fn add_joint(&mut self, context: &Prepare, entry: &JointEntry<D2>) {
+        let (a, b) = (entry.first.index() as usize, entry.second.index() as usize);
+        let (Some(Some(first)), Some(Some(second))) =
+            (context.bodies.get(a), context.bodies.get(b))
+        else {
+            return;
+        };
+        self.touch(a, first, context.terms);
+        self.touch(b, second, context.terms);
+        let setup = JointSetup {
+            handle: entry.handle,
+            slots: (a, b),
+            bodies: [first, second],
+            h: context.terms.h,
+        };
+        let mut joint = match entry.shape {
+            Joint2::Revolute(shape) => JointConstraint::hinge(&setup, &shape),
+            Joint2::Distance(shape) => JointConstraint::rod(&setup, &shape),
+        };
+        joint.solved = is_awake(first) || is_awake(second);
+        self.joints.add(joint);
     }
 
     /// Adds the constraint of one manifold; a manifold of a missing body, or one that does not fit
@@ -340,19 +382,31 @@ impl Solver2 {
     fn run_sub_steps(&mut self, h: f32) {
         let solve = self.sweep(h, true);
         let relax = self.sweep(h, false);
+        let joint_solve = self.joint_sweep(h, true);
+        let joint_relax = self.joint_sweep(h, false);
         for _ in 0..self.config.sub_steps {
-            self.sub_step(h, [&solve, &relax]);
+            self.sub_step(h, [&solve, &relax], [&joint_solve, &joint_relax]);
         }
         self.sweep_constraints(Pass::Restitute(&relax));
     }
 
     /// One sub-step: velocities, warm start, soft solve, positions, relax.
-    fn sub_step(&mut self, h: f32, [solve, relax]: [&Sweep; 2]) {
+    fn sub_step(
+        &mut self,
+        h: f32,
+        [solve, relax]: [&Sweep; 2],
+        [joint_solve, joint_relax]: [&JointSweep; 2],
+    ) {
         self.each_active(|body| body.integrate_velocity(h));
+        self.joints.sweep(&mut self.bodies, JointPass::WarmStart);
         self.sweep_constraints(Pass::WarmStart);
+        self.joints
+            .sweep(&mut self.bodies, JointPass::Solve(joint_solve));
         self.sweep_constraints(Pass::Solve(solve));
         self.each_active(|body| body.integrate_position(h));
         for _ in 0..self.config.relax_iterations {
+            self.joints
+                .sweep(&mut self.bodies, JointPass::Solve(joint_relax));
             self.sweep_constraints(Pass::Solve(relax));
         }
     }
@@ -364,6 +418,20 @@ impl Solver2 {
             push_speed: self.config.contact_push_speed,
             slop: self.config.linear_slop,
             restitution_threshold: self.config.restitution_threshold,
+        }
+    }
+
+    fn joint_sweep(&self, h: f32, use_bias: bool) -> JointSweep {
+        JointSweep {
+            h,
+            inv_h: 1.0 / h,
+            use_bias,
+            rigid: rigid_softness(
+                self.config.joint_hertz,
+                self.config.joint_damping_ratio,
+                HERTZ_LIMIT_FRACTION,
+                h,
+            ),
         }
     }
 
@@ -415,6 +483,7 @@ impl Solver2 {
     /// Keeps the impulses and writes the new motion into the bodies.
     fn finish(&mut self, bodies: &mut [Option<Body<D2>>], frame: &StepFrame<D2>) {
         self.next.clear();
+        self.joints.finish();
         for slot in &mut self.constraints {
             self.next.push(slot.get_mut().constraint.cached());
         }
@@ -462,7 +531,7 @@ mod tests {
 
     #[test]
     fn a_solver_whose_impulses_are_not_numbers_is_not_finite() {
-        let Ok(mut solver) = Solver2::new(SolverConfig::DEFAULT, 4, 4) else {
+        let Ok(mut solver) = Solver2::new(SolverConfig::DEFAULT, 4, 4, 0) else {
             return;
         };
         assert!(solver.is_finite());
@@ -488,6 +557,7 @@ mod tests {
             max_pairs: 1024,
             broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
             max_manifolds: 1024,
+            max_joints: 0,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
             solver: SolverConfig::DEFAULT,
             sleep,

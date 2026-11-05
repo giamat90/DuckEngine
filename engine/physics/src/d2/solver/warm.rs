@@ -2,7 +2,8 @@
 //! next step starts from them. The manifold list is in pair order, so the old entries are matched
 //! with a cursor that only moves forward: no search, no hash map, the same result on every run.
 
-use crate::core::{BodyHandle, StateHasher};
+use super::joint::JointImpulses;
+use crate::core::{BodyHandle, JointHandle, StateHasher};
 use crate::d2::{D2, FeatureId, MAX_MANIFOLD_POINTS};
 
 /// The accumulated impulses of one contact point.
@@ -146,9 +147,79 @@ impl WarmCache {
     }
 }
 
+/// The impulses of one joint, with the handle that tells it from a later joint in the same slot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CachedJoint {
+    handle: JointHandle<D2>,
+    impulses: JointImpulses,
+}
+
+/// The impulses of the last step's joints, in joint-slot order, with the same cursor lookup as
+/// [`WarmCache`]. Hashes nothing while empty, so a world without joints hashes as before.
+pub(super) struct JointWarm {
+    entries: Vec<CachedJoint>,
+    capacity: usize,
+}
+
+impl JointWarm {
+    pub(super) fn new(capacity: usize) -> Self {
+        Self {
+            entries: Vec::with_capacity(capacity),
+            capacity,
+        }
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Stores the impulses of `handle` unless the buffer is full (it cannot be: one entry per
+    /// joint, and the capacity is the joint capacity).
+    pub(super) fn push(&mut self, handle: JointHandle<D2>, impulses: JointImpulses) {
+        if self.entries.len() < self.capacity {
+            self.entries.push(CachedJoint { handle, impulses });
+        }
+    }
+
+    /// The impulses kept for `handle` at or after `*cursor`, moving the cursor past the entries of
+    /// lower slots. Asked for handles in increasing slot order, as the joint list is.
+    pub(super) fn find(
+        &self,
+        cursor: &mut usize,
+        handle: JointHandle<D2>,
+    ) -> Option<JointImpulses> {
+        let lower = self
+            .entries
+            .get(*cursor..)?
+            .iter()
+            .take_while(|entry| entry.handle.index() < handle.index())
+            .count();
+        *cursor += lower;
+        let entry = self.entries.get(*cursor)?;
+        (entry.handle == handle).then_some(entry.impulses)
+    }
+
+    pub(super) fn is_finite(&self) -> bool {
+        self.entries.iter().all(|entry| entry.impulses.is_finite())
+    }
+
+    pub(super) fn write_bits(&self, hasher: &mut StateHasher) {
+        if self.entries.is_empty() {
+            return;
+        }
+        hasher.write_u64(self.entries.len() as u64);
+        for entry in &self.entries {
+            hasher.write_u32(entry.handle.index());
+            hasher.write_u32(entry.handle.generation());
+            entry.impulses.write_bits(hasher);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base::math::Vec2;
     use base::pool::Handle;
 
     fn h(index: u32, generation: u32) -> BodyHandle<D2> {
@@ -275,6 +346,128 @@ mod tests {
             let mut bad = WarmCache::new(1);
             bad.push(CachedManifold::new(h(0, 0), h(1, 0), &[point(1, n, t)]));
             assert!(!bad.is_finite());
+        }
+    }
+
+    fn jh(index: u32, generation: u32) -> JointHandle<D2> {
+        Handle::from_raw(index, generation)
+    }
+
+    fn impulses(rod: f32) -> JointImpulses {
+        JointImpulses {
+            rod,
+            ..JointImpulses::default()
+        }
+    }
+
+    fn joint_hash(cache: &JointWarm) -> u64 {
+        let mut hasher = StateHasher::new();
+        cache.write_bits(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn joint_impulses_are_found_by_handle_with_a_forward_cursor() {
+        let mut cache = JointWarm::new(4);
+        cache.push(jh(0, 0), impulses(1.0));
+        cache.push(jh(2, 1), impulses(2.0));
+        cache.push(jh(3, 0), impulses(3.0));
+        let mut cursor = 0;
+        assert_eq!(cache.find(&mut cursor, jh(0, 0)), Some(impulses(1.0)));
+        assert_eq!(cache.find(&mut cursor, jh(1, 0)), None);
+        assert_eq!(
+            cache.find(&mut cursor, jh(2, 0)),
+            None,
+            "another generation"
+        );
+        assert_eq!(cache.find(&mut cursor, jh(2, 1)), Some(impulses(2.0)));
+        assert_eq!(cache.find(&mut cursor, jh(3, 0)), Some(impulses(3.0)));
+        assert_eq!(cache.find(&mut cursor, jh(9, 0)), None);
+        assert_eq!(cursor, 3);
+    }
+
+    #[test]
+    fn the_joint_cache_never_grows_past_its_capacity_and_clear_empties_it() {
+        let mut cache = JointWarm::new(1);
+        cache.push(jh(0, 0), impulses(1.0));
+        let one = joint_hash(&cache);
+        cache.push(jh(1, 0), impulses(5.0));
+        assert_eq!(joint_hash(&cache), one);
+        cache.clear();
+        assert_eq!(joint_hash(&cache), StateHasher::new().finish());
+        assert_eq!(cache.find(&mut 0, jh(0, 0)), None);
+    }
+
+    #[test]
+    fn a_joint_cache_hashes_every_field_and_nothing_when_empty() {
+        let empty = JointWarm::new(2);
+        assert_eq!(joint_hash(&empty), StateHasher::new().finish());
+        let base = JointImpulses {
+            point: Vec2::new(1.0, 2.0),
+            rod: 3.0,
+            motor: 4.0,
+            lower: 5.0,
+            upper: 6.0,
+        };
+        let hashed = |handle, impulses| {
+            let mut cache = JointWarm::new(1);
+            cache.push(handle, impulses);
+            joint_hash(&cache)
+        };
+        let reference = hashed(jh(0, 0), base);
+        let changes = [
+            JointImpulses {
+                point: Vec2::new(9.0, 2.0),
+                ..base
+            },
+            JointImpulses {
+                point: Vec2::new(1.0, 9.0),
+                ..base
+            },
+            JointImpulses { rod: 9.0, ..base },
+            JointImpulses { motor: 9.0, ..base },
+            JointImpulses { lower: 9.0, ..base },
+            JointImpulses { upper: 9.0, ..base },
+        ];
+        for changed in changes {
+            assert_ne!(hashed(jh(0, 0), changed), reference, "{changed:?}");
+        }
+        assert_ne!(hashed(jh(1, 0), base), reference);
+        assert_ne!(hashed(jh(0, 1), base), reference);
+    }
+
+    #[test]
+    fn a_joint_cache_with_a_value_that_is_not_a_number_is_not_finite() {
+        let mut cache = JointWarm::new(1);
+        assert!(cache.is_finite());
+        cache.push(jh(0, 0), impulses(1.0));
+        assert!(cache.is_finite());
+        for bad in [
+            JointImpulses {
+                point: Vec2::new(f32::NAN, 0.0),
+                ..JointImpulses::default()
+            },
+            JointImpulses {
+                point: Vec2::new(0.0, f32::INFINITY),
+                ..JointImpulses::default()
+            },
+            impulses(f32::NAN),
+            JointImpulses {
+                motor: f32::NAN,
+                ..JointImpulses::default()
+            },
+            JointImpulses {
+                lower: f32::INFINITY,
+                ..JointImpulses::default()
+            },
+            JointImpulses {
+                upper: f32::NAN,
+                ..JointImpulses::default()
+            },
+        ] {
+            let mut cache = JointWarm::new(1);
+            cache.push(jh(0, 0), bad);
+            assert!(!cache.is_finite(), "{bad:?}");
         }
     }
 }

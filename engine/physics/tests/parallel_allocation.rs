@@ -63,6 +63,7 @@ fn world() -> Result<World, PhysicsError> {
         max_pairs: 1024,
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         max_manifolds: 1024,
+        max_joints: 0,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
         sleep: SleepConfig::DISABLED,

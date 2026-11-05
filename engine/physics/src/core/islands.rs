@@ -16,9 +16,10 @@
 //! The island of a body is only valid for the manifolds it was built from: [`Islands::build`] runs
 //! whenever the world makes its manifolds.
 
-use super::body::{Body, BodyKind};
+use super::body::{Body, BodyHandle, BodyKind};
 use super::cells::{change, index_u32, put, read};
 use super::dim::Dim;
+use super::joint::JointEntry;
 use super::manifolds::ContactManifold;
 use super::sleep::SleepConfig;
 use super::world::{Slot, live_slot};
@@ -82,17 +83,24 @@ impl Islands {
         read(&self.rest, slot, 0.0)
     }
 
-    /// Finds the islands of `manifolds`: a union of the two bodies of every manifold whose bodies
-    /// are both dynamic.
+    /// Finds the islands of `manifolds` and `joints`: a union of the two bodies of every manifold
+    /// and every joint whose bodies are both dynamic.
     pub(super) fn build<D: Dim>(
         &mut self,
         slots: &[Option<Slot<D>>],
         manifolds: &[ContactManifold<D>],
+        joints: &[JointEntry<D>],
     ) {
         for (index, label) in self.label.iter_mut().enumerate() {
             *label = index_u32(index);
         }
         for entry in manifolds.iter().filter(|entry| joins(slots, entry)) {
+            unite(&mut self.label, entry.first.index(), entry.second.index());
+        }
+        for entry in joints
+            .iter()
+            .filter(|entry| both_dynamic(slots, entry.first, entry.second))
+        {
             unite(&mut self.label, entry.first.index(), entry.second.index());
         }
         flatten(&mut self.label);
@@ -236,7 +244,16 @@ fn is_dynamic<D: Dim>(slots: &[Option<Slot<D>>], index: usize) -> bool {
 
 /// Whether both bodies of `entry` are live dynamic bodies, which is when the manifold joins them.
 fn joins<D: Dim>(slots: &[Option<Slot<D>>], entry: &ContactManifold<D>) -> bool {
-    [entry.first, entry.second].iter().all(|&handle| {
+    both_dynamic(slots, entry.first, entry.second)
+}
+
+/// Whether both bodies are live dynamic bodies.
+fn both_dynamic<D: Dim>(
+    slots: &[Option<Slot<D>>],
+    first: BodyHandle<D>,
+    second: BodyHandle<D>,
+) -> bool {
+    [first, second].iter().all(|&handle| {
         live_slot(slots, handle).is_ok_and(|slot| slot.body.kind() == BodyKind::Dynamic)
     })
 }

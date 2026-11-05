@@ -11,6 +11,7 @@ pub mod error;
 pub mod execution;
 pub mod hash;
 mod islands;
+pub mod joint;
 pub mod manifolds;
 pub mod pairs;
 pub mod sleep;
@@ -29,6 +30,7 @@ pub use dim::{Dim, Magnitude, MassProperties, Placed, Quantity};
 pub use error::PhysicsError;
 pub use execution::{DEFAULT_CHUNK, SolverExecution};
 pub use hash::{HashBits, StateHasher};
+pub use joint::{JointDesc, JointEntry, JointHandle, JointShape, JointTag, MAX_JOINTS, NoJoint};
 pub use manifolds::{ContactManifold, ManifoldList};
 pub use pairs::{Pair, PairList};
 pub use sleep::{
@@ -36,9 +38,10 @@ pub use sleep::{
 };
 pub use solver::{
     ContactSolver, DEFAULT_CONTACT_DAMPING_RATIO, DEFAULT_CONTACT_HERTZ,
-    DEFAULT_CONTACT_PUSH_SPEED, DEFAULT_LINEAR_SLOP, DEFAULT_RELAX_ITERATIONS,
-    DEFAULT_RESTITUTION_THRESHOLD, DEFAULT_SUB_STEPS, FreeSolver, MAX_RELAX_ITERATIONS,
-    MAX_SUB_STEPS, SolverConfig, SolverStats, StepFrame,
+    DEFAULT_CONTACT_PUSH_SPEED, DEFAULT_JOINT_DAMPING_RATIO, DEFAULT_JOINT_HERTZ,
+    DEFAULT_LINEAR_SLOP, DEFAULT_RELAX_ITERATIONS, DEFAULT_RESTITUTION_THRESHOLD,
+    DEFAULT_SUB_STEPS, FreeSolver, MAX_RELAX_ITERATIONS, MAX_SUB_STEPS, SolverConfig, SolverStats,
+    StepFrame,
 };
 pub use tree::{ProxyId, Tree};
 pub use world::{DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN, World, WorldConfig};

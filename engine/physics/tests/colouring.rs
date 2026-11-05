@@ -18,6 +18,7 @@ fn world(gravity: Vec2, sleep: SleepConfig) -> Result<World, PhysicsError> {
         max_pairs: 4096,
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         max_manifolds: 4096,
+        max_joints: 0,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
         sleep,
