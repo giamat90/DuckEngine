@@ -359,6 +359,94 @@ sequenceDiagram
   end
 ```
 
+- **As built in card 4-14.** The world now knows which bodies can influence each other, lets resting groups sleep, and solves the contacts colour by colour. (1) *Islands* (`core::islands`, private): a union-find over the manifold list, built after every collide, joins the two bodies of a manifold when both are dynamic (a static body never joins, so two piles on one floor are two islands); the root is always the lowest slot, so the island id (`World::island_of`) is the lowest body slot whatever the manifold order. (2) *Sleeping* (`core::sleep`: `SleepConfig` with `enabled`, `time_to_sleep` 0.5 s, `linear_speed` 0.05 m/s, `angular_speed` 2 degrees per second; values from Box2D v3 and v2 **[K, from memory, not re-read]**): every awake dynamic body keeps a rest timer; an island whose bodies are all awake and all rested for the time falls asleep, its velocities become zero and the step leaves it alone (no integration, no constraint, the contacts and their warm start persist). It wakes by an awake body in contact (the solve wakes the island first, on the scratch copies, so a refused step wakes nothing), by `World::wake`, by every setter (`set_linear_velocity`, `set_angular_velocity`, `apply_force`, `apply_torque`), when a static body is created (every sleeper wakes, because a static body is in no island), and when a body is destroyed (its island and the islands of the bodies that touched it wake). A new dynamic body wakes what it touches by the awake-contact rule. The sleep flag is hashed as one tag byte after the body, only when set, so the flag itself adds no bytes to a world in which nothing sleeps (the contact hashes still changed once, because of the new solve order, see below) and `WorldConfig::sleep.enabled = false` is bit-identical to sleeping on until the first island sleeps. (3) *Colouring* (`core::colouring`, public so card 4-15 can drive it): a greedy, serial colouring in manifold order gives each constraint the lowest of at most 24 colours that none of its dynamic bodies uses yet (one `u32` mask per body; static bodies are exempt); a constraint that finds no colour goes to the overflow set, solved after the colours in canonical order, reported by `SolverStats::overflow` and never an error; a counting sort gives the solve order (colour 0, 1, ..., overflow), canonical inside a colour. `Solver2` sweeps its constraints in that order; a static body is no longer written back by a constraint, so the order inside a colour changes no bit (a test reverses and shuffles the order inside the colours and compares the state hash after 120 steps). The contact hashes were re-pinned once, for the new solve order and for sleeping (reasons in `tests/hash_pin.rs`); the rest timers are not hashed (the flag shows their effect), the island and sleep passes cost O(capacity) per step (to be measured in card 4-22), and card 4-15 must equal this serial result bit for bit. All storage is allocated at creation; zero allocator calls per step with sleeping, waking and overflow (per-thread counters).
+
+```mermaid
+classDiagram
+  class World~D~ {
+    +step(dt) Result
+    +wake(handle)
+    +is_asleep(handle) bool
+    +island_of(handle) Option
+    +island_count() usize
+    +sleeping_count() usize
+    +rest_time(handle) f32
+    +solver_stats() SolverStats
+  }
+  class SleepConfig {
+    enabled
+    time_to_sleep
+    linear_speed
+    angular_speed
+  }
+  class Islands {
+    <<private>>
+    label rest awake smallest
+    build(slots, manifolds)
+    wake_touched(bodies)
+    tick(slots, config, dt)
+    sleep(slots, config)
+  }
+  class Body~D~ {
+    asleep
+    rests_below(linear, angular)
+    fall_asleep()
+    wake_up()
+  }
+  class Colouring {
+    +push(ConstraintEnds)
+    +assign()
+    +order() slice
+    +members(colour) slice
+    +overflow() slice
+    +colour_count() usize
+  }
+  class ConstraintEnds { a b : Option_u32 }
+  class Solver2 { <<d2>> constraints colouring }
+  class SolverStats { solved frozen colours overflow }
+  World~D~ *-- SleepConfig
+  World~D~ *-- Islands
+  World~D~ o-- Body~D~
+  Solver2 *-- Colouring
+  Colouring o-- ConstraintEnds
+  Solver2 ..> SolverStats
+  World~D~ ..> SolverStats
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> Awake: create_body
+  Awake --> Awake: moves above a limit, rest timer 0
+  Awake --> Resting: slower than both limits
+  Resting --> Awake: moves above a limit
+  Resting --> Asleep: every body of the island rested 0.5 s
+  Asleep --> Awake: awake body in contact
+  Asleep --> Awake: wake(), a setter, a force
+  Asleep --> Awake: support created or destroyed
+  Awake --> [*]: destroy_body
+  Asleep --> [*]: destroy_body
+```
+
+```mermaid
+sequenceDiagram
+  participant W as World::step
+  participant I as Islands
+  participant S as Solver2
+  participant K as Colouring
+  W->>W: copy bodies to scratch
+  W->>I: wake_touched(scratch)
+  W->>S: solve(scratch, manifolds)
+  S->>K: push ends of each awake constraint
+  S->>K: assign (greedy, canonical order)
+  loop sub-step
+    S->>K: sweep colour 0, 1, ..., overflow
+  end
+  W->>W: commit if finite
+  W->>I: tick (rest timers)
+  W->>W: broadphase, pairs, collide
+  W->>I: build (islands), then sleep
+```
+
 - **Borrowed closures.** `parallel_for` and `run_scope` take closures that borrow the caller's data, so that no `Box` is allocated per frame (the existing `platform::threads::Job` is a `Box<dyn FnOnce() + 'static>`, which allocates). Running a borrowing closure on a worker thread needs a small amount of `unsafe` (lifetime erasure guarded by the scope waiting for completion). This is the one place where `jobs` is expected to use `unsafe` (section 8).
 - **`World<D>`.** The step takes a scheduler and a per-step scratch `Arena` as parameters, so there is no global state and no hidden thread. `WorldConfig` fixes the capacities (bodies, shapes, joints, contacts, tree nodes) at creation; creating a body past the capacity returns an error value and never reallocates, so a steady-state frame allocates nothing (section 7). `dt` is `f32` seconds computed once from `FixedStep::step_ticks`.
 - **Body state.** 2D rotation is stored as a `(cos, sin)` pair, not an angle, and is advanced in the step by a first-order update followed by a normalisation, so the step itself calls no `sin`, `cos` or `atan2`. Those are needed only to create a body from an angle and to read an angle back, and both go through the facade (section 5). This follows Box2D v3 **[K, from background knowledge, not re-read this session]** and is a design choice made so that the hot loop needs no libm at all.

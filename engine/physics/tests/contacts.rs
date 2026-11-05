@@ -20,6 +20,7 @@ fn world(gravity: Vec2, max_manifolds: u32) -> Result<World, PhysicsError> {
         max_manifolds,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
+        sleep: physics::d2::SleepConfig::DEFAULT,
     })
 }
 

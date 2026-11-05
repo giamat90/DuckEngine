@@ -5,7 +5,7 @@
 //! `x_n = x_0 + g dt^2 n (n + 1) / 2`, which is the continuous `x_0 + g t^2 / 2` plus the documented
 //! error `g t dt / 2`: first order in `dt`.
 
-use super::dim::{Dim, Placed, Quantity};
+use super::dim::{Dim, Magnitude, Placed, Quantity};
 use super::error::PhysicsError;
 use super::hash::{HashBits, StateHasher};
 use base::pool::Handle;
@@ -117,6 +117,11 @@ impl<D: Dim> BodyDesc<D> {
 /// Written before a non-default material in the state hash.
 const MATERIAL_TAG: u8 = 0xA5;
 
+/// Written for a sleeping body in the state hash, after the material and before the shape; an awake
+/// body writes nothing, so a world in which nothing sleeps keeps the hash it had before sleeping
+/// existed (card 4-14).
+const SLEEP_TAG: u8 = 0x5A;
+
 /// What a solver computed for a body in one step.
 pub struct Motion<D: Dim> {
     /// Position of the centre of mass.
@@ -146,6 +151,9 @@ pub struct Body<D: Dim> {
     friction: f32,
     restitution: f32,
     shape: D::Shape,
+    /// True while the island of the body sleeps: the step does not move it and its velocities are
+    /// zero. Only the world changes it.
+    asleep: bool,
 }
 
 impl<D: Dim> Clone for Body<D> {
@@ -206,6 +214,7 @@ impl<D: Dim> Body<D> {
             friction: desc.friction,
             restitution: desc.restitution,
             shape: desc.shape,
+            asleep: false,
         })
     }
 
@@ -231,6 +240,7 @@ impl<D: Dim> Body<D> {
             friction: desc.friction,
             restitution: desc.restitution,
             shape: desc.shape,
+            asleep: false,
         })
     }
 
@@ -295,6 +305,13 @@ impl<D: Dim> Body<D> {
         self.restitution
     }
 
+    /// True while the body sleeps (see [`SleepConfig`](super::sleep::SleepConfig)): the step leaves
+    /// it where it is until something wakes it. Always false for a static body.
+    #[must_use]
+    pub fn is_asleep(&self) -> bool {
+        self.asleep
+    }
+
     /// The shape.
     #[must_use]
     pub fn shape(&self) -> D::Shape {
@@ -349,6 +366,27 @@ impl<D: Dim> Body<D> {
         Ok(())
     }
 
+    /// True when both velocities are at or below the limits (`linear` in metres per second,
+    /// `angular` in the unit of the angular velocity per second).
+    pub(crate) fn rests_below(&self, linear: f32, angular: f32) -> bool {
+        self.linear_velocity.length_squared() <= linear * linear
+            && self.angular_velocity.length_squared() <= angular * angular
+    }
+
+    /// Puts a dynamic body to sleep: both velocities become zero, so a sleeping body is at rest.
+    pub(crate) fn fall_asleep(&mut self) {
+        if self.kind == BodyKind::Dynamic {
+            self.asleep = true;
+            self.linear_velocity = D::Vec::default();
+            self.angular_velocity = D::Ang::default();
+        }
+    }
+
+    /// Wakes the body; the velocities stay zero until the step moves it.
+    pub(crate) fn wake_up(&mut self) {
+        self.asleep = false;
+    }
+
     /// A static body does not take motion; a value that is not finite is refused.
     fn check_motion(&self, finite: bool) -> Result<(), PhysicsError> {
         if self.kind == BodyKind::Static {
@@ -361,9 +399,9 @@ impl<D: Dim> Body<D> {
     }
 
     /// One semi-implicit Euler step of length `dt` under `gravity`; clears the force and the torque.
-    /// A static body stays where it is.
+    /// A static body and a sleeping body stay where they are.
     pub(crate) fn integrate(&mut self, gravity: D::Vec, dt: f32) {
-        if self.kind == BodyKind::Static {
+        if self.kind == BodyKind::Static || self.asleep {
             return;
         }
         let acceleration = gravity + self.force * self.inv_mass;
@@ -449,6 +487,9 @@ impl<D: Dim> Body<D> {
             hasher.write_f32(self.friction);
             hasher.write_f32(self.restitution);
         }
+        if self.asleep {
+            hasher.write_u8(SLEEP_TAG);
+        }
         self.shape.write_bits(hasher);
     }
 }
@@ -489,6 +530,84 @@ mod tests {
         desc.friction = friction;
         desc.restitution = restitution;
         Body::from_desc(&desc)
+    }
+
+    fn resting_ball(kind: BodyKind) -> Body<crate::d2::D2> {
+        use crate::d2::{D2, Shape2};
+        use base::math::Vec2;
+        let desc = BodyDesc::<D2>::new(kind, Vec2::new(0.0, 0.0), Shape2::Circle { radius: 0.5 });
+        Body::from_desc(&desc).must("a valid body")
+    }
+
+    #[test]
+    fn a_body_rests_when_both_speeds_are_at_or_below_the_limits() {
+        use base::math::Vec2;
+        let mut body = resting_ball(BodyKind::Dynamic);
+        body.set_linear_velocity(Vec2::new(0.03, 0.04))
+            .must("velocity");
+        assert!(
+            body.rests_below(0.05, 1.0),
+            "speed exactly at the limit rests"
+        );
+        assert!(
+            !body.rests_below(0.0499, 1.0),
+            "linear speed above the limit"
+        );
+        body.set_angular_velocity(0.5).must("spin");
+        assert!(
+            body.rests_below(0.05, 0.5),
+            "spin exactly at the limit rests"
+        );
+        assert!(
+            !body.rests_below(0.05, 0.4),
+            "angular speed above the limit"
+        );
+    }
+
+    #[test]
+    fn a_dynamic_body_falls_asleep_with_zero_velocity_and_wakes_up() {
+        use base::math::Vec2;
+        let mut body = resting_ball(BodyKind::Dynamic);
+        body.set_linear_velocity(Vec2::new(0.01, 0.0))
+            .must("velocity");
+        body.set_angular_velocity(0.01).must("spin");
+        assert!(!body.is_asleep());
+        body.fall_asleep();
+        assert!(body.is_asleep());
+        assert_eq!(body.linear_velocity(), Vec2::ZERO);
+        assert_eq!(body.angular_velocity().to_bits(), 0.0_f32.to_bits());
+        body.wake_up();
+        assert!(!body.is_asleep());
+    }
+
+    #[test]
+    fn a_static_body_never_falls_asleep() {
+        let mut body = resting_ball(BodyKind::Static);
+        body.fall_asleep();
+        assert!(!body.is_asleep());
+    }
+
+    #[test]
+    fn a_sleeping_body_is_not_integrated_and_an_awake_one_is() {
+        use base::math::Vec2;
+        let mut sleeper = resting_ball(BodyKind::Dynamic);
+        sleeper.fall_asleep();
+        let before = sleeper;
+        sleeper.integrate(Vec2::new(0.0, -9.81), 1.0 / 60.0);
+        assert_eq!(hash_of_body(&sleeper), hash_of_body(&before));
+        let mut awake = resting_ball(BodyKind::Dynamic);
+        awake.integrate(Vec2::new(0.0, -9.81), 1.0 / 60.0);
+        assert!(awake.linear_velocity().y < 0.0);
+    }
+
+    #[test]
+    fn the_sleep_flag_is_part_of_the_body_hash() {
+        let awake = resting_ball(BodyKind::Dynamic);
+        let mut asleep = awake;
+        asleep.fall_asleep();
+        assert_ne!(hash_of_body(&awake), hash_of_body(&asleep));
+        asleep.wake_up();
+        assert_eq!(hash_of_body(&awake), hash_of_body(&asleep));
     }
 
     fn hash_of_body(body: &Body<crate::d2::D2>) -> u64 {

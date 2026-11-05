@@ -60,6 +60,30 @@ impl Quantity for Vec3 {
     }
 }
 
+/// A quantity with a size, so that "slower than" can be asked without a square root.
+pub trait Magnitude {
+    /// The square of the size: `x * x` for a scalar, the dot product with itself for a vector.
+    fn length_squared(&self) -> f32;
+}
+
+impl Magnitude for f32 {
+    fn length_squared(&self) -> f32 {
+        *self * *self
+    }
+}
+
+impl Magnitude for Vec2 {
+    fn length_squared(&self) -> f32 {
+        self.dot(*self)
+    }
+}
+
+impl Magnitude for Vec3 {
+    fn length_squared(&self) -> f32 {
+        self.dot(*self)
+    }
+}
+
 /// What a shape and a density give a dynamic body.
 pub struct MassProperties<D: Dim> {
     /// Mass in kilograms, finite and above zero.
@@ -111,9 +135,9 @@ impl<D: Dim> Placed<D> {
 /// Everything that depends on the dimension.
 pub trait Dim: Sized {
     /// Position, velocity, force, gravity.
-    type Vec: Quantity + Add<Output = Self::Vec> + Mul<f32, Output = Self::Vec>;
+    type Vec: Quantity + Magnitude + Add<Output = Self::Vec> + Mul<f32, Output = Self::Vec>;
     /// Angular velocity and torque (a scalar in 2D, a vector in 3D).
-    type Ang: Quantity + Add<Output = Self::Ang> + Mul<f32, Output = Self::Ang>;
+    type Ang: Quantity + Magnitude + Add<Output = Self::Ang> + Mul<f32, Output = Self::Ang>;
     /// Orientation. Its default is the identity.
     type Rot: Quantity;
     /// Inverse moment of inertia.
@@ -202,6 +226,22 @@ mod tests {
             2.0,
             f32::NEG_INFINITY
         )));
+    }
+
+    #[test]
+    fn the_length_squared_of_each_quantity_is_the_sum_of_squares() {
+        assert_eq!(
+            Magnitude::length_squared(&-3.0_f32).to_bits(),
+            9.0_f32.to_bits()
+        );
+        assert_eq!(
+            Magnitude::length_squared(&Vec2::new(3.0, -4.0)).to_bits(),
+            25.0_f32.to_bits()
+        );
+        assert_eq!(
+            Magnitude::length_squared(&Vec3::new(1.0, 2.0, -2.0)).to_bits(),
+            9.0_f32.to_bits()
+        );
     }
 
     #[test]

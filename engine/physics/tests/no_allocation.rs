@@ -26,6 +26,7 @@ fn build_world() -> Result<World, PhysicsError> {
         max_manifolds: 256,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
+        sleep: physics::d2::SleepConfig::DEFAULT,
     })
 }
 
@@ -148,6 +149,7 @@ fn moving_bodies_in_the_broadphase_finding_pairs_and_overflowing_the_list_alloca
         max_manifolds: 256,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
+        sleep: physics::d2::SleepConfig::DEFAULT,
     })?;
     let handles = fill(&mut world)?;
     // Every body moves sideways so each one leaves its fat box about every other step and is
@@ -189,6 +191,7 @@ fn finding_contacts_and_overflowing_the_manifold_list_allocate_nothing() -> Resu
         max_manifolds: 8,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
+        sleep: physics::d2::SleepConfig::DEFAULT,
     })?;
     world.create_body(&BodyDesc::new(
         BodyKind::Static,
@@ -253,6 +256,113 @@ fn a_step_with_contacts_and_the_solver_makes_no_allocator_call() -> Result<(), P
         Ok::<(), PhysicsError>(())
     });
     assert_eq!(result, Ok(()));
+    assert_eq!(counts.calls(), 0, "{counts:?}");
+    Ok(())
+}
+
+/// A pyramid that falls asleep, is woken by a call and by a ball, falls asleep again; the islands,
+/// the sleep passes, the colouring and the frozen constraints all run inside the counted section.
+#[test]
+fn sleeping_waking_islands_and_colouring_make_no_allocator_call() -> Result<(), PhysicsError> {
+    let mut world = build_world()?;
+    world.create_body(&BodyDesc::new(
+        BodyKind::Static,
+        Vec2::new(0.0, -0.5),
+        Shape2::Box {
+            half_extents: Vec2::new(20.0, 0.5),
+        },
+    ))?;
+    let mut bottom = None;
+    for level in 0..5_u8 {
+        for column in 0..3_u8 {
+            let handle = world.create_body(&BodyDesc::new(
+                BodyKind::Dynamic,
+                Vec2::new(f32::from(column) * 1.0, 0.5 + f32::from(level) * 1.0),
+                Shape2::Box {
+                    half_extents: Vec2::new(0.5, 0.5),
+                },
+            ))?;
+            bottom = bottom.or(Some(handle));
+        }
+    }
+    let bottom = bottom.ok_or(PhysicsError::StaleHandle)?;
+    let ball = BodyDesc::new(
+        BodyKind::Dynamic,
+        Vec2::new(1.0, 12.0),
+        Shape2::Circle { radius: 0.25 },
+    );
+    world.step(DT)?; // warm-up
+    let (result, counts) = count_allocations(|| {
+        let (mut asleep_steps, mut woken) = (0_u32, 0_u32);
+        for step in 0..900_u32 {
+            act_on(&mut world, bottom, &ball, step)?;
+            world.step(DT)?;
+            let sleeping = world.sleeping_count();
+            asleep_steps += u32::from(sleeping > 0);
+            woken += u32::from(step == 201 && sleeping == 0);
+            let _ = (world.island_count(), world.solver_stats());
+        }
+        Ok::<(u32, u32), PhysicsError>((asleep_steps, woken))
+    });
+    assert!(
+        matches!(result, Ok((asleep, 1)) if asleep > 300),
+        "{result:?}"
+    );
+    assert_eq!(counts.calls(), 0, "{counts:?}");
+    Ok(())
+}
+
+/// The two calls of the sleeping test: an explicit wake at step 200, a new body at step 400.
+fn act_on(
+    world: &mut World,
+    bottom: BodyHandle,
+    ball: &BodyDesc,
+    step: u32,
+) -> Result<(), PhysicsError> {
+    match step {
+        200 => world.wake(bottom),
+        400 => world.create_body(ball).map(|_| ()),
+        _ => Ok(()),
+    }
+}
+
+/// A body with more contacts than colours: the overflow set is solved on every step.
+#[test]
+fn the_colour_overflow_set_makes_no_allocator_call() -> Result<(), PhysicsError> {
+    let mut world = World::new(WorldConfig {
+        max_bodies: 64,
+        gravity: Vec2::ZERO,
+        max_pairs: 256,
+        broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
+        max_manifolds: 256,
+        speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+        solver: SolverConfig::DEFAULT,
+        sleep: physics::d2::SleepConfig::DISABLED,
+    })?;
+    world.create_body(&BodyDesc::new(
+        BodyKind::Dynamic,
+        Vec2::ZERO,
+        Shape2::Circle { radius: 1.0 },
+    ))?;
+    for k in 0..30_u8 {
+        let spoke = Rot2::from_angle(f32::from(k) * std::f32::consts::TAU / 30.0)
+            .rotate(Vec2::new(1.1, 0.0));
+        world.create_body(&BodyDesc::new(
+            BodyKind::Dynamic,
+            spoke,
+            Shape2::Circle { radius: 0.1 },
+        ))?;
+    }
+    world.step(DT)?; // warm-up
+    let (result, counts) = count_allocations(|| {
+        let mut overflow = 0;
+        for _ in 0..200 {
+            world.step(DT)?;
+            overflow = world.solver_stats().overflow;
+        }
+        Ok::<usize, PhysicsError>(overflow)
+    });
+    assert_eq!(result, Ok(6));
     assert_eq!(counts.calls(), 0, "{counts:?}");
     Ok(())
 }

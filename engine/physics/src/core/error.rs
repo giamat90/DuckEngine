@@ -41,6 +41,8 @@ pub enum PhysicsError {
     InvalidMaterial,
     /// A solver setting outside its range (see [`SolverConfig::validate`](crate::core::SolverConfig::validate)).
     InvalidSolverConfig,
+    /// A sleep setting outside its range (see [`SleepConfig::validate`](crate::core::SleepConfig::validate)).
+    InvalidSleepConfig,
 }
 
 impl fmt::Display for PhysicsError {
@@ -63,6 +65,7 @@ impl fmt::Display for PhysicsError {
                 f.write_str("friction must be zero or more and restitution from zero to one")
             }
             Self::InvalidSolverConfig => f.write_str("a solver setting is out of range"),
+            Self::InvalidSleepConfig => f.write_str("a sleep setting is out of range"),
             Self::ManifoldCapacityTooLarge { max } => {
                 write!(
                     f,
@@ -126,6 +129,10 @@ mod tests {
             (
                 PhysicsError::InvalidSolverConfig,
                 "a solver setting is out of range",
+            ),
+            (
+                PhysicsError::InvalidSleepConfig,
+                "a sleep setting is out of range",
             ),
         ];
         for (error, message) in cases {

@@ -117,6 +117,21 @@ fn is_zero_or_more(value: f32) -> bool {
     value.is_finite() && value >= 0.0
 }
 
+/// Counters of the last [`ContactSolver::solve`]. They are counts of work done, so they do not vary
+/// with the machine.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SolverStats {
+    /// Constraints that were solved: those with at least one awake dynamic body.
+    pub solved: usize,
+    /// Constraints that were not solved because every body of them sleeps or is static; their
+    /// warm start is carried over to the next step unchanged.
+    pub frozen: usize,
+    /// Colours in use (the overflow set is not counted).
+    pub colours: usize,
+    /// Solved constraints that found no free colour and were solved serially after the colours.
+    pub overflow: usize,
+}
+
 /// What a solver needs to know of the step besides the bodies and contacts.
 pub struct StepFrame<D: Dim> {
     /// Acceleration of gravity.
@@ -137,7 +152,9 @@ pub trait ContactSolver<D: Dim>: Sized {
 
     /// Advances the copies in `bodies` (indexed by slot, `None` for a free slot) by one step under
     /// `contacts`, which are the manifolds of the bodies as they are. Forces and torques are used
-    /// and cleared. The result is not committed: it becomes the warm start of the next step only in
+    /// and cleared. A sleeping body is not moved. The world has woken every sleeping body that an
+    /// awake body touches before the call, so a manifold has either two awake ends or none (a
+    /// static end counts as either). The result is not committed: it becomes the warm start of the next step only in
     /// [`ContactSolver::commit`], so a step that is refused can be dropped.
     fn solve(
         &mut self,
@@ -151,6 +168,9 @@ pub trait ContactSolver<D: Dim>: Sized {
 
     /// Keeps what the last [`ContactSolver::solve`] made for the next step.
     fn commit(&mut self);
+
+    /// The counters of the last [`ContactSolver::solve`].
+    fn stats(&self) -> SolverStats;
 
     /// Writes what the solver carries from step to step (the warm start) into `hasher`, nothing
     /// when it carries nothing.
@@ -185,6 +205,10 @@ impl<D: Dim> ContactSolver<D> for FreeSolver {
 
     fn is_finite(&self) -> bool {
         true
+    }
+
+    fn stats(&self) -> SolverStats {
+        SolverStats::default()
     }
 
     fn commit(&mut self) {}

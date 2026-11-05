@@ -152,6 +152,7 @@ fn build() -> Result<World3, PhysicsError> {
         max_manifolds: 256,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
+        sleep: physics::d2::SleepConfig::DEFAULT,
     })
 }
 
@@ -217,6 +218,7 @@ fn the_second_dimension_gets_its_pairs_from_the_same_tree_and_pair_list() -> Res
         max_manifolds: 256,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
+        sleep: physics::d2::SleepConfig::DEFAULT,
     })?;
     let ball = |x: f32, y: f32, z: f32| {
         BodyDesc::<Planar3>::new(BodyKind::Dynamic, Vec3::new(x, y, z), sphere(1.0))

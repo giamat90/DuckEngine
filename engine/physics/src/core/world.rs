@@ -6,14 +6,16 @@
 //! length, so iteration is in slot-index order and nothing allocates after [`World::new`].
 
 use super::MAX_BODIES;
-use super::body::{Body, BodyDesc, BodyHandle, BodyTag};
+use super::body::{Body, BodyDesc, BodyHandle, BodyKind, BodyTag};
 use super::broadphase::Broadphase;
 use super::dim::{Dim, Quantity};
 use super::error::PhysicsError;
 use super::hash::{HashBits, StateHasher};
+use super::islands::Islands;
 use super::manifolds::{ContactManifold, ManifoldList};
 use super::pairs::{Pair, PairList};
-use super::solver::{ContactSolver, SolverConfig, StepFrame};
+use super::sleep::SleepConfig;
+use super::solver::{ContactSolver, SolverConfig, SolverStats, StepFrame};
 use super::tree::ProxyId;
 use base::pool::Pool;
 
@@ -52,6 +54,9 @@ pub struct WorldConfig<D: Dim> {
     pub speculative_margin: f32,
     /// The tunables of the contact solver ([`SolverConfig::DEFAULT`]).
     pub solver: SolverConfig,
+    /// The tunables of sleeping ([`SleepConfig::DEFAULT`]: on, 0.5 s, 0.05 m/s, 2 degrees per
+    /// second). A sleeping island is not moved by the step; see [`SleepConfig`].
+    pub sleep: SleepConfig,
 }
 
 // Written by hand: `#[derive]` would add the bound `D: Clone` (ADR-0018, Rust friction 3).
@@ -82,6 +87,9 @@ pub struct World<D: Dim> {
     manifolds: ManifoldList<D>,
     speculative_margin: f32,
     solver: D::Solver,
+    sleep: SleepConfig,
+    /// The islands of the manifolds of the last step and the rest timers of the bodies.
+    islands: Islands,
     /// Copies of the bodies the solver advances; the step commits them only when all are valid.
     scratch: Vec<Option<Body<D>>>,
     /// True when bodies were created or destroyed since the pairs and manifolds were made.
@@ -89,7 +97,7 @@ pub struct World<D: Dim> {
 }
 
 /// The live body `handle` names in `slots`, or `StaleHandle`.
-fn live_slot<D: Dim>(
+pub(super) fn live_slot<D: Dim>(
     slots: &[Option<Slot<D>>],
     handle: BodyHandle<D>,
 ) -> Result<&Slot<D>, PhysicsError> {
@@ -123,6 +131,35 @@ fn contact_of<D: Dim>(
     })
 }
 
+/// Wakes every sleeping body in the island of the body in `index`; the rest timers restart.
+fn wake_island_in<D: Dim>(slots: &mut [Option<Slot<D>>], islands: &mut Islands, index: usize) {
+    let Some(label) = islands.label_of(index) else {
+        return;
+    };
+    for (other, slot) in slots
+        .iter_mut()
+        .enumerate()
+        .filter_map(|(other, slot)| slot.as_mut().map(|slot| (other, slot)))
+        .filter(|(_, slot)| slot.body.is_asleep())
+    {
+        if islands.label_of(other) == Some(label) {
+            slot.body.wake_up();
+            islands.restart(other);
+        }
+    }
+}
+
+/// The other body of `entry` when `handle` is one of its two bodies.
+fn partner<D: Dim>(entry: &ContactManifold<D>, handle: BodyHandle<D>) -> Option<BodyHandle<D>> {
+    if entry.first == handle {
+        Some(entry.second)
+    } else if entry.second == handle {
+        Some(entry.first)
+    } else {
+        None
+    }
+}
+
 /// Mutable form of [`live_slot`].
 fn live_slot_mut<D: Dim>(
     slots: &mut [Option<Slot<D>>],
@@ -142,7 +179,9 @@ impl<D: Dim> World<D> {
     /// [`PhysicsError::CapacityTooLarge`] when `max_bodies` is above [`MAX_BODIES`];
     /// [`PhysicsError::NotFinite`] when the gravity is not finite;
     /// [`PhysicsError::InvalidMargin`] when the broadphase or speculative margin is not a finite
-    /// number of zero or more; the pair and manifold capacities have their own errors.
+    /// number of zero or more; [`PhysicsError::InvalidSolverConfig`] and
+    /// [`PhysicsError::InvalidSleepConfig`] for a solver or sleep setting out of range; the pair and
+    /// manifold capacities have their own errors.
     pub fn new(config: WorldConfig<D>) -> Result<Self, PhysicsError> {
         if config.max_bodies > MAX_BODIES {
             return Err(PhysicsError::CapacityTooLarge { max: MAX_BODIES });
@@ -160,6 +199,7 @@ impl<D: Dim> World<D> {
         }
         let manifolds = ManifoldList::new(config.max_manifolds)?;
         let solver = D::Solver::new(config.solver, config.max_bodies, config.max_manifolds)?;
+        config.sleep.validate()?;
         let mut scratch = Vec::with_capacity(config.max_bodies as usize);
         scratch.resize_with(config.max_bodies as usize, || None);
         let mut slots = Vec::with_capacity(config.max_bodies as usize);
@@ -174,6 +214,8 @@ impl<D: Dim> World<D> {
             manifolds,
             speculative_margin: config.speculative_margin,
             solver,
+            sleep: config.sleep,
+            islands: Islands::new(config.max_bodies as usize),
             scratch,
             contacts_stale: false,
         })
@@ -223,6 +265,7 @@ impl<D: Dim> World<D> {
     /// nothing: no slot is used up.
     pub fn create_body(&mut self, desc: &BodyDesc<D>) -> Result<BodyHandle<D>, PhysicsError> {
         let body = Body::from_desc(desc)?;
+        let body_is_static = body.kind() == BodyKind::Static;
         if !self.broadphase.can_hold(body.kind(), &body.bounds()) {
             return Err(PhysicsError::NotFinite);
         }
@@ -235,6 +278,12 @@ impl<D: Dim> World<D> {
             // the box was checked above.
             self.handles.remove(handle);
             return Err(error);
+        }
+        self.islands.reset_slot(handle.index() as usize);
+        if body_is_static {
+            // A new static body may rest against, or under, a sleeping one; which, the manifolds of
+            // the next step say, but a static body is not part of any island, so wake them all.
+            self.wake_all();
         }
         self.contacts_stale = true;
         Ok(handle)
@@ -267,10 +316,12 @@ impl<D: Dim> World<D> {
     pub fn destroy_body(&mut self, handle: BodyHandle<D>) -> Result<(), PhysicsError> {
         let slot = live_slot(&self.slots, handle)?;
         self.broadphase.remove(slot.body.kind(), slot.proxy)?;
+        self.wake_around(handle);
         self.handles.remove(handle);
         if let Some(slot) = self.slots.get_mut(handle.index() as usize) {
             *slot = None;
         }
+        self.islands.reset_slot(handle.index() as usize);
         self.contacts_stale = true;
         Ok(())
     }
@@ -331,6 +382,12 @@ impl<D: Dim> World<D> {
         self.broadphase.find_pairs(&self.slots);
     }
 
+    /// The solver, for tests that reorder its constraints.
+    #[cfg(test)]
+    pub(crate) fn solver_mut(&mut self) -> &mut D::Solver {
+        &mut self.solver
+    }
+
     /// Makes the manifolds again from the pairs the pair list holds now and the bodies as they are
     /// now. [`World::step`] does this after finding the pairs; call it after [`World::find_pairs`]
     /// to see the contacts of a scene without a step. Applies no force. Allocates nothing.
@@ -344,10 +401,140 @@ impl<D: Dim> World<D> {
         {
             self.manifolds.push(entry);
         }
+        self.islands.build(&self.slots, self.manifolds.as_slice());
         self.contacts_stale = false;
     }
 
-    /// Sets the linear velocity of a dynamic body.
+    /// True when the body sleeps (see [`SleepConfig`]).
+    ///
+    /// # Errors
+    /// [`PhysicsError::StaleHandle`].
+    pub fn is_asleep(&self, handle: BodyHandle<D>) -> Result<bool, PhysicsError> {
+        live_slot(&self.slots, handle).map(|slot| slot.body.is_asleep())
+    }
+
+    /// Wakes the island of a dynamic body, if it sleeps, and restarts the rest timer of the body,
+    /// so the island cannot fall asleep again at once. Allocates nothing.
+    ///
+    /// # Errors
+    /// [`PhysicsError::StaleHandle`], [`PhysicsError::StaticBody`].
+    pub fn wake(&mut self, handle: BodyHandle<D>) -> Result<(), PhysicsError> {
+        if live_slot(&self.slots, handle)?.body.kind() == BodyKind::Static {
+            return Err(PhysicsError::StaticBody);
+        }
+        self.rouse(handle.index() as usize);
+        Ok(())
+    }
+
+    /// The island of a dynamic body as of the last [`World::step`] or [`World::collide`]: the handle
+    /// of the lowest-slot body of the set of dynamic bodies joined to it by manifolds, so two bodies
+    /// are in one island exactly when this returns the same handle. `None` for a static body, which
+    /// is in no island. A body created since then is alone in its island until the next step. After
+    /// [`World::destroy_body`] of the lowest body of an island, and before the next step, the
+    /// others still name that slot and the answer is the handle of the body that reused it, or
+    /// their own handle when the slot is empty.
+    ///
+    /// # Errors
+    /// [`PhysicsError::StaleHandle`].
+    pub fn island_of(&self, handle: BodyHandle<D>) -> Result<Option<BodyHandle<D>>, PhysicsError> {
+        let slot = live_slot(&self.slots, handle)?;
+        if slot.body.kind() == BodyKind::Static {
+            return Ok(None);
+        }
+        let label = self.islands.label_of(handle.index() as usize);
+        let lowest = label
+            .and_then(|label| self.slots.get(label as usize))
+            .and_then(Option::as_ref)
+            .map_or(handle, |lowest| lowest.handle);
+        Ok(Some(lowest))
+    }
+
+    /// The number of islands (a lone dynamic body is one) as of the last step or collide.
+    #[must_use]
+    pub fn island_count(&self) -> usize {
+        self.islands.count()
+    }
+
+    /// The number of sleeping bodies.
+    #[must_use]
+    pub fn sleeping_count(&self) -> usize {
+        self.slots
+            .iter()
+            .flatten()
+            .filter(|slot| slot.body.is_asleep())
+            .count()
+    }
+
+    /// How many seconds the body has rested (moved at or below the sleep speed limits) without
+    /// interruption, as the step counted them; zero while it sleeps.
+    ///
+    /// # Errors
+    /// [`PhysicsError::StaleHandle`].
+    pub fn rest_time(&self, handle: BodyHandle<D>) -> Result<f32, PhysicsError> {
+        let slot = live_slot(&self.slots, handle)?;
+        if slot.body.is_asleep() {
+            return Ok(0.0);
+        }
+        Ok(self.islands.rest_of(handle.index() as usize))
+    }
+
+    /// Counters of the last solve: constraints solved and not solved, colours used, overflow
+    /// constraints. They do not vary with the machine.
+    #[must_use]
+    pub fn solver_stats(&self) -> SolverStats {
+        self.solver.stats()
+    }
+
+    /// A change by the caller reached the body in `index`: its rest timer restarts and, if it
+    /// sleeps, its island wakes.
+    fn rouse(&mut self, index: usize) {
+        self.islands.restart(index);
+        let asleep = self
+            .slots
+            .get(index)
+            .and_then(Option::as_ref)
+            .is_some_and(|slot| slot.body.is_asleep());
+        if asleep {
+            self.wake_island(index);
+        }
+    }
+
+    /// Wakes every sleeping body in the island of the body in `index`.
+    fn wake_island(&mut self, index: usize) {
+        wake_island_in(&mut self.slots, &mut self.islands, index);
+    }
+
+    /// Wakes every sleeping body.
+    fn wake_all(&mut self) {
+        let islands = &mut self.islands;
+        for (index, slot) in self
+            .slots
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(index, slot)| slot.as_mut().map(|slot| (index, slot)))
+            .filter(|(_, slot)| slot.body.is_asleep())
+        {
+            slot.body.wake_up();
+            islands.restart(index);
+        }
+    }
+
+    /// `handle` is about to be destroyed: the island of the body wakes, and so does the island of
+    /// every body that has a manifold with it (a static body that goes away takes its support from
+    /// them).
+    fn wake_around(&mut self, handle: BodyHandle<D>) {
+        self.wake_island(handle.index() as usize);
+        for other in self
+            .manifolds
+            .as_slice()
+            .iter()
+            .filter_map(|entry| partner(entry, handle))
+        {
+            wake_island_in(&mut self.slots, &mut self.islands, other.index() as usize);
+        }
+    }
+
+    /// Sets the linear velocity of a dynamic body. A sleeping body wakes with its island.
     ///
     /// # Errors
     /// [`PhysicsError::StaleHandle`], [`PhysicsError::StaticBody`], [`PhysicsError::NotFinite`].
@@ -358,7 +545,9 @@ impl<D: Dim> World<D> {
     ) -> Result<(), PhysicsError> {
         live_slot_mut(&mut self.slots, handle)?
             .body
-            .set_linear_velocity(velocity)
+            .set_linear_velocity(velocity)?;
+        self.rouse(handle.index() as usize);
+        Ok(())
     }
 
     /// Sets the angular velocity of a dynamic body.
@@ -372,7 +561,9 @@ impl<D: Dim> World<D> {
     ) -> Result<(), PhysicsError> {
         live_slot_mut(&mut self.slots, handle)?
             .body
-            .set_angular_velocity(velocity)
+            .set_angular_velocity(velocity)?;
+        self.rouse(handle.index() as usize);
+        Ok(())
     }
 
     /// Adds a force (newtons) acting through the centre of mass during the next step only.
@@ -386,7 +577,9 @@ impl<D: Dim> World<D> {
     ) -> Result<(), PhysicsError> {
         live_slot_mut(&mut self.slots, handle)?
             .body
-            .apply_force(force)
+            .apply_force(force)?;
+        self.rouse(handle.index() as usize);
+        Ok(())
     }
 
     /// Adds a torque (newton metres) acting during the next step only.
@@ -400,7 +593,9 @@ impl<D: Dim> World<D> {
     ) -> Result<(), PhysicsError> {
         live_slot_mut(&mut self.slots, handle)?
             .body
-            .apply_torque(torque)
+            .apply_torque(torque)?;
+        self.rouse(handle.index() as usize);
+        Ok(())
     }
 
     /// Advances the world by `dt` seconds: the contact solver moves every dynamic body (bodies in
@@ -409,6 +604,11 @@ impl<D: Dim> World<D> {
     /// ([`World::pairs`]) and the manifolds made again ([`World::manifolds`]) for the bodies as they
     /// are now; the next step solves those. The caller passes the same `dt` every step (the fixed
     /// step of the application); allocates nothing.
+    ///
+    /// Sleeping ([`SleepConfig`]): a sleeping body is not moved and is not solved, its contacts are
+    /// kept as they are, and an awake body that touches it wakes its island first; after the
+    /// solve, islands that have rested for the time to sleep fall asleep. The solver visits the
+    /// contacts colour by colour ([`crate::core::Colouring`]).
     ///
     /// # Errors
     /// [`PhysicsError::InvalidTimeStep`] when `dt` is not finite and above zero;
@@ -428,6 +628,9 @@ impl<D: Dim> World<D> {
         for (copy, slot) in self.scratch.iter_mut().zip(&self.slots) {
             *copy = slot.as_ref().map(|slot| slot.body);
         }
+        // Islands that an awake body touches wake before the solve; on the copies, so a refused step
+        // wakes nothing.
+        self.islands.wake_touched(&mut self.scratch);
         let frame = StepFrame {
             gravity: self.gravity,
             dt,
@@ -450,14 +653,23 @@ impl<D: Dim> World<D> {
         // check and the move must stay equivalent for the step to remain atomic.
         self.broadphase.move_proxies(&self.slots)?;
         self.steps += 1;
+        if self.sleep.enabled {
+            self.islands.tick(&self.slots, &self.sleep, dt);
+        }
         self.find_pairs();
         self.collide();
+        if self.sleep.enabled {
+            self.islands.sleep(&mut self.slots, &self.sleep);
+        }
         Ok(())
     }
 
     /// A hash of the simulation state: capacity, gravity, then every live body (handle, then all
     /// state) in slot-index order, floats by bit pattern, then the warm start of the solver (the
-    /// impulses of the last step's contacts; nothing when there are none). Equal inputs give equal hashes on every
+    /// impulses of the last step's contacts; nothing when there are none). A sleeping body adds one
+    /// tag byte after its state, so the sleep flag is covered and a world in which nothing sleeps
+    /// adds nothing for sleeping. The rest timers are not hashed: they only decide when a body
+    /// falls asleep, which the flag then shows. Equal inputs give equal hashes on every
     /// run; any change of a live body's state changes it. It does not cover the order in which freed
     /// slots will be reused, so two worlds that reached the same live bodies by different destroy
     /// orders hash equal and may hand out different handles on the next create.
@@ -500,6 +712,7 @@ mod tests {
             max_manifolds: 256,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
             solver: SolverConfig::DEFAULT,
+            sleep: SleepConfig::DEFAULT,
         }) {
             Ok(world) => world,
             Err(error) => panic!("world must build: {error}"),
@@ -569,6 +782,7 @@ mod tests {
             max_manifolds: 256,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
             solver: SolverConfig::DEFAULT,
+            sleep: SleepConfig::DEFAULT,
         };
         assert!(matches!(
             World::new(config).err(),
@@ -587,6 +801,7 @@ mod tests {
                 max_manifolds: 256,
                 speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
                 solver: SolverConfig::DEFAULT,
+                sleep: SleepConfig::DEFAULT,
             };
             assert_eq!(World::new(config).err(), Some(PhysicsError::NotFinite));
         }
@@ -772,6 +987,7 @@ mod tests {
             max_manifolds: 256,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
             solver: SolverConfig::DEFAULT,
+            sleep: SleepConfig::DEFAULT,
         };
         let mut world = world(1, Vec2::ZERO);
         let handle = create(&mut world, &cloned(&desc));
@@ -1280,6 +1496,7 @@ mod tests {
             max_manifolds: 256,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
             solver: SolverConfig::DEFAULT,
+            sleep: SleepConfig::DEFAULT,
         }) {
             Ok(world) => world,
             Err(error) => panic!("world must build: {error}"),
@@ -1315,6 +1532,7 @@ mod tests {
             max_manifolds,
             speculative_margin,
             solver: SolverConfig::DEFAULT,
+            sleep: SleepConfig::DEFAULT,
         };
         assert_eq!(
             World::new(config(MAX_PAIRS + 1, 0.02)).err(),
@@ -1366,6 +1584,7 @@ mod tests {
             max_manifolds: 256,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
             solver: SolverConfig::DEFAULT,
+            sleep: SleepConfig::DEFAULT,
         };
         assert_eq!(
             World::new(config(MAX_PAIRS + 1, 0.1)).err(),

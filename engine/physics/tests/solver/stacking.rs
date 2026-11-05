@@ -1,9 +1,11 @@
 //! Stacks and the pyramid (the checkpoint scene of card 4-13): everything settles, nothing drifts
 //! or sinks beyond a stated bound, energy does not rise, and the result is the same on every run.
 
-use super::common::{DT, crate_of, earth, energy, ground, position, speed, step_n, world};
+use super::common::{
+    DT, crate_of, earth, energy, ground, position, speed, step_n, world, world_sleeping,
+};
 use base::math::Vec2;
-use physics::d2::{BodyDesc, BodyHandle, BodyKind, PhysicsError, Shape2, World};
+use physics::d2::{BodyDesc, BodyHandle, BodyKind, PhysicsError, Shape2, SleepConfig, World};
 
 const HALF: Vec2 = Vec2::new(0.5, 0.5);
 /// Rows of the pyramid: 10 high is 55 boxes.
@@ -17,8 +19,8 @@ const MAX_DRIFT: f32 = 0.05;
 /// No contact may be deeper than this.
 const MAX_PENETRATION: f32 = 0.02;
 
-fn pyramid(rows: u32) -> Result<(World, Vec<BodyHandle>), PhysicsError> {
-    let mut world = world(128, earth())?;
+fn pyramid(rows: u32, sleep: SleepConfig) -> Result<(World, Vec<BodyHandle>), PhysicsError> {
+    let mut world = world_sleeping(128, earth(), sleep)?;
     ground(&mut world)?;
     let mut boxes = Vec::new();
     for row in 0..rows {
@@ -124,10 +126,12 @@ struct Run {
     max_energy: f64,
     last_energy: f64,
     hashes: Vec<u64>,
+    /// The first step after which every box sleeps (card 4-14); `None` when sleeping is off.
+    asleep_at: Option<u32>,
 }
 
-fn run_pyramid() -> Result<Run, PhysicsError> {
-    let (mut world, boxes) = pyramid(ROWS)?;
+fn run_pyramid(sleep: SleepConfig) -> Result<Run, PhysicsError> {
+    let (mut world, boxes) = pyramid(ROWS, sleep)?;
     let start = starts(&world, &boxes)?;
     let g = earth().y;
     let first_energy = energy(&world, g);
@@ -139,6 +143,7 @@ fn run_pyramid() -> Result<Run, PhysicsError> {
         max_energy: first_energy,
         last_energy: first_energy,
         hashes: Vec::new(),
+        asleep_at: None,
     };
     for step in 1..=PYRAMID_SECONDS * 60 {
         world.step(DT)?;
@@ -149,6 +154,9 @@ fn run_pyramid() -> Result<Run, PhysicsError> {
         run.max_penetration = run.max_penetration.max(deepest(&world));
         run.last_energy = energy(&world, g);
         run.max_energy = run.max_energy.max(run.last_energy);
+        if run.asleep_at.is_none() && world.sleeping_count() == boxes.len() {
+            run.asleep_at = Some(step);
+        }
         if step % 60 == 0 {
             run.hashes.push(world.state_hash());
         }
@@ -156,73 +164,110 @@ fn run_pyramid() -> Result<Run, PhysicsError> {
     Ok(run)
 }
 
+/// Both configurations: sleeping must not be what makes the pyramid pass the bounds of card 4-13.
+const CONFIGS: [SleepConfig; 2] = [SleepConfig::DISABLED, SleepConfig::DEFAULT];
+
 #[test]
 fn a_ten_high_pyramid_settles_and_stays() -> Result<(), PhysicsError> {
-    let run = run_pyramid()?;
-    println!(
-        "pyramid: settled at step {}, max drift {:.4} m, max penetration {:.4} m, energy {:.3} -> {:.3} (max {:.3})",
-        run.settled_at,
-        run.max_drift,
-        run.max_penetration,
-        run.first_energy,
-        run.last_energy,
-        run.max_energy
-    );
-    assert!(
-        run.settled_at < (PYRAMID_SECONDS - 1) * 60,
-        "settled at {}",
-        run.settled_at
-    );
-    assert!(run.max_drift < MAX_DRIFT, "drift {}", run.max_drift);
-    assert!(
-        run.max_penetration < MAX_PENETRATION,
-        "penetration {}",
-        run.max_penetration
-    );
+    for sleep in CONFIGS {
+        let run = run_pyramid(sleep)?;
+        println!(
+            "pyramid (sleeping {}): settled at step {}, asleep at {:?}, max drift {:.4} m, max penetration {:.4} m, energy {:.3} -> {:.3} (max {:.3})",
+            sleep.enabled,
+            run.settled_at,
+            run.asleep_at,
+            run.max_drift,
+            run.max_penetration,
+            run.first_energy,
+            run.last_energy,
+            run.max_energy
+        );
+        assert!(
+            run.settled_at < (PYRAMID_SECONDS - 1) * 60,
+            "settled at {}",
+            run.settled_at
+        );
+        assert!(run.max_drift < MAX_DRIFT, "drift {}", run.max_drift);
+        assert!(
+            run.max_penetration < MAX_PENETRATION,
+            "penetration {}",
+            run.max_penetration
+        );
+    }
     Ok(())
 }
 
 #[test]
 fn the_energy_of_the_pyramid_does_not_rise() -> Result<(), PhysicsError> {
-    let run = run_pyramid()?;
-    assert!(
-        run.max_energy <= run.first_energy + 0.5,
-        "{} -> max {}",
-        run.first_energy,
-        run.max_energy
-    );
-    assert!(
-        run.last_energy < run.first_energy,
-        "{} -> {}",
-        run.first_energy,
-        run.last_energy
-    );
+    for sleep in CONFIGS {
+        let run = run_pyramid(sleep)?;
+        assert!(
+            run.max_energy <= run.first_energy + 0.5,
+            "{} -> max {}",
+            run.first_energy,
+            run.max_energy
+        );
+        assert!(
+            run.last_energy < run.first_energy,
+            "{} -> {}",
+            run.first_energy,
+            run.last_energy
+        );
+    }
     Ok(())
 }
 
 #[test]
 fn the_pyramid_is_the_same_on_every_run() -> Result<(), PhysicsError> {
-    let first = run_pyramid()?;
-    let second = run_pyramid()?;
-    assert_eq!(first.hashes, second.hashes);
+    for sleep in CONFIGS {
+        let first = run_pyramid(sleep)?;
+        let second = run_pyramid(sleep)?;
+        assert_eq!(first.hashes, second.hashes);
+        assert_eq!(first.asleep_at, second.asleep_at);
+    }
     Ok(())
 }
 
-/// The state hash of the pyramid after 1, 3 and 5 seconds, measured on Windows and Linux with the
-/// feature off and on (card 4-13). A change here is a change of the solver's arithmetic.
+#[test]
+fn the_pyramid_sleeps_only_when_sleeping_is_on() -> Result<(), PhysicsError> {
+    assert_eq!(run_pyramid(SleepConfig::DISABLED)?.asleep_at, None);
+    let asleep = run_pyramid(SleepConfig::DEFAULT)?.asleep_at;
+    assert_eq!(asleep, Some(PYRAMID_ASLEEP_AT));
+    Ok(())
+}
+
+/// The step after which all 55 boxes of the pyramid sleep: a count of steps, the same on every
+/// machine. Every box of the pyramid moves at 0.05 m/s or less from about step 6 on, so the island sleeps
+/// 30 steps (the time to sleep) later, while the stack is still sinking by a few hundredths of a
+/// millimetre per step; the bounds of `a_ten_high_pyramid_settles_and_stays` hold either way.
+const PYRAMID_ASLEEP_AT: u32 = 36;
+
+/// The state hash of the pyramid after 1, 3 and 5 seconds with sleeping off, measured on Windows and
+/// Linux with the feature off and on. Card 4-13 measured `10_090_729_523_853_206_521`,
+/// `11_312_335_679_332_502_761` and `10_058_014_932_819_635_904`; card 4-14 re-pinned them on
+/// purpose because the constraints are solved colour by colour instead of in manifold-list order,
+/// which gives other bits (the pyramid still passes every bound of card 4-13).
 const PYRAMID_PINS: [u64; 3] = [
-    10_090_729_523_853_206_521,
-    11_312_335_679_332_502_761,
-    10_058_014_932_819_635_904,
+    11_531_489_991_407_575_028,
+    10_829_217_195_096_048_855,
+    7_972_265_619_179_479_880,
 ];
+
+/// The same with sleeping on (the default): the whole pyramid sleeps from `PYRAMID_ASLEEP_AT` on,
+/// so the three values are one, and differ from the sleeping-off ones in the sleep flag of each box.
+const PYRAMID_SLEEPING_PINS: [u64; 3] = [12_752_703_100_913_107_270; 3];
+
+fn pinned(sleep: SleepConfig) -> Result<Vec<u64>, PhysicsError> {
+    let run = run_pyramid(sleep)?;
+    Ok([0, 2, 4]
+        .iter()
+        .filter_map(|&i| run.hashes.get(i).copied())
+        .collect())
+}
 
 #[test]
 fn the_pyramid_hashes_to_the_pinned_values() -> Result<(), PhysicsError> {
-    let run = run_pyramid()?;
-    let seen: Vec<u64> = [0, 2, 4]
-        .iter()
-        .filter_map(|&i| run.hashes.get(i).copied())
-        .collect();
-    assert_eq!(seen, PYRAMID_PINS);
+    assert_eq!(pinned(SleepConfig::DISABLED)?, PYRAMID_PINS);
+    assert_eq!(pinned(SleepConfig::DEFAULT)?, PYRAMID_SLEEPING_PINS);
     Ok(())
 }

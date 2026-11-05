@@ -14,6 +14,13 @@
 //! 3. restitution, once, after the last sub-step;
 //! 4. the impulses are kept for the next step.
 //!
+//! The constraints are not swept in manifold-list order but colour by colour (card 4-14, `core::colouring`):
+//! no two constraints of a colour share a dynamic body, so inside a colour the order does not matter
+//! (the tests shuffle it and compare state hashes) and card 4-15 can solve a colour in parallel. The
+//! colours are visited in order, the constraints of a colour in manifold-list order, the overflow set
+//! (constraints that found no colour) last, serially. A constraint with no awake dynamic body (all
+//! its bodies sleep or are static) is not solved; its warm start is kept as it is.
+//!
 //! A body that no constraint touches skips all of this and takes one semi-implicit Euler step of
 //! length `dt`, exactly as before the solver existed, so a world without contacts hashes as it did.
 
@@ -25,9 +32,10 @@ use self::constraint::{
     SolverBody, StepTerms, Surface, Sweep,
 };
 use self::warm::WarmCache;
+use crate::core::cells::{index_u32, put};
 use crate::core::{
-    Body, BodyKind, ContactManifold, ContactSolver, Motion, PhysicsError, SolverConfig,
-    StateHasher, StepFrame,
+    Body, BodyKind, Colouring, ConstraintEnds, ContactManifold, ContactSolver, Motion,
+    PhysicsError, SolverConfig, SolverStats, StateHasher, StepFrame,
 };
 use crate::d2::D2;
 
@@ -42,12 +50,27 @@ pub struct Solver2 {
     /// Slot indices of the touched dynamic bodies.
     active: Vec<usize>,
     constraints: Vec<Constraint>,
+    /// The colours of the constraints; the sweeps follow its order.
+    colouring: Colouring,
     /// The most constraints one step can hold: the manifold capacity.
     max_constraints: usize,
     /// The impulses of the last committed step.
     warm: WarmCache,
     /// The impulses of the step being solved.
     next: WarmCache,
+    /// Reorders the constraints inside each colour after the colouring (tests only).
+    #[cfg(test)]
+    reorder: Option<Reorder>,
+}
+
+/// How a test reorders the constraints inside a colour.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Reorder {
+    /// A Fisher-Yates shuffle from the seed.
+    Shuffle(u64),
+    /// The reverse order.
+    Reverse,
 }
 
 /// The two ends of a constraint, or `None` when a body is missing (cannot happen for manifolds the
@@ -60,6 +83,11 @@ fn ends_of<'a>(
     let first = bodies.get(a)?.as_ref()?;
     let second = bodies.get(b)?.as_ref()?;
     Some((a, b, first, second))
+}
+
+/// True for a body the step moves: dynamic and not asleep.
+fn is_awake(body: &Body<D2>) -> bool {
+    body.kind() == BodyKind::Dynamic && !body.is_asleep()
 }
 
 /// What `prepare` needs besides the solver's own storage and the manifold at hand.
@@ -96,11 +124,16 @@ fn visit_constraint(
             b: &mut b,
         },
     );
-    if let Some(slot) = bodies.get_mut(constraint.a) {
-        *slot = a;
-    }
-    if let Some(slot) = bodies.get_mut(constraint.b) {
-        *slot = b;
+    // A static body is not written back: it did not change, and two constraints of one colour that
+    // share it must not both write it (the order inside a colour must not matter).
+    store(bodies, constraint.a, a);
+    store(bodies, constraint.b, b);
+}
+
+/// Stores `body` at `index` unless it is a static body.
+fn store(bodies: &mut [SolverBody], index: usize, body: SolverBody) {
+    if !body.is_static() {
+        put(bodies, index, body);
     }
 }
 
@@ -122,9 +155,12 @@ impl ContactSolver<D2> for Solver2 {
             touched: vec![false; bodies],
             active: Vec::with_capacity(bodies),
             constraints: Vec::with_capacity(manifolds),
+            colouring: Colouring::new(bodies, manifolds),
             max_constraints: manifolds,
             warm: WarmCache::new(manifolds),
             next: WarmCache::new(manifolds),
+            #[cfg(test)]
+            reorder: None,
         })
     }
 
@@ -140,12 +176,24 @@ impl ContactSolver<D2> for Solver2 {
             h,
         };
         self.prepare(bodies, contacts, terms);
+        self.colouring.assign();
+        #[cfg(test)]
+        self.apply_reorder();
         self.run_sub_steps(h);
         self.finish(bodies, &frame);
     }
 
     fn is_finite(&self) -> bool {
         self.next.is_finite()
+    }
+
+    fn stats(&self) -> SolverStats {
+        SolverStats {
+            solved: self.colouring.order().len(),
+            frozen: self.constraints.len() - self.colouring.order().len(),
+            colours: self.colouring.colour_count(),
+            overflow: self.colouring.overflow().len(),
+        }
     }
 
     fn commit(&mut self) {
@@ -158,6 +206,22 @@ impl ContactSolver<D2> for Solver2 {
 }
 
 impl Solver2 {
+    /// Applies the reordering a test asked for, if any.
+    #[cfg(test)]
+    fn apply_reorder(&mut self) {
+        match self.reorder {
+            Some(Reorder::Shuffle(seed)) => self.colouring.shuffle_within_colours(seed),
+            Some(Reorder::Reverse) => self.colouring.reverse_within_colours(),
+            None => {}
+        }
+    }
+
+    /// Asks the next solves to reorder the constraints inside each colour (tests only).
+    #[cfg(test)]
+    pub(crate) fn set_reorder(&mut self, reorder: Option<Reorder>) {
+        self.reorder = reorder;
+    }
+
     /// The contact softness for dynamic and static partners at sub-step length `h`.
     fn softness(&self, h: f32) -> (Softness, Softness) {
         let hertz = self.config.contact_hertz.min(HERTZ_LIMIT_FRACTION / h);
@@ -179,7 +243,7 @@ impl Solver2 {
         if let Some(slot) = self.bodies.get_mut(index) {
             *slot = SolverBody::new(body, terms);
         }
-        if body.kind() == BodyKind::Dynamic {
+        if is_awake(body) {
             self.active.push(index);
         }
     }
@@ -194,6 +258,7 @@ impl Solver2 {
         self.touched.fill(false);
         self.active.clear();
         self.constraints.clear();
+        self.colouring.clear();
         let (soft, stiff) = self.softness(terms.h);
         let context = Prepare {
             bodies,
@@ -244,6 +309,10 @@ impl Solver2 {
             a,
             b,
         };
+        self.colouring.push(ConstraintEnds {
+            a: is_awake(first).then(|| index_u32(a)),
+            b: is_awake(second).then(|| index_u32(b)),
+        });
         let mut constraint = Constraint::new(link, &entry.manifold, &setup);
         if let Some(cached) = self.warm.find(cursor, entry.first, entry.second) {
             constraint.warm_from(cached);
@@ -289,10 +358,14 @@ impl Solver2 {
         }
     }
 
-    /// Runs `visit` over the constraints in order.
+    /// Runs `visit` over the constraints that are solved, colour by colour (see the module
+    /// comment).
     fn sweep_constraints(&mut self, visit: impl Fn(&mut Constraint, &mut Ends)) {
-        for constraint in &mut self.constraints {
-            visit_constraint(&mut self.bodies, constraint, &visit);
+        for &index in self.colouring.order() {
+            self.constraints
+                .get_mut(index as usize)
+                .into_iter()
+                .for_each(|constraint| visit_constraint(&mut self.bodies, constraint, &visit));
         }
     }
 
@@ -313,7 +386,7 @@ impl Solver2 {
         let Some(body) = slot else {
             return;
         };
-        if body.kind() == BodyKind::Static {
+        if body.kind() == BodyKind::Static || body.is_asleep() {
             return;
         }
         match (self.touched.get(index), self.bodies.get(index)) {
@@ -332,7 +405,17 @@ impl Solver2 {
 mod tests {
     use super::warm::{CachedManifold, CachedPoint, Impulse};
     use super::*;
+    use crate::core::{Colour, MAX_COLOURS};
+    use crate::d2::{
+        BodyDesc, BodyKind, DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN,
+        STANDARD_GRAVITY, Shape2, SleepConfig, World, WorldConfig,
+    };
+    use crate::test_support::Must;
+    use base::math::Vec2;
     use base::pool::Handle;
+    use base::rng::Pcg32;
+
+    const DT: f32 = 1.0 / 60.0;
 
     #[test]
     fn a_solver_whose_impulses_are_not_numbers_is_not_finite() {
@@ -353,5 +436,208 @@ mod tests {
             &[point],
         ));
         assert!(!solver.is_finite());
+    }
+
+    fn world_with(sleep: SleepConfig) -> World {
+        World::new(WorldConfig {
+            max_bodies: 64,
+            gravity: STANDARD_GRAVITY,
+            max_pairs: 1024,
+            broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
+            max_manifolds: 1024,
+            speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+            solver: SolverConfig::DEFAULT,
+            sleep,
+        })
+        .must("a world")
+    }
+
+    fn static_box(world: &mut World, x: f32, y: f32, hx: f32, hy: f32) {
+        let desc = BodyDesc::new(
+            BodyKind::Static,
+            Vec2::new(x, y),
+            Shape2::Box {
+                half_extents: Vec2::new(hx, hy),
+            },
+        );
+        world.create_body(&desc).must("a static box");
+    }
+
+    /// A random shape: a circle or a box of 0.2 to 0.5 m.
+    fn random_shape(rng: &mut Pcg32) -> Shape2 {
+        if rng.next_u32().is_multiple_of(2) {
+            Shape2::Circle {
+                radius: 0.25 + rng.next_f32() * 0.25,
+            }
+        } else {
+            Shape2::Box {
+                half_extents: Vec2::new(0.2 + rng.next_f32() * 0.3, 0.2 + rng.next_f32() * 0.3),
+            }
+        }
+    }
+
+    /// Drops one dynamic body of a random shape at a random place above the floor.
+    fn drop_random_body(world: &mut World, rng: &mut Pcg32) {
+        let x = rng.next_f32() * 6.0 - 3.0;
+        let y = 0.5 + rng.next_f32() * 6.0;
+        let shape = random_shape(rng);
+        let desc = BodyDesc::new(BodyKind::Dynamic, Vec2::new(x, y), shape);
+        world.create_body(&desc).must("a body");
+    }
+
+    /// A floor, two walls and `count` boxes and circles dropped at random places.
+    fn random_scene(seed: u64, count: u32, sleep: SleepConfig) -> World {
+        let mut world = world_with(sleep);
+        let mut rng = Pcg32::new(seed, 11);
+        static_box(&mut world, 0.0, -1.0, 8.0, 1.0);
+        static_box(&mut world, -4.5, 4.0, 0.5, 6.0);
+        static_box(&mut world, 4.5, 4.0, 0.5, 6.0);
+        for _ in 0..count {
+            drop_random_body(&mut world, &mut rng);
+        }
+        world
+    }
+
+    /// One row of a pyramid of unit boxes: `rows - row` boxes at height `row`.
+    fn add_row(world: &mut World, row: u8, rows: u8) {
+        let count = rows - row;
+        for i in 0..count {
+            let x = f32::from(i) - f32::from(count - 1) / 2.0;
+            let shape = Shape2::Box {
+                half_extents: Vec2::new(0.5, 0.5),
+            };
+            let desc = BodyDesc::new(BodyKind::Dynamic, Vec2::new(x, 0.5 + f32::from(row)), shape);
+            world.create_body(&desc).must("box");
+        }
+    }
+
+    fn pyramid(rows: u8) -> World {
+        let mut world = world_with(SleepConfig::DEFAULT);
+        static_box(&mut world, 0.0, -1.0, 20.0, 1.0);
+        for row in 0..rows {
+            add_row(&mut world, row, rows);
+        }
+        world
+    }
+
+    /// The bodies of constraint `index` that move, as solver slots.
+    fn moving_ends(solver: &Solver2, index: u32) -> impl Iterator<Item = usize> {
+        solver
+            .constraints
+            .get(index as usize)
+            .into_iter()
+            .flat_map(|constraint| [constraint.a, constraint.b])
+            .filter(|&slot| solver.bodies.get(slot).is_some_and(|b| !b.is_static()))
+    }
+
+    /// Checks colour `colour` of the last solve: the colour of each member, and no shared body.
+    /// Counts each member in `listed`.
+    fn check_colour(solver: &Solver2, colour: usize, listed: &mut [u32]) {
+        let colouring = &solver.colouring;
+        let expected = Colour::Index(u8::try_from(colour).must("a colour fits a byte"));
+        for &index in colouring.members(colour) {
+            *listed.get_mut(index as usize).must("an index") += 1;
+            assert_eq!(colouring.colour_of(index as usize), expected);
+        }
+        let slots: Vec<usize> = colouring
+            .members(colour)
+            .iter()
+            .flat_map(|&index| moving_ends(solver, index))
+            .collect();
+        let repeated = (0..slots.len()).any(|i| slots[..i].contains(&slots[i]));
+        assert!(!repeated, "colour {colour} shares a body");
+    }
+
+    /// Checks the colouring the solver used in its last solve against the constraints it solved.
+    fn check_colouring(solver: &Solver2) {
+        let colouring = &solver.colouring;
+        let mut listed = vec![0_u32; solver.constraints.len()];
+        for colour in 0..colouring.colour_count() {
+            check_colour(solver, colour, &mut listed);
+        }
+        for &index in colouring.overflow() {
+            *listed.get_mut(index as usize).must("an index") += 1;
+        }
+        for (index, constraint) in solver.constraints.iter().enumerate() {
+            let moves = [constraint.a, constraint.b]
+                .into_iter()
+                .any(|slot| solver.active.contains(&slot));
+            assert_eq!(
+                listed.get(index).copied(),
+                Some(u32::from(moves)),
+                "constraint {index}"
+            );
+        }
+    }
+
+    /// Steps a random scene and checks its colouring after every step.
+    fn check_random_scene(seed: u64) {
+        let mut world = random_scene(seed, 28, SleepConfig::DEFAULT);
+        let mut busiest = 0;
+        for _ in 0..150 {
+            world.step(DT).must("a step");
+            let stats = world.solver_stats();
+            busiest = busiest.max(stats.solved);
+            assert!(stats.colours <= MAX_COLOURS);
+            check_colouring(world.solver_mut());
+        }
+        assert!(busiest > 5, "seed {seed}: the scene has too few contacts");
+    }
+
+    #[test]
+    fn the_colouring_of_random_scenes_is_valid_and_complete_at_every_step() {
+        for seed in 0..6 {
+            check_random_scene(seed);
+        }
+    }
+
+    #[test]
+    fn the_colouring_of_a_pyramid_is_valid_and_uses_few_colours() {
+        let mut world = pyramid(10);
+        for _ in 0..20 {
+            world.step(DT).must("a step");
+            check_colouring(world.solver_mut());
+        }
+        let stats = world.solver_stats();
+        assert_eq!(stats.overflow, 0);
+        assert!(stats.colours >= 2 && stats.colours <= 12, "{stats:?}");
+    }
+
+    /// The state hash after each of `steps` steps with the constraints reordered inside the
+    /// colours, and the solve order of each step.
+    fn run(mut world: World, reorder: Option<Reorder>, steps: u32) -> (Vec<u64>, Vec<Vec<u32>>) {
+        world.solver_mut().set_reorder(reorder);
+        let mut hashes = Vec::new();
+        let mut orders = Vec::new();
+        for _ in 0..steps {
+            world.step(DT).must("a step");
+            hashes.push(world.state_hash());
+            orders.push(world.solver_mut().colouring.order().to_vec());
+        }
+        (hashes, orders)
+    }
+
+    /// Runs `scene` in the canonical order and reordered three ways; the hashes must be equal.
+    fn check_reordering(n: usize, scene: fn() -> World) {
+        let (reference, plain) = run(scene(), None, 120);
+        for reorder in [Reorder::Reverse, Reorder::Shuffle(1), Reorder::Shuffle(99)] {
+            let (other, orders) = run(scene(), Some(reorder), 120);
+            assert_eq!(reference, other, "scene {n}, {reorder:?}");
+            // The reordering was real: the sweeps did visit the constraints in another order.
+            let differs = plain.iter().zip(&orders).any(|(a, b)| a != b);
+            assert!(differs, "scene {n}, {reorder:?}: nothing was reordered");
+        }
+    }
+
+    #[test]
+    fn the_order_inside_a_colour_does_not_change_a_single_bit() {
+        let scenes: [fn() -> World; 3] = [
+            || pyramid(8),
+            || random_scene(1, 30, SleepConfig::DEFAULT),
+            || random_scene(2, 30, SleepConfig::DISABLED),
+        ];
+        for (n, scene) in scenes.iter().enumerate() {
+            check_reordering(n, *scene);
+        }
     }
 }

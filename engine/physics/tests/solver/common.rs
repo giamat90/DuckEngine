@@ -4,7 +4,7 @@
 use base::math::Vec2;
 use physics::d2::{
     BodyDesc, BodyHandle, BodyKind, DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN,
-    PhysicsError, Rot2, STANDARD_GRAVITY, Shape2, SolverConfig, World, WorldConfig,
+    PhysicsError, Rot2, STANDARD_GRAVITY, Shape2, SleepConfig, SolverConfig, World, WorldConfig,
 };
 
 /// The fixed step of every solver scene: 60 Hz.
@@ -27,6 +27,18 @@ pub fn world_with(
     })
 }
 
+/// As [`world`] with another sleep configuration.
+pub fn world_sleeping(
+    max_bodies: u32,
+    gravity: Vec2,
+    sleep: SleepConfig,
+) -> Result<World, PhysicsError> {
+    world_of(WorldConfig {
+        sleep,
+        ..default_config(max_bodies, gravity)
+    })
+}
+
 /// The configuration [`world`] uses.
 pub fn default_config(max_bodies: u32, gravity: Vec2) -> WorldConfig {
     WorldConfig {
@@ -37,6 +49,7 @@ pub fn default_config(max_bodies: u32, gravity: Vec2) -> WorldConfig {
         max_manifolds: 4096,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
+        sleep: SleepConfig::DEFAULT,
     }
 }
 
