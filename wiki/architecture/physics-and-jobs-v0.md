@@ -447,6 +447,53 @@ sequenceDiagram
   W->>I: build (islands), then sleep
 ```
 
+- **As built in card 4-15.** The solver can run a colour as parallel chunks and four constraints at a time; the result is bit for bit the serial scalar one. (1) *Execution options* (`core::execution::SolverExecution`, set with `World::set_execution`): an optional `Arc<dyn IScheduler>`, a `simd` flag and a chunk size (default 32, `DEFAULT_CHUNK`); the default `SolverExecution::SERIAL` is the scalar reference of card 4-14 on the calling thread and nothing else changes. `physics` now depends on `jobs` (layer 2 on layer 1, an edge the architecture file already allows; no gate file was touched) and only uses the `IScheduler` port, so the caller (a test, later the application) builds the pool. (2) *Staged colour solve* (`d2::solver::stage`): each colour's members, in canonical order, are cut into chunks of a fixed size (the cut depends on the colour size and the chunk size, never on the worker count); one `parallel_for(chunks, grain 1)` runs the chunks and its join is the barrier between colours. A chunk copies each constraint and the two bodies it joins out of a `Mutex` slot (each member is locked twice per pass, once to load and once to store, by one chunk only, so the lock is never contended) and from the shared body array (read only), computes on the copies, and stores the constraint back; after the join the dynamic bodies are stored back **serially in canonical order** (static ends never, as in the reference). That is why no `unsafe` is needed: no thread ever writes a body array another thread reads. The overflow set, `touch`, `finish`, restitution's store, the position integration and the warm-start cache stay serial. A colour with one chunk, a missing scheduler or a scheduler that refuses the call (`Busy`, `TooManyChunks`) is run on the calling thread by the same code. (3) *Lane path* (`d2::solver::constraint::lanes`): four constraints per group in `base::simd::F32x4` (the safe SSE2 or NEON type; no intrinsic and no `unsafe` in `physics`); `solve` and `warm_start` run lane-wise with the same operations in the same order as the scalar code, the branches (speculative or soft term, friction clamp, `max` of the accumulated impulse) are taken per lane by the scalar functions the reference calls, a one-point manifold leaves its second point unchanged by selecting the old lane, and restitution (staged like the other passes, with a scalar body per group) plus the remainder of a chunk (fewer than four) use the scalar code. The lane branch gives the same bits as the scalar one, so a test-only counter shows that it ran, and mutation testing checks it. (4) *Floating-point state*: `Solver2::solve` takes one `base::fpenv::FpGuard::deterministic()` for the whole solve (the calling thread), and every chunk takes its own, which covers the pool workers; each chunk runs its arithmetic in a function that is never inlined (the opaque boundary of the helper). Performance caveat: the staged path copies the constraint and both bodies per pass and scatters serially, so with few constraints per colour it can be slower than the serial path; nothing is measured here (card 4-22). Not done: parallel velocity and position integration of the bodies, a hand-written intrinsic path (needs a governance step), scaling numbers (card 4-22), TSan (card 4-21), the cross-platform golden (card 4-20). Tests: `tests/parallel.rs` (hash after every step equal for scalar serial, lanes serial, staged scalar, lanes and scalar through a pool of 1, 2, 4 and 6 workers, chunk sizes 1 to 1000, reversed, shuffled and single-range schedulers, a refusing scheduler, pile, pyramid, hub with overflow, sleeping and waking islands), `tests/parallel_allocation.rs` (no allocator call on the caller or on any worker) and the lane unit tests; review [reviews/4-15](../../reviews/4-15.md).
+
+```mermaid
+classDiagram
+  class World~D~ { +set_execution(SolverExecution) +step(dt) }
+  class SolverExecution { scheduler: Option~Arc IScheduler~ simd: bool chunk: u32 }
+  class Solver2 { sweep_constraints(Pass) stage_colour(colour, Pass) }
+  class ColourJob { slots bodies members pass simd chunk +run(scheduler) +run_chunk(i) }
+  class Slot { Mutex~Staged~ +load() +store() }
+  class Staged { constraint a b }
+  class Pass { <<enum>> WarmStart Solve Restitute }
+  class lanes { <<module>> run(group of 4, Pass) }
+  class IScheduler { <<port, jobs>> parallel_for run_scope }
+  World~D~ --> Solver2 : set_execution
+  Solver2 *-- SolverExecution
+  Solver2 *-- Slot
+  Solver2 ..> ColourJob : one per colour and pass
+  ColourJob --> Slot : lock to load and to store
+  Slot *-- Staged
+  ColourJob ..> lanes : four at a time
+  ColourJob ..> IScheduler : parallel_for(chunks, 1)
+  lanes ..> Pass
+```
+
+```mermaid
+sequenceDiagram
+  participant S as Solver2 (caller thread)
+  participant P as IScheduler workers
+  participant C as chunk k (any worker)
+  S->>S: prepare, colour (serial)
+  loop each sub-step, each pass (warm start, solve, relax)
+    loop colour 0 .. n-1 (barrier between colours)
+      S->>P: parallel_for(chunks of the colour, grain 1)
+      par chunks in any order, any grouping
+        P->>C: run_chunk(k)
+        C->>C: FpGuard, load slots and body copies (read only)
+        C->>C: scalar or four-lane arithmetic on the copies
+        C->>C: store the constraints back (own slots only)
+      end
+      P-->>S: join
+      S->>S: scatter dynamic bodies, canonical order
+    end
+    S->>S: overflow set, one constraint at a time
+  end
+  S->>S: restitution, finish, warm cache (serial)
+```
+
 - **Borrowed closures.** `parallel_for` and `run_scope` take closures that borrow the caller's data, so that no `Box` is allocated per frame (the existing `platform::threads::Job` is a `Box<dyn FnOnce() + 'static>`, which allocates). Running a borrowing closure on a worker thread needs a small amount of `unsafe` (lifetime erasure guarded by the scope waiting for completion). This is the one place where `jobs` is expected to use `unsafe` (section 8).
 - **`World<D>`.** The step takes a scheduler and a per-step scratch `Arena` as parameters, so there is no global state and no hidden thread. `WorldConfig` fixes the capacities (bodies, shapes, joints, contacts, tree nodes) at creation; creating a body past the capacity returns an error value and never reallocates, so a steady-state frame allocates nothing (section 7). `dt` is `f32` seconds computed once from `FixedStep::step_ticks`.
 - **Body state.** 2D rotation is stored as a `(cos, sin)` pair, not an angle, and is advanced in the step by a first-order update followed by a normalisation, so the step itself calls no `sin`, `cos` or `atan2`. Those are needed only to create a body from an angle and to read an angle back, and both go through the facade (section 5). This follows Box2D v3 **[K, from background knowledge, not re-read this session]** and is a design choice made so that the hot loop needs no libm at all.
@@ -490,7 +537,7 @@ flowchart LR
 - **How it relates to D0 and D1.** A scheduler decides *which thread runs which chunk and in what order*; the physics decides *what a chunk computes*. D1 holds when the result of every chunk is a pure function of the chunk's index range and of data that no other chunk in the same phase writes. The scheduler contract therefore promises nothing about order, and the contract suite proves the weaker, testable property: every index is run exactly once, `parallel_for` returns only after all chunks finished, and results written to disjoint slots are visible to the caller afterwards. To catch an accidental dependence on order **without needing a many-core machine**, `jobs` offers test schedulers on one thread: in order, in reverse order, and in a seeded shuffled order (`Pcg32`). A physics scene that gives the same hash under all of them has no order dependence in the code the test schedulers reach.
 - **Worker count is a parameter, not read from the machine.** The pool takes a worker count at construction (`PoolScheduler::new(workers)`), so the D1 tests run at 1, 2, 3 and 7 workers on any runner, including a two-core hosted one; `IThreads::parallelism()` only supplies the default.
 - **`Caps::has_threads` false** selects the inline scheduler, as today's Headless platform does by default ([platform-ports §2.2](platform-ports.md)).
-- **Floating-point control state.** Each worker, and the calling thread, sets and asserts the control state (round to nearest even, denormals kept) at the start of every simulation job ([rules-digest §5](../rules-digest.md), [physics §3](physics.md) rule 6). A driver or audio library loaded in-process can change it **[K]**. Where this helper lives is O10. **As built in card 4-9:** the helper is the module `base::fpenv` (O10: in `base`); `set_deterministic`, `assert_deterministic` and `FpGuard` are described in [reviews/4-9](../../reviews/4-9.md) and in the module comment. `jobs` and `physics` do not call it yet; the pool calls it at the start of each job in a later card.
+- **Floating-point control state.** Each worker, and the calling thread, sets and asserts the control state (round to nearest even, denormals kept) at the start of every simulation job ([rules-digest §5](../rules-digest.md), [physics §3](physics.md) rule 6). A driver or audio library loaded in-process can change it **[K]**. Where this helper lives is O10. **As built in card 4-9:** the helper is the module `base::fpenv` (O10: in `base`); `set_deterministic`, `assert_deterministic` and `FpGuard` are described in [reviews/4-9](../../reviews/4-9.md) and in the module comment. `jobs` does not call it; **as built in card 4-15** the solver of `physics` takes a `FpGuard::deterministic()` for the whole solve and one at the start of every colour chunk (the guard restores what it found), which covers the calling thread and every pool worker without a change to `jobs`.
 
 ```mermaid
 sequenceDiagram

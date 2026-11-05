@@ -10,6 +10,7 @@
 use super::body::Body;
 use super::dim::Dim;
 use super::error::PhysicsError;
+use super::execution::SolverExecution;
 use super::hash::StateHasher;
 use super::manifolds::ContactManifold;
 
@@ -162,6 +163,12 @@ pub trait ContactSolver<D: Dim>: Sized {
         contacts: &[ContactManifold<D>],
         frame: StepFrame<D>,
     );
+
+    /// Chooses how the next solves execute (see [`SolverExecution`]); no choice changes a result
+    /// bit. A solver with nothing to parallelise ignores it.
+    fn set_execution(&mut self, execution: SolverExecution) {
+        let _ = execution;
+    }
 
     /// True when everything the last [`ContactSolver::solve`] kept for the next step is finite.
     fn is_finite(&self) -> bool;

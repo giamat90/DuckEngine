@@ -7,6 +7,8 @@
 //! bodies and the rotation of the anchors by the turn each body made), which is what lets the
 //! manifold be made once per step.
 
+mod lanes;
+
 use super::warm::{CachedManifold, CachedPoint, Impulse};
 use crate::core::{Body, BodyHandle, damping_factor};
 use crate::d2::{ContactPoint2, D2, FeatureId, MAX_MANIFOLD_POINTS, Manifold2, Rot2};
@@ -259,6 +261,67 @@ impl Point {
 pub(super) struct Ends<'a> {
     pub a: &'a mut SolverBody,
     pub b: &'a mut SolverBody,
+}
+
+/// The passes over the constraints of a sub-step that move velocities.
+#[derive(Clone, Copy)]
+pub(super) enum Pass<'a> {
+    /// Applies the impulses of the last step.
+    WarmStart,
+    /// One soft solve (the sweep says whether it has the bias).
+    Solve(&'a Sweep),
+    /// Bounce, once after the last sub-step.
+    Restitute(&'a Sweep),
+}
+
+impl Pass<'_> {
+    /// Runs the pass on one constraint and its two bodies: the scalar reference.
+    pub(super) fn apply(self, constraint: &mut Constraint, ends: &mut Ends) {
+        match self {
+            Self::WarmStart => constraint.warm_start(ends),
+            Self::Solve(sweep) => constraint.solve(ends, sweep),
+            Self::Restitute(sweep) => constraint.restitute(ends, sweep),
+        }
+    }
+}
+
+/// A constraint together with copies of its two bodies: what a chunk of a colour works on. The
+/// bodies are read when the chunk starts and stored back, after the whole colour has run, in the
+/// order of the reference.
+#[derive(Clone, Copy)]
+pub(super) struct Staged {
+    pub constraint: Constraint,
+    pub a: SolverBody,
+    pub b: SolverBody,
+}
+
+impl Staged {
+    /// A constraint with placeholder bodies, to be replaced before the first use.
+    pub(super) fn new(constraint: Constraint) -> Self {
+        Self {
+            constraint,
+            a: SolverBody::AT_REST,
+            b: SolverBody::AT_REST,
+        }
+    }
+
+    /// The scalar reference on the copies.
+    pub(super) fn run(&mut self, pass: Pass) {
+        let mut ends = Ends {
+            a: &mut self.a,
+            b: &mut self.b,
+        };
+        pass.apply(&mut self.constraint, &mut ends);
+    }
+}
+
+/// How many constraints the lane path solves at once.
+pub(super) use lanes::LANES;
+
+/// Runs `pass` on four staged constraints with lanes; bit for bit what four calls of
+/// [`Staged::run`] give.
+pub(super) fn run_lanes(group: &mut [Staged; LANES], pass: Pass) {
+    lanes::run(group, pass);
 }
 
 /// A prepared manifold: the contact between two bodies.

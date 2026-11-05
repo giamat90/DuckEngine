@@ -10,6 +10,7 @@ use super::body::{Body, BodyDesc, BodyHandle, BodyKind, BodyTag};
 use super::broadphase::Broadphase;
 use super::dim::{Dim, Quantity};
 use super::error::PhysicsError;
+use super::execution::SolverExecution;
 use super::hash::{HashBits, StateHasher};
 use super::islands::Islands;
 use super::manifolds::{ContactManifold, ManifoldList};
@@ -380,6 +381,13 @@ impl<D: Dim> World<D> {
     /// step. Allocates nothing.
     pub fn find_pairs(&mut self) {
         self.broadphase.find_pairs(&self.slots);
+    }
+
+    /// Chooses how the contact solver executes the next steps: serially or through a scheduler,
+    /// with the scalar reference or the lane path (see [`SolverExecution`]). No choice changes
+    /// the state hash of any step; the default is [`SolverExecution::SERIAL`], the reference.
+    pub fn set_execution(&mut self, execution: SolverExecution) {
+        self.solver.set_execution(execution);
     }
 
     /// The solver, for tests that reorder its constraints.

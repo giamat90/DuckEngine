@@ -25,19 +25,22 @@
 //! length `dt`, exactly as before the solver existed, so a world without contacts hashes as it did.
 
 mod constraint;
+mod stage;
 mod warm;
 
 use self::constraint::{
-    Constraint, Ends, HERTZ_LIMIT_FRACTION, Link, STATIC_STIFFNESS_FACTOR, Setup, Softness,
-    SolverBody, StepTerms, Surface, Sweep,
+    Constraint, Ends, HERTZ_LIMIT_FRACTION, Link, Pass, STATIC_STIFFNESS_FACTOR, Setup, Softness,
+    SolverBody, Staged, StepTerms, Surface, Sweep,
 };
+use self::stage::{ColourJob, Slot, scatter};
 use self::warm::WarmCache;
 use crate::core::cells::{index_u32, put};
 use crate::core::{
     Body, BodyKind, Colouring, ConstraintEnds, ContactManifold, ContactSolver, Motion,
-    PhysicsError, SolverConfig, SolverStats, StateHasher, StepFrame,
+    PhysicsError, SolverConfig, SolverExecution, SolverStats, StateHasher, StepFrame,
 };
 use crate::d2::D2;
+use base::fpenv::FpGuard;
 
 /// The scalar contact solver of the 2D instance. All storage is allocated by [`Solver2::new`].
 pub struct Solver2 {
@@ -49,7 +52,9 @@ pub struct Solver2 {
     touched: Vec<bool>,
     /// Slot indices of the touched dynamic bodies.
     active: Vec<usize>,
-    constraints: Vec<Constraint>,
+    constraints: Vec<Slot>,
+    /// How the sweeps execute (serial scalar reference, lanes, scheduler).
+    execution: SolverExecution,
     /// The colours of the constraints; the sweeps follow its order.
     colouring: Colouring,
     /// The most constraints one step can hold: the manifold capacity.
@@ -107,17 +112,13 @@ fn visit_body(bodies: &mut [SolverBody], index: usize, visit: &impl Fn(&mut Solv
     }
 }
 
-/// Runs `visit` on `constraint` with copies of its two bodies, which are stored back afterwards.
-fn visit_constraint(
-    bodies: &mut [SolverBody],
-    constraint: &mut Constraint,
-    visit: &impl Fn(&mut Constraint, &mut Ends),
-) {
+/// Runs `pass` on `constraint` with copies of its two bodies, which are stored back afterwards.
+fn visit_constraint(bodies: &mut [SolverBody], constraint: &mut Constraint, pass: Pass) {
     let (Some(&a), Some(&b)) = (bodies.get(constraint.a), bodies.get(constraint.b)) else {
         return;
     };
     let (mut a, mut b) = (a, b);
-    visit(
+    pass.apply(
         constraint,
         &mut Ends {
             a: &mut a,
@@ -128,6 +129,13 @@ fn visit_constraint(
     // share it must not both write it (the order inside a colour must not matter).
     store(bodies, constraint.a, a);
     store(bodies, constraint.b, b);
+}
+
+/// Runs `pass` on the constraint `index` of the step, if there is one.
+fn visit_member(constraints: &mut [Slot], bodies: &mut [SolverBody], index: u32, pass: Pass) {
+    if let Some(slot) = constraints.get_mut(index as usize) {
+        visit_constraint(bodies, &mut slot.get_mut().constraint, pass);
+    }
 }
 
 /// Stores `body` at `index` unless it is a static body.
@@ -155,6 +163,7 @@ impl ContactSolver<D2> for Solver2 {
             touched: vec![false; bodies],
             active: Vec::with_capacity(bodies),
             constraints: Vec::with_capacity(manifolds),
+            execution: SolverExecution::SERIAL,
             colouring: Colouring::new(bodies, manifolds),
             max_constraints: manifolds,
             warm: WarmCache::new(manifolds),
@@ -170,6 +179,9 @@ impl ContactSolver<D2> for Solver2 {
         contacts: &[ContactManifold<D2>],
         frame: StepFrame<D2>,
     ) {
+        // One deterministic floating-point state for the whole solve, whichever path runs; the
+        // chunks take their own guard for the pool workers. Restores what it found.
+        let _guard = FpGuard::deterministic();
         let h = frame.dt / self.sub_steps;
         let terms = StepTerms {
             gravity: frame.gravity,
@@ -181,6 +193,10 @@ impl ContactSolver<D2> for Solver2 {
         self.apply_reorder();
         self.run_sub_steps(h);
         self.finish(bodies, &frame);
+    }
+
+    fn set_execution(&mut self, execution: SolverExecution) {
+        self.execution = execution;
     }
 
     fn is_finite(&self) -> bool {
@@ -317,7 +333,7 @@ impl Solver2 {
         if let Some(cached) = self.warm.find(cursor, entry.first, entry.second) {
             constraint.warm_from(cached);
         }
-        self.constraints.push(constraint);
+        self.constraints.push(Slot::new(&Staged::new(constraint)));
     }
 
     /// The sub-step loop, then restitution.
@@ -327,17 +343,17 @@ impl Solver2 {
         for _ in 0..self.config.sub_steps {
             self.sub_step(h, [&solve, &relax]);
         }
-        self.sweep_constraints(|constraint, ends| constraint.restitute(ends, &relax));
+        self.sweep_constraints(Pass::Restitute(&relax));
     }
 
     /// One sub-step: velocities, warm start, soft solve, positions, relax.
     fn sub_step(&mut self, h: f32, [solve, relax]: [&Sweep; 2]) {
         self.each_active(|body| body.integrate_velocity(h));
-        self.sweep_constraints(|constraint, ends| constraint.warm_start(ends));
-        self.sweep_constraints(|constraint, ends| constraint.solve(ends, solve));
+        self.sweep_constraints(Pass::WarmStart);
+        self.sweep_constraints(Pass::Solve(solve));
         self.each_active(|body| body.integrate_position(h));
         for _ in 0..self.config.relax_iterations {
-            self.sweep_constraints(|constraint, ends| constraint.solve(ends, relax));
+            self.sweep_constraints(Pass::Solve(relax));
         }
     }
 
@@ -358,22 +374,49 @@ impl Solver2 {
         }
     }
 
-    /// Runs `visit` over the constraints that are solved, colour by colour (see the module
-    /// comment).
-    fn sweep_constraints(&mut self, visit: impl Fn(&mut Constraint, &mut Ends)) {
-        for &index in self.colouring.order() {
-            self.constraints
-                .get_mut(index as usize)
-                .into_iter()
-                .for_each(|constraint| visit_constraint(&mut self.bodies, constraint, &visit));
+    /// Runs `pass` over the constraints that are solved, colour by colour (see the module
+    /// comment). The reference visits them one by one; with an execution that asks for lanes or a
+    /// scheduler each colour is solved as chunks (`stage`) and the overflow set follows serially.
+    fn sweep_constraints(&mut self, pass: Pass) {
+        let total = self.colouring.order().len();
+        if !self.execution.is_staged() {
+            return self.visit_order(0..total, pass);
         }
+        for colour in 0..self.colouring.colour_count() {
+            self.stage_colour(colour, pass);
+        }
+        self.visit_order(total - self.colouring.overflow().len()..total, pass);
+    }
+
+    /// The reference loop over the positions `range` of the solve order: one constraint after the
+    /// other on the calling thread.
+    fn visit_order(&mut self, range: std::ops::Range<usize>, pass: Pass) {
+        let part = self.colouring.order().get(range).unwrap_or(&[]);
+        for &index in part {
+            visit_member(&mut self.constraints, &mut self.bodies, index, pass);
+        }
+    }
+
+    /// Solves colour `colour` as fixed chunks, then stores the bodies back in canonical order.
+    fn stage_colour(&mut self, colour: usize, pass: Pass) {
+        let members = self.colouring.members(colour);
+        let job = ColourJob {
+            slots: &self.constraints,
+            bodies: &self.bodies,
+            members,
+            pass,
+            simd: self.execution.simd,
+            chunk: self.execution.chunk_size(),
+        };
+        job.run(self.execution.scheduler.as_deref());
+        scatter(&mut self.constraints, &mut self.bodies, members);
     }
 
     /// Keeps the impulses and writes the new motion into the bodies.
     fn finish(&mut self, bodies: &mut [Option<Body<D2>>], frame: &StepFrame<D2>) {
         self.next.clear();
-        for constraint in &self.constraints {
-            self.next.push(constraint.cached());
+        for slot in &mut self.constraints {
+            self.next.push(slot.get_mut().constraint.cached());
         }
         for (index, slot) in bodies.iter_mut().enumerate() {
             self.write_back(index, slot, frame);
@@ -526,7 +569,7 @@ mod tests {
             .constraints
             .get(index as usize)
             .into_iter()
-            .flat_map(|constraint| [constraint.a, constraint.b])
+            .flat_map(Slot::ends)
             .filter(|&slot| solver.bodies.get(slot).is_some_and(|b| !b.is_static()))
     }
 
@@ -559,7 +602,8 @@ mod tests {
             *listed.get_mut(index as usize).must("an index") += 1;
         }
         for (index, constraint) in solver.constraints.iter().enumerate() {
-            let moves = [constraint.a, constraint.b]
+            let moves = constraint
+                .ends()
                 .into_iter()
                 .any(|slot| solver.active.contains(&slot));
             assert_eq!(
@@ -639,5 +683,31 @@ mod tests {
         for (n, scene) in scenes.iter().enumerate() {
             check_reordering(n, *scene);
         }
+    }
+
+    /// Groups of four that took the lane path on this thread while `steps` steps ran.
+    fn lane_groups_in(execution: SolverExecution, steps: u32) -> usize {
+        let mut world = pyramid(10);
+        world.set_execution(execution);
+        let before = stage::LANE_GROUPS.with(std::cell::Cell::get);
+        for _ in 0..steps {
+            world.step(DT).must("a step");
+        }
+        stage::LANE_GROUPS.with(std::cell::Cell::get) - before
+    }
+
+    #[test]
+    fn the_lane_path_runs_with_simd_on_and_never_with_it_off() {
+        let simd = SolverExecution {
+            simd: true,
+            ..SolverExecution::SERIAL
+        };
+        assert!(lane_groups_in(simd, 3) > 0);
+        assert_eq!(lane_groups_in(SolverExecution::SERIAL, 3), 0);
+        let staged_scalar = SolverExecution {
+            chunk: 4,
+            ..SolverExecution::SERIAL
+        };
+        assert_eq!(lane_groups_in(staged_scalar, 3), 0);
     }
 }
