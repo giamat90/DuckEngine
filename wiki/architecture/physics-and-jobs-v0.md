@@ -289,6 +289,76 @@ sequenceDiagram
   Note over W,M: no force is applied; the solver reads the list (card 4-13)
 ```
 
+- **As built in card 4-13.** The step now moves bodies by contact. `World::step` hands the manifold list of the last step to the contact solver (`Dim` gains `type Solver: ContactSolver<Self>`; the seam and the tunables `SolverConfig` live in `core::solver`, the 2D scalar solver `Solver2` in `d2::solver`), commits, and then runs the broadphase and the narrowphase on the new positions (cards 4-11 and 4-12). The solver is a soft step in the manner of `Box2D` v3 **[K]** (owner choice O2): per step `sub_steps` sub-steps (default 4) and per sub-step the order integrate velocities, warm start, solve soft contacts (friction first, then the normal), integrate positions, relax (`relax_iterations`, default 1); after the last sub-step restitution (threshold 1 m/s), and the accumulated impulses are kept for the next step, matched by body pair and feature id with a cursor over the pair-ordered list (no search, no hash map). The separation of a point is updated from the motion of its two anchors, so the manifold is made once per step; a point with a positive separation is speculative (it may close the gap within one sub-step and no more). Friction is mixed as the square root of the product, restitution as the maximum, a static body has infinite mass. The constraints are visited in manifold-list order and every operation is plain `f32` in a fixed order (no `mul_add`, no `sin`, no `cos`; the rotation of an anchor is a `(cos, sin)` multiply), so the SIMD solver of card 4-15 can be required to equal this one bit for bit. A body no manifold touches takes the old single Euler step, so a world without contacts hashes exactly as before. The step is atomic: the solver works on a scratch copy of the bodies and the world commits only if everything is finite and representable, else it returns `NotFinite` and changes nothing. Defaults and the reasons for them are in [reviews/4-13](../../reviews/4-13.md); the one that differs from `Box2D`, a linear slop of 1 mm instead of 5 mm, was measured on the pyramid. Nothing in the step allocates. Performance is not measured (card 4-22); the golden hash across platforms is card 4-20.
+
+```mermaid
+classDiagram
+  class World~D~ {
+    +step(dt) Result
+    -solver D_Solver
+    -scratch Bodies
+  }
+  class Dim {
+    <<trait>>
+    type Solver
+  }
+  class ContactSolver~D~ {
+    <<trait>>
+    +solve(bodies, manifolds, frame)
+    +is_finite() bool
+    +commit()
+    +write_bits(hasher)
+  }
+  class SolverConfig {
+    sub_steps relax_iterations
+    contact_hertz damping_ratio push_speed
+    restitution_threshold linear_slop
+  }
+  class FreeSolver { <<core, no contacts>> }
+  class Solver2 { <<d2, scalar reference>> }
+  class Constraint {
+    <<d2 private>>
+    warm_start() solve() restitute()
+  }
+  class Point { anchors masses impulses feature id }
+  class Softness { bias_rate mass_scale impulse_scale }
+  class WarmCache { <<fixed capacity>> find(cursor, pair) }
+  World~D~ --> ContactSolver~D~
+  Dim ..> ContactSolver~D~
+  World~D~ *-- SolverConfig
+  FreeSolver ..|> ContactSolver~D~
+  Solver2 ..|> ContactSolver~D~
+  Solver2 *-- Constraint
+  Solver2 *-- WarmCache
+  Constraint *-- Point
+  Constraint *-- Softness
+```
+
+```mermaid
+sequenceDiagram
+  participant W as World::step
+  participant S as Solver2
+  participant C as Constraints
+  W->>W: copy bodies to scratch
+  W->>S: solve(scratch, manifolds, gravity, dt)
+  S->>C: one constraint per manifold, warm start from the cache
+  loop sub-step, n times
+    S->>S: integrate velocities of touched bodies
+    S->>C: warm start, then solve with bias (friction, normal)
+    S->>S: integrate positions
+    S->>C: relax (solve without bias)
+  end
+  S->>C: restitution
+  S->>S: untouched bodies take one Euler step
+  W->>S: is_finite and bounds representable?
+  alt yes
+    W->>S: commit (impulses kept)
+    W->>W: copy scratch back, broadphase, pairs, manifolds
+  else no
+    W-->>W: NotFinite, nothing changed
+  end
+```
+
 - **Borrowed closures.** `parallel_for` and `run_scope` take closures that borrow the caller's data, so that no `Box` is allocated per frame (the existing `platform::threads::Job` is a `Box<dyn FnOnce() + 'static>`, which allocates). Running a borrowing closure on a worker thread needs a small amount of `unsafe` (lifetime erasure guarded by the scope waiting for completion). This is the one place where `jobs` is expected to use `unsafe` (section 8).
 - **`World<D>`.** The step takes a scheduler and a per-step scratch `Arena` as parameters, so there is no global state and no hidden thread. `WorldConfig` fixes the capacities (bodies, shapes, joints, contacts, tree nodes) at creation; creating a body past the capacity returns an error value and never reallocates, so a steady-state frame allocates nothing (section 7). `dt` is `f32` seconds computed once from `FixedStep::step_ticks`.
 - **Body state.** 2D rotation is stored as a `(cos, sin)` pair, not an angle, and is advanced in the step by a first-order update followed by a normalisation, so the step itself calls no `sin`, `cos` or `atan2`. Those are needed only to create a body from an angle and to read an angle back, and both go through the facade (section 5). This follows Box2D v3 **[K, from background knowledge, not re-read this session]** and is a design choice made so that the hot loop needs no libm at all.

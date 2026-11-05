@@ -26,6 +26,12 @@ impl<D> BodyTag<D> {
 /// there too).
 pub type BodyHandle<D> = Handle<BodyTag<D>>;
 
+/// Coulomb friction coefficient of a body that does not say otherwise: 0.6, the default of `Box2D` v3.
+pub const DEFAULT_FRICTION: f32 = 0.6;
+
+/// Restitution (bounciness) of a body that does not say otherwise: 0, no bounce.
+pub const DEFAULT_RESTITUTION: f32 = 0.0;
+
 /// Whether a body moves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -70,6 +76,13 @@ pub struct BodyDesc<D: Dim> {
     pub linear_damping: f32,
     /// Angular damping per second, zero or more.
     pub angular_damping: f32,
+    /// Coulomb friction coefficient, zero or more ([`DEFAULT_FRICTION`]). Two touching bodies use
+    /// the square root of the product of their coefficients, so one frictionless body makes the
+    /// contact frictionless.
+    pub friction: f32,
+    /// Restitution from zero (no bounce) to one (elastic) ([`DEFAULT_RESTITUTION`]). Two touching
+    /// bodies use the larger of the two.
+    pub restitution: f32,
 }
 
 // Written by hand: `#[derive]` would add the bound `D: Clone` (ADR-0018, Rust friction 3).
@@ -95,8 +108,25 @@ impl<D: Dim> BodyDesc<D> {
             density: 1.0,
             linear_damping: 0.0,
             angular_damping: 0.0,
+            friction: DEFAULT_FRICTION,
+            restitution: DEFAULT_RESTITUTION,
         }
     }
+}
+
+/// Written before a non-default material in the state hash.
+const MATERIAL_TAG: u8 = 0xA5;
+
+/// What a solver computed for a body in one step.
+pub struct Motion<D: Dim> {
+    /// Position of the centre of mass.
+    pub position: D::Vec,
+    /// Orientation.
+    pub rotation: D::Rot,
+    /// Linear velocity.
+    pub linear_velocity: D::Vec,
+    /// Angular velocity.
+    pub angular_velocity: D::Ang,
 }
 
 /// The state of one body. Read it through the accessors; the world changes it.
@@ -113,6 +143,8 @@ pub struct Body<D: Dim> {
     inv_inertia: D::InvInertia,
     linear_damping: f32,
     angular_damping: f32,
+    friction: f32,
+    restitution: f32,
     shape: D::Shape,
 }
 
@@ -125,7 +157,7 @@ impl<D: Dim> Clone for Body<D> {
 impl<D: Dim> Copy for Body<D> {}
 
 /// The factor a velocity is multiplied by in one step of length `dt` under `damping` per second.
-fn damping_factor(damping: f32, dt: f32) -> f32 {
+pub(crate) fn damping_factor(damping: f32, dt: f32) -> f32 {
     1.0 / (1.0 + dt * damping)
 }
 
@@ -137,12 +169,17 @@ impl<D: Dim> Body<D> {
             && desc.linear_velocity.is_finite()
             && desc.angular_velocity.is_finite()
             && desc.linear_damping.is_finite()
-            && desc.angular_damping.is_finite();
+            && desc.angular_damping.is_finite()
+            && desc.friction.is_finite()
+            && desc.restitution.is_finite();
         if !finite {
             return Err(PhysicsError::NotFinite);
         }
         if desc.linear_damping < 0.0 || desc.angular_damping < 0.0 {
             return Err(PhysicsError::InvalidShape);
+        }
+        if desc.friction < 0.0 || !(0.0..=1.0).contains(&desc.restitution) {
+            return Err(PhysicsError::InvalidMaterial);
         }
         match desc.kind {
             BodyKind::Static => Self::new_static(desc),
@@ -166,6 +203,8 @@ impl<D: Dim> Body<D> {
             inv_inertia: D::InvInertia::default(),
             linear_damping: desc.linear_damping,
             angular_damping: desc.angular_damping,
+            friction: desc.friction,
+            restitution: desc.restitution,
             shape: desc.shape,
         })
     }
@@ -189,6 +228,8 @@ impl<D: Dim> Body<D> {
             inv_inertia: properties.inv_inertia,
             linear_damping: desc.linear_damping,
             angular_damping: desc.angular_damping,
+            friction: desc.friction,
+            restitution: desc.restitution,
             shape: desc.shape,
         })
     }
@@ -240,6 +281,18 @@ impl<D: Dim> Body<D> {
     #[must_use]
     pub fn inverse_inertia(&self) -> D::InvInertia {
         self.inv_inertia
+    }
+
+    /// Coulomb friction coefficient.
+    #[must_use]
+    pub fn friction(&self) -> f32 {
+        self.friction
+    }
+
+    /// Restitution from zero to one.
+    #[must_use]
+    pub fn restitution(&self) -> f32 {
+        self.restitution
     }
 
     /// The shape.
@@ -309,7 +362,7 @@ impl<D: Dim> Body<D> {
 
     /// One semi-implicit Euler step of length `dt` under `gravity`; clears the force and the torque.
     /// A static body stays where it is.
-    pub(super) fn integrate(&mut self, gravity: D::Vec, dt: f32) {
+    pub(crate) fn integrate(&mut self, gravity: D::Vec, dt: f32) {
         if self.kind == BodyKind::Static {
             return;
         }
@@ -326,6 +379,40 @@ impl<D: Dim> Body<D> {
         self.angular_velocity = spin;
         self.rotation = D::advance_rotation(self.rotation, spin, dt);
 
+        self.force = D::Vec::default();
+        self.torque = D::Ang::default();
+    }
+
+    /// The force that acts in the next step.
+    pub(crate) fn force(&self) -> D::Vec {
+        self.force
+    }
+
+    /// The torque that acts in the next step.
+    pub(crate) fn torque(&self) -> D::Ang {
+        self.torque
+    }
+
+    /// Linear damping per second.
+    pub(crate) fn linear_damping(&self) -> f32 {
+        self.linear_damping
+    }
+
+    /// Angular damping per second.
+    pub(crate) fn angular_damping(&self) -> f32 {
+        self.angular_damping
+    }
+
+    /// Replaces the motion a solver computed and clears the force and the torque (they were used
+    /// by that step). A static body is left alone.
+    pub(crate) fn set_motion(&mut self, motion: &Motion<D>) {
+        if self.kind == BodyKind::Static {
+            return;
+        }
+        self.position = motion.position;
+        self.rotation = motion.rotation;
+        self.linear_velocity = motion.linear_velocity;
+        self.angular_velocity = motion.angular_velocity;
         self.force = D::Vec::default();
         self.torque = D::Ang::default();
     }
@@ -353,6 +440,15 @@ impl<D: Dim> Body<D> {
         self.inv_inertia.write_bits(hasher);
         hasher.write_f32(self.linear_damping);
         hasher.write_f32(self.angular_damping);
+        // The material is written only when it is not the default, so a world made before the
+        // solver existed (card 4-13), or one that never sets a material, keeps its hash.
+        if self.friction.to_bits() != DEFAULT_FRICTION.to_bits()
+            || self.restitution.to_bits() != DEFAULT_RESTITUTION.to_bits()
+        {
+            hasher.write_u8(MATERIAL_TAG);
+            hasher.write_f32(self.friction);
+            hasher.write_f32(self.restitution);
+        }
         self.shape.write_bits(hasher);
     }
 }
@@ -380,5 +476,71 @@ mod tests {
         assert_eq!(placed.shape, shape);
         assert_eq!(placed.position, Vec2::new(1.0, 2.0));
         assert_eq!(placed.rotation, desc.rotation);
+    }
+
+    fn ball_with(friction: f32, restitution: f32) -> Result<Body<crate::d2::D2>, PhysicsError> {
+        use crate::d2::{D2, Shape2};
+        use base::math::Vec2;
+        let mut desc = BodyDesc::<D2>::new(
+            BodyKind::Dynamic,
+            Vec2::new(0.0, 0.0),
+            Shape2::Circle { radius: 0.5 },
+        );
+        desc.friction = friction;
+        desc.restitution = restitution;
+        Body::from_desc(&desc)
+    }
+
+    fn hash_of_body(body: &Body<crate::d2::D2>) -> u64 {
+        let mut hasher = StateHasher::new();
+        body.write_bits(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn each_material_value_is_checked_on_its_own() {
+        assert!(ball_with(0.0, 0.0).is_ok());
+        assert!(ball_with(2.0, 1.0).is_ok());
+        assert_eq!(
+            ball_with(-0.1, 0.5).err(),
+            Some(PhysicsError::InvalidMaterial)
+        );
+        assert_eq!(
+            ball_with(0.5, 1.1).err(),
+            Some(PhysicsError::InvalidMaterial)
+        );
+        assert_eq!(
+            ball_with(0.5, -0.1).err(),
+            Some(PhysicsError::InvalidMaterial)
+        );
+        assert_eq!(
+            ball_with(f32::NAN, 0.5).err(),
+            Some(PhysicsError::NotFinite)
+        );
+        assert_eq!(
+            ball_with(0.5, f32::INFINITY).err(),
+            Some(PhysicsError::NotFinite)
+        );
+    }
+
+    #[test]
+    fn a_material_changes_the_hash_whichever_of_its_two_values_is_not_the_default() {
+        let plain = hash_of_body(&ball_with(DEFAULT_FRICTION, DEFAULT_RESTITUTION).must("body"));
+        let friction = hash_of_body(&ball_with(0.2, DEFAULT_RESTITUTION).must("body"));
+        let restitution = hash_of_body(&ball_with(DEFAULT_FRICTION, 0.3).must("body"));
+        let both = hash_of_body(&ball_with(0.2, 0.3).must("body"));
+        let all = [plain, friction, restitution, both];
+        let distinct = (0..all.len()).all(|i| (i + 1..all.len()).all(|j| all[i] != all[j]));
+        assert!(distinct);
+    }
+
+    #[test]
+    fn the_force_and_torque_of_the_next_step_can_be_read_back() {
+        use base::math::Vec2;
+        let mut body = ball_with(0.5, 0.0).must("body");
+        assert_eq!(body.apply_force(Vec2::new(1.0, -2.0)), Ok(()));
+        assert_eq!(body.apply_torque(3.0), Ok(()));
+        assert_eq!(body.force(), Vec2::new(1.0, -2.0));
+        assert_eq!(body.torque().to_bits(), 3.0_f32.to_bits());
     }
 }

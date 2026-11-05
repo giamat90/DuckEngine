@@ -8,17 +8,22 @@ mod narrowphase;
 mod polygon;
 mod rot;
 mod shape;
+mod solver;
 
 use crate::core::{Dim, MassProperties, Placed};
 use base::math::Vec2;
 
 pub use crate::core::{
-    BodyKind, DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN, MAX_PAIRS, PhysicsError,
+    BodyKind, DEFAULT_BROADPHASE_MARGIN, DEFAULT_CONTACT_DAMPING_RATIO, DEFAULT_CONTACT_HERTZ,
+    DEFAULT_CONTACT_PUSH_SPEED, DEFAULT_FRICTION, DEFAULT_LINEAR_SLOP, DEFAULT_RELAX_ITERATIONS,
+    DEFAULT_RESTITUTION, DEFAULT_RESTITUTION_THRESHOLD, DEFAULT_SPECULATIVE_MARGIN,
+    DEFAULT_SUB_STEPS, MAX_PAIRS, MAX_RELAX_ITERATIONS, MAX_SUB_STEPS, PhysicsError, SolverConfig,
 };
 pub use aabb::Aabb2;
 pub use manifold::{ContactPoint2, FeatureId, MAX_MANIFOLD_POINTS, Manifold2};
 pub use rot::Rot2;
 pub use shape::Shape2;
+pub use solver::Solver2;
 
 /// A 2D rigid-body world.
 pub type World = crate::core::World<D2>;
@@ -56,6 +61,7 @@ impl Dim for D2 {
     type Shape = Shape2;
     type Bounds = Aabb2;
     type Manifold = Manifold2;
+    type Solver = Solver2;
 
     fn apply_inverse_inertia(_rot: Rot2, inv_inertia: f32, torque: f32) -> f32 {
         inv_inertia * torque

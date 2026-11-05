@@ -13,6 +13,7 @@ use super::error::PhysicsError;
 use super::hash::{HashBits, StateHasher};
 use super::manifolds::{ContactManifold, ManifoldList};
 use super::pairs::{Pair, PairList};
+use super::solver::{ContactSolver, SolverConfig, StepFrame};
 use super::tree::ProxyId;
 use base::pool::Pool;
 
@@ -49,6 +50,8 @@ pub struct WorldConfig<D: Dim> {
     /// is not checked. A box pair can also give no contact inside the margin when the closest
     /// corners are further apart than the margin (the separating axes alone are within it).
     pub speculative_margin: f32,
+    /// The tunables of the contact solver ([`SolverConfig::DEFAULT`]).
+    pub solver: SolverConfig,
 }
 
 // Written by hand: `#[derive]` would add the bound `D: Clone` (ADR-0018, Rust friction 3).
@@ -78,6 +81,11 @@ pub struct World<D: Dim> {
     broadphase: Broadphase<D>,
     manifolds: ManifoldList<D>,
     speculative_margin: f32,
+    solver: D::Solver,
+    /// Copies of the bodies the solver advances; the step commits them only when all are valid.
+    scratch: Vec<Option<Body<D>>>,
+    /// True when bodies were created or destroyed since the pairs and manifolds were made.
+    contacts_stale: bool,
 }
 
 /// The live body `handle` names in `slots`, or `StaleHandle`.
@@ -90,6 +98,13 @@ fn live_slot<D: Dim>(
         .and_then(Option::as_ref)
         .filter(|slot| slot.handle == handle)
         .ok_or(PhysicsError::StaleHandle)
+}
+
+/// Copies the body the solver advanced into its slot; an empty slot or copy changes nothing.
+fn store<D: Dim>(slot: &mut Option<Slot<D>>, copy: Option<&Body<D>>) {
+    if let (Some(slot), Some(copy)) = (slot.as_mut(), copy) {
+        slot.body = *copy;
+    }
 }
 
 /// The manifold of `pair`, or `None` when a body of the pair is gone or the shapes do not touch.
@@ -144,6 +159,9 @@ impl<D: Dim> World<D> {
             return Err(PhysicsError::InvalidMargin);
         }
         let manifolds = ManifoldList::new(config.max_manifolds)?;
+        let solver = D::Solver::new(config.solver, config.max_bodies, config.max_manifolds)?;
+        let mut scratch = Vec::with_capacity(config.max_bodies as usize);
+        scratch.resize_with(config.max_bodies as usize, || None);
         let mut slots = Vec::with_capacity(config.max_bodies as usize);
         slots.resize_with(config.max_bodies as usize, || None);
         Ok(Self {
@@ -155,6 +173,9 @@ impl<D: Dim> World<D> {
             broadphase,
             manifolds,
             speculative_margin: config.speculative_margin,
+            solver,
+            scratch,
+            contacts_stale: false,
         })
     }
 
@@ -215,6 +236,7 @@ impl<D: Dim> World<D> {
             self.handles.remove(handle);
             return Err(error);
         }
+        self.contacts_stale = true;
         Ok(handle)
     }
 
@@ -249,6 +271,7 @@ impl<D: Dim> World<D> {
         if let Some(slot) = self.slots.get_mut(handle.index() as usize) {
             *slot = None;
         }
+        self.contacts_stale = true;
         Ok(())
     }
 
@@ -321,6 +344,7 @@ impl<D: Dim> World<D> {
         {
             self.manifolds.push(entry);
         }
+        self.contacts_stale = false;
     }
 
     /// Sets the linear velocity of a dynamic body.
@@ -379,33 +403,51 @@ impl<D: Dim> World<D> {
             .apply_torque(torque)
     }
 
-    /// Advances every dynamic body by `dt` seconds, moves their boxes in the broadphase and finds
-    /// the pairs again ([`World::pairs`]) and makes the manifolds of the pairs ([`World::manifolds`];
-    /// no force is applied yet). The caller passes the same `dt` every step (the fixed step
-    /// of the application); allocates nothing.
+    /// Advances the world by `dt` seconds: the contact solver moves every dynamic body (bodies in
+    /// contact over sub-steps, with friction and restitution; the others by one step of semi-implicit
+    /// Euler), then the boxes move in the broadphase, the pairs are found again
+    /// ([`World::pairs`]) and the manifolds made again ([`World::manifolds`]) for the bodies as they
+    /// are now; the next step solves those. The caller passes the same `dt` every step (the fixed
+    /// step of the application); allocates nothing.
     ///
     /// # Errors
     /// [`PhysicsError::InvalidTimeStep`] when `dt` is not finite and above zero;
-    /// [`PhysicsError::NotFinite`] when the step would make a position, rotation or velocity
-    /// overflow, or a broadphase box not representable. In both cases nothing changes (the step is
-    /// computed once on copies to check it, then again to commit, so a step costs two integrations).
-    /// A pair list that is too small is not an error of the step: see [`PairList::is_complete`].
+    /// [`PhysicsError::NotFinite`] when the step would make a position, rotation, velocity or
+    /// impulse overflow, or a broadphase box not representable. In both cases nothing changes (the
+    /// solver works on copies of the bodies and the new state is committed only when all of it is
+    /// valid). A pair list that is too small is not an error of the step: see
+    /// [`PairList::is_complete`].
     pub fn step(&mut self, dt: f32) -> Result<(), PhysicsError> {
         if !dt.is_finite() || dt <= 0.0 {
             return Err(PhysicsError::InvalidTimeStep);
         }
-        let gravity = self.gravity;
-        let stays_finite = self.slots.iter().flatten().all(|slot| {
-            let mut next = slot.body;
-            next.integrate(gravity, dt);
-            next.motion_is_finite() && self.broadphase.can_hold(next.kind(), &next.bounds())
-        });
+        if self.contacts_stale {
+            self.find_pairs();
+            self.collide();
+        }
+        for (copy, slot) in self.scratch.iter_mut().zip(&self.slots) {
+            *copy = slot.as_ref().map(|slot| slot.body);
+        }
+        let frame = StepFrame {
+            gravity: self.gravity,
+            dt,
+        };
+        self.solver
+            .solve(&mut self.scratch, self.manifolds.as_slice(), frame);
+        let broadphase = &self.broadphase;
+        let stays_finite = self.solver.is_finite()
+            && self.scratch.iter().flatten().all(|body| {
+                body.motion_is_finite() && broadphase.can_hold(body.kind(), &body.bounds())
+            });
         if !stays_finite {
             return Err(PhysicsError::NotFinite);
         }
-        for slot in self.slots.iter_mut().flatten() {
-            slot.body.integrate(gravity, dt);
+        for (slot, copy) in self.slots.iter_mut().zip(&self.scratch) {
+            store(slot, copy.as_ref());
         }
+        self.solver.commit();
+        // `can_hold` was checked above for every body, so this cannot fail on a committed step; the
+        // check and the move must stay equivalent for the step to remain atomic.
         self.broadphase.move_proxies(&self.slots)?;
         self.steps += 1;
         self.find_pairs();
@@ -414,7 +456,8 @@ impl<D: Dim> World<D> {
     }
 
     /// A hash of the simulation state: capacity, gravity, then every live body (handle, then all
-    /// state) in slot-index order, floats by bit pattern. Equal inputs give equal hashes on every
+    /// state) in slot-index order, floats by bit pattern, then the warm start of the solver (the
+    /// impulses of the last step's contacts; nothing when there are none). Equal inputs give equal hashes on every
     /// run; any change of a live body's state changes it. It does not cover the order in which freed
     /// slots will be reused, so two worlds that reached the same live bodies by different destroy
     /// orders hash equal and may hand out different handles on the next create.
@@ -428,6 +471,7 @@ impl<D: Dim> World<D> {
             hasher.write_u32(slot.handle.generation());
             slot.body.write_bits(&mut hasher);
         }
+        self.solver.write_bits(&mut hasher);
         hasher.finish()
     }
 }
@@ -455,6 +499,7 @@ mod tests {
             broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
             max_manifolds: 256,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+            solver: SolverConfig::DEFAULT,
         }) {
             Ok(world) => world,
             Err(error) => panic!("world must build: {error}"),
@@ -523,6 +568,7 @@ mod tests {
             broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
             max_manifolds: 256,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+            solver: SolverConfig::DEFAULT,
         };
         assert!(matches!(
             World::new(config).err(),
@@ -540,6 +586,7 @@ mod tests {
                 broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
                 max_manifolds: 256,
                 speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+                solver: SolverConfig::DEFAULT,
             };
             assert_eq!(World::new(config).err(), Some(PhysicsError::NotFinite));
         }
@@ -724,6 +771,7 @@ mod tests {
             broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
             max_manifolds: 256,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+            solver: SolverConfig::DEFAULT,
         };
         let mut world = world(1, Vec2::ZERO);
         let handle = create(&mut world, &cloned(&desc));
@@ -1231,6 +1279,7 @@ mod tests {
             broadphase_margin: margin,
             max_manifolds: 256,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+            solver: SolverConfig::DEFAULT,
         }) {
             Ok(world) => world,
             Err(error) => panic!("world must build: {error}"),
@@ -1265,6 +1314,7 @@ mod tests {
             broadphase_margin: 0.1,
             max_manifolds,
             speculative_margin,
+            solver: SolverConfig::DEFAULT,
         };
         assert_eq!(
             World::new(config(MAX_PAIRS + 1, 0.02)).err(),
@@ -1315,6 +1365,7 @@ mod tests {
             broadphase_margin,
             max_manifolds: 256,
             speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+            solver: SolverConfig::DEFAULT,
         };
         assert_eq!(
             World::new(config(MAX_PAIRS + 1, 0.1)).err(),
@@ -1455,7 +1506,12 @@ mod tests {
     fn a_step_updates_the_pairs_of_bodies_that_moved() {
         let mut world = broadphase_world(4, 4, 0.0);
         let runner = body_at(&mut world, BodyKind::Dynamic, 0.0, 0.5);
-        body_at(&mut world, BodyKind::Dynamic, 5.0, 0.5);
+        // Above the runner's path, with the boxes overlapping but not the circles: the solver
+        // leaves the runner alone.
+        create(
+            &mut world,
+            &Desc2::new(BodyKind::Dynamic, Vec2::new(5.0, 0.9), circle(0.5)),
+        );
         assert_eq!(
             world.set_linear_velocity(runner, Vec2::new(4.0, 0.0)),
             Ok(())

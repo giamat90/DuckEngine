@@ -1,12 +1,12 @@
 //! The narrowphase inside the world, through the public 2D API: manifolds appear for the pairs of
 //! the pair list that touch, in pair order, with the right normal, depth, anchors and feature ids;
 //! they stay stable between steps for a slowly moving box; the buffer reports overflow instead of
-//! losing manifolds silently; and nothing here applies a force (the solver is a later card).
+//! losing manifolds silently. (What the solver does with them is tested in `tests/solver`.)
 
 use base::math::Vec2;
 use physics::d2::{
     BodyDesc, BodyHandle, BodyKind, DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN,
-    FeatureId, PhysicsError, Rot2, STANDARD_GRAVITY, Shape2, World, WorldConfig,
+    FeatureId, PhysicsError, Rot2, STANDARD_GRAVITY, Shape2, SolverConfig, World, WorldConfig,
 };
 
 const DT: f32 = 1.0 / 60.0;
@@ -19,6 +19,7 @@ fn world(gravity: Vec2, max_manifolds: u32) -> Result<World, PhysicsError> {
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         max_manifolds,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+        solver: SolverConfig::DEFAULT,
     })
 }
 
@@ -108,21 +109,27 @@ fn a_box_falling_onto_the_ground_gets_a_manifold_only_when_it_is_within_the_marg
         first_contact.is_some_and(|step| step > 0),
         "{first_contact:?}"
     );
-    // No force was applied: the box went on falling through the ground.
+    // Since card 4-13 the solver stops it: it rests on the ground (before, it fell through).
     let (_, body) = world.iter().nth(1).ok_or(PhysicsError::StaleHandle)?;
-    assert!(body.position().y < -0.5, "{:?}", body.position());
+    assert!(
+        (body.position().y - 0.5).abs() < 0.01,
+        "{:?}",
+        body.position()
+    );
     Ok(())
 }
 
 #[test]
 fn feature_ids_stay_the_same_while_a_slightly_turned_box_slides_on_the_ground()
 -> Result<(), PhysicsError> {
-    let mut world = world(Vec2::ZERO, 16)?;
+    // Under gravity and without friction, so the solver keeps it on the ground and does not stop it.
+    let mut world = world(STANDARD_GRAVITY, 16)?;
     ground(&mut world)?;
     let mut desc = crate_at(-2.0, 0.495);
     desc.rotation = Rot2::from_cos_sin(1000.0, 3.0).unwrap_or(Rot2::IDENTITY);
     desc.linear_velocity = Vec2::new(0.4, 0.0);
     desc.angular_velocity = 0.002;
+    desc.friction = 0.0;
     world.create_body(&desc)?;
     let mut first: Option<Vec<FeatureId>> = None;
     let mut last_x = f32::NEG_INFINITY;
@@ -164,8 +171,10 @@ fn manifolds_past_the_capacity_are_counted_and_the_stored_ones_are_a_prefix()
     let mut small = world(Vec2::ZERO, 3)?;
     row_of_circles(&mut full, 8)?;
     row_of_circles(&mut small, 8)?;
-    full.step(DT)?;
-    small.step(DT)?;
+    for world in [&mut full, &mut small] {
+        world.find_pairs();
+        world.collide();
+    }
     // Seven neighbouring pairs touch; the pairs two apart (1.8 m) are too far.
     assert_eq!((full.manifolds().len(), full.manifolds().missing()), (7, 0));
     assert!(full.manifolds().is_complete());

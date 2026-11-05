@@ -36,6 +36,11 @@ pub enum PhysicsError {
         /// The most manifolds one world may hold.
         max: u32,
     },
+    /// A friction below zero, or a restitution outside zero to one (a number that is not finite is
+    /// [`PhysicsError::NotFinite`]).
+    InvalidMaterial,
+    /// A solver setting outside its range (see [`SolverConfig::validate`](crate::core::SolverConfig::validate)).
+    InvalidSolverConfig,
 }
 
 impl fmt::Display for PhysicsError {
@@ -54,6 +59,10 @@ impl fmt::Display for PhysicsError {
             Self::PairCapacityTooLarge { max } => {
                 write!(f, "pair capacity too large, at most {max} pairs allowed")
             }
+            Self::InvalidMaterial => {
+                f.write_str("friction must be zero or more and restitution from zero to one")
+            }
+            Self::InvalidSolverConfig => f.write_str("a solver setting is out of range"),
             Self::ManifoldCapacityTooLarge { max } => {
                 write!(
                     f,
@@ -109,6 +118,14 @@ mod tests {
             (
                 PhysicsError::ManifoldCapacityTooLarge { max: 3 },
                 "manifold capacity too large, at most 3 manifolds allowed",
+            ),
+            (
+                PhysicsError::InvalidMaterial,
+                "friction must be zero or more and restitution from zero to one",
+            ),
+            (
+                PhysicsError::InvalidSolverConfig,
+                "a solver setting is out of range",
             ),
         ];
         for (error, message) in cases {

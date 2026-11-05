@@ -7,6 +7,7 @@
 
 use crate::core::{HashBits, Quantity, StateHasher};
 use base::dmath;
+use base::math::Vec2;
 
 /// A counter-clockwise rotation, stored as `(cos, sin)` of its angle. The fields are private so a
 /// value is always unit length (to rounding) or, for a pair made from a non-finite angle, not finite.
@@ -61,9 +62,32 @@ impl Rot2 {
     pub fn advanced(self, delta: f32) -> Self {
         let cos = self.cos - self.sin * delta;
         let sin = self.sin + self.cos * delta;
-        // The length is at least 1 for a unit start. When the squares overflow (a huge `delta`) or
-        // `delta` is not finite, the length is not finite: the result is a pair that is not finite,
-        // which `World::step` refuses without changing anything. (A zero length divides to NaN.)
+        Self::normalised_or_nan(cos, sin)
+    }
+
+    /// This orientation turned further by `turn`: the product of the two rotations, normalised.
+    /// Used to apply the turn a body made over a step to its orientation at the start of it.
+    #[must_use]
+    pub fn turned_by(self, turn: Self) -> Self {
+        let cos = turn.cos * self.cos - turn.sin * self.sin;
+        let sin = turn.sin * self.cos + turn.cos * self.sin;
+        Self::normalised_or_nan(cos, sin)
+    }
+
+    /// `vector` turned by this rotation, counter-clockwise.
+    #[must_use]
+    pub fn rotate(self, vector: Vec2) -> Vec2 {
+        Vec2::new(
+            self.cos * vector.x - self.sin * vector.y,
+            self.sin * vector.x + self.cos * vector.y,
+        )
+    }
+
+    /// The pair scaled to unit length. The length is at least 1 for a unit start. When the squares
+    /// overflow (a huge turn) or a value is not finite, the length is not finite: the result is a
+    /// pair that is not finite, which `World::step` refuses without changing anything. (A zero
+    /// length divides to NaN.)
+    fn normalised_or_nan(cos: f32, sin: f32) -> Self {
         let length = (cos * cos + sin * sin).sqrt();
         if length.is_finite() {
             Self {
@@ -192,5 +216,39 @@ mod tests {
         expected.write_f32(cos);
         expected.write_f32(sin);
         assert_eq!(through.finish(), expected.finish());
+    }
+
+    #[test]
+    fn rotate_turns_a_vector_counter_clockwise() {
+        let quarter = Rot2::from_cos_sin(0.0, 1.0).map(|r| r.rotate(Vec2::new(2.0, 1.0)));
+        assert_eq!(quarter, Some(Vec2::new(-1.0, 2.0)));
+        let identity = Rot2::IDENTITY.rotate(Vec2::new(2.0, 1.0));
+        assert_eq!(identity, Vec2::new(2.0, 1.0));
+        let (c, s) = (0.6_f32, 0.8_f32);
+        let turned = Rot2::from_cos_sin(c, s).map(|r| r.rotate(Vec2::new(1.0, 0.0)));
+        assert_eq!(turned, Some(Vec2::new(c, s)));
+        let other = Rot2::from_cos_sin(c, s).map(|r| r.rotate(Vec2::new(0.0, 1.0)));
+        assert_eq!(other, Some(Vec2::new(-s, c)));
+    }
+
+    #[test]
+    fn turned_by_adds_the_angles_and_stays_unit_length() {
+        let a = Rot2::from_angle(0.7);
+        let b = Rot2::from_angle(-0.2);
+        let sum = a.turned_by(b);
+        assert!((sum.angle() - 0.5).abs() < 2e-6);
+        let (c, s) = sum.direction();
+        assert!((c * c + s * s - 1.0).abs() < 1e-6);
+        // Turning by the identity changes nothing, and the order of the two does not matter.
+        assert_eq!(a.turned_by(Rot2::IDENTITY), a);
+        assert_eq!(Rot2::IDENTITY.turned_by(a), a);
+        assert!((b.turned_by(a).angle() - sum.angle()).abs() < 1e-7);
+    }
+
+    #[test]
+    fn turned_by_a_pair_that_is_not_finite_is_not_finite() {
+        let broken = Rot2::IDENTITY.advanced(f32::NAN);
+        assert!(!Rot2::IDENTITY.turned_by(broken).is_finite());
+        assert!(!broken.turned_by(Rot2::IDENTITY).is_finite());
     }
 }

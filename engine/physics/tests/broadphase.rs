@@ -12,7 +12,7 @@ use base::math::Vec2;
 use base::rng::Pcg32;
 use physics::d2::{
     Aabb2, BodyDesc, BodyHandle, BodyKind, DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN,
-    PhysicsError, Rot2, Shape2, World, WorldConfig,
+    PhysicsError, Rot2, Shape2, SolverConfig, World, WorldConfig,
 };
 
 const DT: f32 = 1.0 / 30.0;
@@ -28,6 +28,7 @@ fn world(max_bodies: u32, max_pairs: u32, margin: f32) -> Result<World, PhysicsE
         broadphase_margin: margin,
         max_manifolds: 256,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+        solver: SolverConfig::DEFAULT,
     })
 }
 

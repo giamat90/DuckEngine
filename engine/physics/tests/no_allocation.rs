@@ -6,7 +6,7 @@ use base::alloc::{CountingAllocator, count_allocations};
 use base::math::Vec2;
 use physics::d2::{
     BodyDesc, BodyHandle, BodyKind, DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN,
-    PhysicsError, Rot2, STANDARD_GRAVITY, Shape2, World, WorldConfig,
+    PhysicsError, Rot2, STANDARD_GRAVITY, Shape2, SolverConfig, World, WorldConfig,
 };
 use std::alloc::System;
 
@@ -25,6 +25,7 @@ fn build_world() -> Result<World, PhysicsError> {
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         max_manifolds: 256,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+        solver: SolverConfig::DEFAULT,
     })
 }
 
@@ -146,6 +147,7 @@ fn moving_bodies_in_the_broadphase_finding_pairs_and_overflowing_the_list_alloca
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         max_manifolds: 256,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+        solver: SolverConfig::DEFAULT,
     })?;
     let handles = fill(&mut world)?;
     // Every body moves sideways so each one leaves its fat box about every other step and is
@@ -186,6 +188,7 @@ fn finding_contacts_and_overflowing_the_manifold_list_allocate_nothing() -> Resu
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         max_manifolds: 8,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+        solver: SolverConfig::DEFAULT,
     })?;
     world.create_body(&BodyDesc::new(
         BodyKind::Static,
@@ -210,6 +213,46 @@ fn finding_contacts_and_overflowing_the_manifold_list_allocate_nothing() -> Resu
         matches!(result, Ok((contacts, true)) if contacts > 100),
         "{result:?}"
     );
+    assert_eq!(counts.calls(), 0, "{counts:?}");
+    Ok(())
+}
+
+/// A pile of boxes on a floor: contacts exist, the solver runs every step, warm starting is used.
+#[test]
+fn a_step_with_contacts_and_the_solver_makes_no_allocator_call() -> Result<(), PhysicsError> {
+    let mut world = build_world()?;
+    world.create_body(&BodyDesc::new(
+        BodyKind::Static,
+        Vec2::new(0.0, -0.5),
+        Shape2::Box {
+            half_extents: Vec2::new(20.0, 0.5),
+        },
+    ))?;
+    for level in 0..6_u8 {
+        for column in 0..3_u8 {
+            world.create_body(&BodyDesc::new(
+                BodyKind::Dynamic,
+                Vec2::new(f32::from(column) * 1.05, 0.5 + f32::from(level) * 1.01),
+                Shape2::Box {
+                    half_extents: Vec2::new(0.5, 0.5),
+                },
+            ))?;
+        }
+    }
+    for _ in 0..30 {
+        world.step(DT)?; // warm-up: contacts form, boxes settle
+    }
+    assert!(
+        !world.manifolds().as_slice().is_empty(),
+        "the scene has contacts"
+    );
+    let (result, counts) = count_allocations(|| {
+        for _ in 0..300 {
+            world.step(DT)?;
+        }
+        Ok::<(), PhysicsError>(())
+    });
+    assert_eq!(result, Ok(()));
     assert_eq!(counts.calls(), 0, "{counts:?}");
     Ok(())
 }

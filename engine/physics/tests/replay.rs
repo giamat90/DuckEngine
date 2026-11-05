@@ -4,7 +4,7 @@
 use base::math::Vec2;
 use physics::d2::{
     BodyDesc, BodyKind, DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN, PhysicsError, Rot2,
-    STANDARD_GRAVITY, Shape2, World, WorldConfig,
+    STANDARD_GRAVITY, Shape2, SolverConfig, World, WorldConfig,
 };
 
 const DT: f32 = 1.0 / 60.0;
@@ -20,6 +20,7 @@ fn run() -> Result<Vec<u64>, PhysicsError> {
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
         max_manifolds: 256,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+        solver: SolverConfig::DEFAULT,
     })?;
     world.create_body(&BodyDesc::new(
         BodyKind::Static,
