@@ -83,7 +83,7 @@ Benchmarks run on a **dedicated, stable machine** (shared CI runners are too noi
 | Check | Gate |
 |---|---|
 | Sanitizers (ASan on nightly) + **Miri on `unsafe` modules** | clean on every PR (Miri on changed `unsafe` modules) |
-| TSan (job system, physics queries, audio queues) | clean nightly; required on changes to concurrency code |
+| TSan (job system, physics queries, audio queues) | clean on `main` and on demand (job `tsan` of `ci`, card 4-21; not nightly, Actions minutes); required on changes to concurrency code |
 | Static analysis (Clippy groups, `cargo-deny`) | 0 new |
 | Fuzzing (asset parsers, decoders, serialisation) | nightly short run, corpus kept |
 

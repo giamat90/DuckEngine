@@ -42,11 +42,11 @@ flowchart LR
 
 ## 2. Jobs of the `ci` workflow
 
-Source: `.github/workflows/ci.yml`. Nine independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
+Source: `.github/workflows/ci.yml`. Ten independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
 
 ```mermaid
 flowchart TB
-  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism
+  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism & tsan
 
   subgraph g1["g1: build, test, fmt, clippy (Windows and Ubuntu)"]
     direction TB
@@ -112,7 +112,19 @@ flowchart TB
     k7 --> k8["golden_check verify against trusted golden: RED on any difference"] --> k9["cost report, feature on and off (report only)"]
   end
 
-  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism --> done(["all green = the commit may merge"])
+  subgraph tsan["tsan (Ubuntu x86-64, card 4-21): ThreadSanitizer on a dated toolchain pinned in ci.yml"]
+    direction TB
+    t0["checkout main as trusted/, the push as head/"] --> t1{"engine/physics/Cargo.toml: in head, in trusted"}
+    t1 -- "neither" --> t2["notice and summary: not run: physics crate absent (the only skip)"]
+    t1 -- "only in trusted, or no recorder" --> t3["RED"]
+    t1 -- "in head" --> t4["physics tests will run"]
+    t0 --> t5["rustup toolchain install the dated toolchain, component rust-src"]
+    t5 --> t6["cargo test -p jobs --features contract-tests, -Zsanitizer=thread, -Zbuild-std, halt_on_error=1"]
+    t6 --> t7["prove the test binary links __tsan_init"]
+    t7 --> t8["cargo test -p physics: determinism, joints, parallel, parallel_allocation, stability (only if present)"]
+  end
+
+  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism & tsan --> done(["all green = the commit may merge"])
 ```
 
 ---

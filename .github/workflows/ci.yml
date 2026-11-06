@@ -517,3 +517,81 @@ jobs:
           off=$(timed cargo test -p physics --test determinism --locked -- golden:: --test-threads=1)
           echo "### D2 cost on ${{ matrix.os }}: golden recorder, feature on ${on} ms, off ${off} ms (report only)" >> "$GITHUB_STEP_SUMMARY"
         working-directory: head
+
+  # Card 4-21: ThreadSanitizer on Linux (physics-and-jobs-v0 section 6, ADR-0004 section 6). TSan does not exist
+  # on the MSVC target and needs the sanitizer flag plus a rebuilt standard library, so this job uses a dated
+  # toolchain that is not the repository's stable one. The date is pinned HERE, in `RUSTUP_TOOLCHAIN` below: it
+  # overrides rust-toolchain.toml for this job only, and a bump is a diff of this file (a protected path), so
+  # the owner reads it as a governance change. Never a floating channel. Runs on `main` and by hand like every
+  # job of `ci`, not on a schedule (Actions minutes, R-24). Two runs of cargo, one command each, so a failing
+  # step names what raced:
+  #   1. the `jobs` crate: unit tests (pool tests, the scheduler contract at several worker counts, order
+  #      independence) and its integration tests, with the feature `contract-tests`;
+  #   2. the `physics` tests that use the pool (determinism, joints, parallel, parallel_allocation, stability),
+  #      only when the crate exists. `main` can be behind `develop`, so the crate can be absent: the presence
+  #      check of the D2 job decides it from the two trees (a crate in the push always runs; a crate on main that
+  #      the push lacks is red) and the absence is written to the job summary, never green by silence.
+  # The workspace profiles set panic = abort, which the test harness cannot use and which makes the rebuilt
+  # `panic_abort` crate fail; the two profile variables below make this job build with unwinding (the race
+  # detector does not depend on the panic strategy).
+  # No `-D warnings` here: a dated toolchain has lints the
+  # stable one does not (the first run failed on a deprecation of `fetch_update` in `platform`, which stable
+  # 1.94.1 accepts); warnings stay gated by Clippy with -D warnings on the repository toolchain in `g1`. Doc tests are not run (rustdoc is not sanitized here). Nothing is excluded by name; the review lists what
+  # was run. `halt_on_error=1`: the first report ends the test binary and the step is red. This workflow file is
+  # part of the push, so the owner reads any change to it.
+  tsan:
+    name: ThreadSanitizer (ubuntu-latest, pinned dated toolchain)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: nightly-2026-10-15
+      RUSTFLAGS: -Zsanitizer=thread
+      CARGO_TARGET_DIR: target-tsan
+      TSAN_OPTIONS: halt_on_error=1
+      CARGO_PROFILE_DEV_PANIC: unwind
+      CARGO_PROFILE_RELEASE_PANIC: unwind
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          path: trusted
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: head
+          persist-credentials: false
+      - name: Find the physics crate
+        id: physics
+        run: python trusted/tools/golden-check/golden_check.py presence --trusted trusted --head head --github-output "$GITHUB_OUTPUT" --summary "$RUNNER_TEMP/presence.txt"
+      - name: Install the pinned dated toolchain with the standard library source
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rust-src
+          rustc --version --verbose
+          echo "### TSan toolchain: $(rustc --version)" >> "$GITHUB_STEP_SUMMARY"
+        working-directory: head
+      - name: Thread-sanitize the jobs tests
+        run: cargo test -p jobs --features contract-tests --lib --tests --locked -Zbuild-std --target x86_64-unknown-linux-gnu
+        working-directory: head
+      # Not green by silence: the test binaries must really be instrumented (the sanitizer runtime entry point
+      # is linked in). A build that dropped the flag would pass the tests above without checking anything.
+      - name: Prove the test binaries are instrumented
+        run: |
+          set -euo pipefail
+          binary=$(find target-tsan -type f -name 'jobs-*' -perm -u+x -print -quit)
+          test -n "$binary"
+          grep -q __tsan_init "$binary"
+          echo "### TSan: $(basename "$binary") is instrumented (__tsan_init linked)" >> "$GITHUB_STEP_SUMMARY"
+        working-directory: head
+      - name: Thread-sanitize the physics tests
+        if: steps.physics.outputs.present == 'true'
+        run: cargo test -p physics --test determinism --test joints --test parallel --test parallel_allocation --test stability --locked -Zbuild-std --target x86_64-unknown-linux-gnu
+        working-directory: head
+      - name: Say that the physics tests did not run
+        if: steps.physics.outputs.present != 'true'
+        run: |
+          echo "### TSan physics tests: not run: physics crate absent (engine/physics/Cargo.toml is on neither main nor the pushed commit)" >> "$GITHUB_STEP_SUMMARY"

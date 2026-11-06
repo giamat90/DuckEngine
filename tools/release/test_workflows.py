@@ -388,6 +388,54 @@ class Ci(unittest.TestCase):
         job = self.d2_job()
         self.assertLess(job.index("golden_check.py flags --repo head"), job.index("cargo test -p physics"))
 
+    def tsan_job(self):
+        job = CI[CI.index("\n  tsan:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        return job[:following.start()] if following else job
+
+    def test_the_tsan_job_runs_on_ubuntu_only_with_a_dated_nightly_pinned_in_the_job_env(self):
+        # Card 4-21: the pin sits in ci.yml, a protected path, so a bump of the toolchain is a governance diff.
+        job = self.tsan_job()
+        self.assertIn("runs-on: ubuntu-latest", job)
+        self.assertNotIn("matrix", job)
+        self.assertRegex(job, r"(?m)^      RUSTUP_TOOLCHAIN: nightly-\d{4}-\d{2}-\d{2}$")
+        self.assertEqual(re.findall(r"nightly(?!-\d{4}-\d{2}-\d{2})", job), [], "a floating nightly")
+        self.assertIn("--component rust-src", job)
+        self.assertIn("rustup toolchain install \"$RUSTUP_TOOLCHAIN\"", job)
+
+    def test_the_tsan_job_builds_the_standard_library_with_the_sanitizer_and_stops_on_the_first_race(self):
+        job = self.tsan_job()
+        self.assertRegex(job, r"(?m)^      RUSTFLAGS: -Zsanitizer=thread$")
+        self.assertIn("TSAN_OPTIONS: halt_on_error=1", job)
+        self.assertIn("CARGO_TARGET_DIR: target-tsan", job)
+        # The profiles say panic = abort; a rebuilt standard library needs unwinding for the test harness.
+        self.assertIn("CARGO_PROFILE_DEV_PANIC: unwind", job)
+        self.assertIn("CARGO_PROFILE_RELEASE_PANIC: unwind", job)
+        for step in ("cargo test -p jobs --features contract-tests", "cargo test -p physics"):
+            line = next(l for l in job.splitlines() if step in l)
+            self.assertIn("-Zbuild-std", line)
+            self.assertIn("--target x86_64-unknown-linux-gnu", line)
+            self.assertIn("--locked", line)
+
+    def test_the_tsan_job_covers_the_pool_and_skips_physics_only_through_the_presence_check(self):
+        job = self.tsan_job()
+        self.assertIn("--lib --tests", job[job.index("cargo test -p jobs"):])
+        for target in ("determinism", "joints", "parallel", "parallel_allocation", "stability"):
+            self.assertIn(f"--test {target}", job)
+        self.assertIn("golden_check.py presence --trusted trusted --head head --github-output", job)
+        self.assertIn("ref: main\n          path: trusted", job)
+        self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
+        physics = job[job.index("- name: Thread-sanitize the physics tests"):]
+        self.assertIn("if: steps.physics.outputs.present == 'true'", physics)
+        self.assertEqual(len(re.findall(r"(?m)^\s+if:", job)), 2)
+        # An absent crate is stated in the job summary, never green by silence.
+        self.assertIn("not run: physics crate absent", job)
+        # The run proves that the binaries are instrumented, before the physics step.
+        self.assertIn("grep -q __tsan_init", job)
+        self.assertLess(job.index("grep -q __tsan_init"), job.index("- name: Thread-sanitize the physics tests"))
+        self.assertNotIn("continue-on-error", job)
+        self.assertNotIn("head/gates", job)
+
     def test_ci_runs_the_tests_of_every_tool_folder(self):
         for folder, module in (("tools/templates", "test_templates"), ("tools/token-probe", "test_probe"),
                                ("tools/local-gates", "test_local_gates"),
