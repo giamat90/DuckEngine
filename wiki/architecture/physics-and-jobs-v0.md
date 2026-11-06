@@ -738,6 +738,41 @@ flowchart LR
   G -->|"no"| P["facade calls portable; madd is a * b + c"]
 ```
 
+**As built in card 4-18.** The harness of this section is an integration test target, `engine/physics/tests/determinism/` (16 tests, tests only: no engine file, no hash pin and no gate file changed; `physics` gains the dev-dependency `jobs` with the feature `contract-tests`). A recorder runs a scene (a world builder, an optional hook before each step for body and joint creation and destruction, a step count) under one `SolverExecution` and keeps, after every step, the state hash, the sleeping count, the solver counters and the bit pattern of every live body; a difference is reported as the first step, body and field. The matrix runs 10 scenes (pyramid, row of boxes, whip chain, three scatters of circles and boxes from `Pcg32` seeds, sleepers woken by a ball, creation and destruction with slot reuse, a hub that overflows the 24 colours, hinges and contacts together) under 39 configurations (scalar serial, lanes serial, and scalar and lanes through the inline, reversed, one-range, three shuffled and four pool schedulers at 1, 2, 3 and 7 workers, chunk sizes 1, 7, 32 and huge on the interleaving ones, and two refusing schedulers), pool and shuffled ones twice, against the scalar serial reference (itself run twice); two 600-step scenes run under four of them. A probe on every scheduler counts the calls and the threads that ran a chunk, so a configuration that quietly stays serial fails the test by name. The scheduler contract of `jobs` is run on every scheduler of the matrix, and five deliberately faulty schedulers (skip the last chunk, run the first twice, run nothing, skip or repeat a task) must fail both the contract and the replay comparison. Not covered: a perturbed floating-point control state (it cannot be set without `unsafe` or `std::arch`, both refused outside `base`), the golden hash (4-20), Clippy bans (4-19), TSan (4-21). Fault injection, the table of configurations and scenes, and the bounds that moved: [reviews/4-18](../../reviews/4-18.md).
+
+```mermaid
+classDiagram
+  class Scene { name steps build events }
+  class Recorder { record(scene, execution) Trace }
+  class Trace { samples hash asleep stats bodies first_difference }
+  class Config { name SolverExecution Probe uses_scheduler }
+  class Probe { calls threads }
+  class Scheduler { <<IScheduler>> inline reversed shuffled pool OneRange Refusing }
+  class Faulty { <<test only>> skips repeats runs nothing }
+  class Contract { <<jobs::contract>> scheduler_contract }
+  Recorder ..> Scene
+  Recorder ..> Config
+  Recorder --> Trace
+  Config --> Scheduler : wraps with Probe
+  Faulty ..|> Scheduler
+  Contract ..> Scheduler
+  Contract ..> Faulty : must fail
+```
+
+```mermaid
+flowchart LR
+  S[scene] --> R[serial reference x2]
+  S --> C[39 configs, 2 runs where threaded]
+  R --> T1[Trace]
+  C --> T2[Trace]
+  T1 --> D{equal?}
+  T2 --> D
+  D -->|no| F[step, body, field]
+  D -->|yes| U{scheduler asked?}
+  U -->|no| X[silent serial: red]
+  U -->|yes| OK[D0 and D1 hold]
+```
+
 ## 6. TSan and Miri expectations
 
 - **TSan.** Required by the roadmap ("TSan clean") and by [quality-metrics](../workflow/quality-metrics.md) ("clean nightly; required on changes to concurrency code"). TSan is not available on the MSVC target, so it runs on Linux with the nightly toolchain **[K: it needs `-Zsanitizer=thread` and, to be sound, a rebuilt standard library, `-Zbuild-std`]**. No TSan job exists in `.github/workflows/ci.yml` today. The job is a governance card (workflow); the toolchain it needs is pinned like the others; it runs by hand and on `main` like the rest of `ci`, not nightly, because of the Actions minutes budget (R-24). What it covers: the `jobs` contract suite at several worker counts, and the physics replay scenes with the pool.

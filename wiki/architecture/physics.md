@@ -16,6 +16,8 @@ The phase 4 shape of the crates, the job system, the determinism harness, the ca
 
 **As built in card 4-17:** tests only. One integration target `engine/physics/tests/stability/` holds the stability scenes (pyramids, columns, mass ratios, chains, a bridge with a load, a mixed scene), the execution matrix (scalar serial, lanes, pools of 1, 2, 4 and 6 workers, equal state hash), sleeping variants and 8 properties over 25 seeded scenes. Five bounds stated before measuring are not met by the solver (tall columns, a 1:100:1:100 column, a 50-link chain, a 20-row pyramid, the heavy bridge load at 8 s) and are kept as findings, not weakened; W1-scale stacking is not demonstrated (largest pyramid that passes: 55 boxes). Details and views: [physics-and-jobs-v0](physics-and-jobs-v0.md) section 2, review [reviews/4-17](../../reviews/4-17.md).
 
+**As built in card 4-18:** tests only. The target `engine/physics/tests/determinism/` replays 10 scenes under 39 execution configurations (scalar and lanes; inline, reversed, shuffled, one-range, refusing and pooled schedulers at 1, 2, 3 and 7 workers; chunk sizes 1, 7, 32 and huge), pool and shuffled ones twice, and compares the hash and the bits of every body after every step; probes show that the schedulers were used, and deliberately faulty schedulers must fail it. No stored value (the golden hash is card 4-20). Details: [physics-and-jobs-v0](physics-and-jobs-v0.md) section 5, review [reviews/4-18](../../reviews/4-18.md).
+
 ## 1. Boundaries
 
 - `physics` is a **standalone L2 module**: depends only on `base` and `jobs`. It does **not** know about the ECS, scene, or renderer. This keeps its internal data layout free to be optimal and makes it testable in isolation.

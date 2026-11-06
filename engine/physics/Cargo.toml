@@ -17,6 +17,8 @@ base = { path = "../base", version = "0.1.0" }
 jobs = { path = "../jobs", version = "0.1.0" }
 
 [dev-dependencies]
+# The generic scheduler contract suite, run by the determinism harness on every scheduler it uses.
+jobs = { path = "../jobs", version = "0.1.0", features = ["contract-tests"] }
 platform = { path = "../platform", version = "0.1.0" }
 
 [lints]
