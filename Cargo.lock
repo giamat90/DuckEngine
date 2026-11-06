@@ -146,6 +146,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tools_physics_bench"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "jobs",
+ "physics",
+ "platform",
+]
+
+[[package]]
 name = "tools_physics_spike"
 version = "0.1.0"
 dependencies = [
