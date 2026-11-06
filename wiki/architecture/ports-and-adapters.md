@@ -42,7 +42,7 @@ Adapter kinds: **native** (we write directly against the OS/vendor API - the goa
 | **Denied in L0-L2** | `std::fs`, `std::net`, `std::env`, `std::process`, `std::os::*`, `std::io`, direct clock reads, direct thread spawning (also behind a rename of any module called `thread`, such as `use std::thread as th` or `use self::thread as th`; `thread::sleep`, `current`, `yield_now` and similar are not thread creation and stay allowed when imported without a rename), anything OS-specific (`std::ffi` only in `platform`); `extern` blocks and `#[link]`; `std::arch`, `core::arch` and `asm!` outside `base`; reached only through ports or inside adapters/tools |
 | **Denied in simulation crates (physics, math used by it)** | `HashMap`/`HashSet`, `slice::sort_unstable*`, `Instant::now`, `SystemTime`, any unseeded RNG, implicit FMA contraction and fast-math (Rust has neither; a flag or intrinsic that adds them must not be added; there is no scanner rule for it, review and the protected toolchain and cargo config cover it). An explicit `f32::mul_add` is allowed outside `physics` and refused in it (rule 1 in [physics](physics.md) section 3). In the `physics` crate also denied: libm float functions (`sin`, `cos`, `exp`, `powf`, ...), which it reaches through the math facade in `base` (rule 7; the bans are back since card 1-23), the fused multiply-add intrinsics (FMA reaches physics only through the facade, and is off in the D2 mode), and in `physics` and `base` the reciprocal-estimate intrinsics. Platform libm functions stay allowed in `base` and in non-simulation crates |
 
-Enforced today by the **banned-import check** (crate graph + `use` scan from `gates/architecture.toml`, the Rust form of the old "banned-import" check): the OS-facing `std` modules, thread creation and clocks (L0-L2, outside the crates that own them), and in the `physics` crate only `HashMap`/`HashSet` (tests included) and unstable sort. Math code that lives in `base` is not covered by the `physics` rules and relies on review. Not scanned: unseeded RNG and implicit FMA or fast-math (review and the protected toolchain and cargo config), and the floating-point control state (a runtime assertion in each simulation job). Clippy `disallowed-methods` / `disallowed-types` is **not configured yet**; it is planned as a second line, per crate in a `clippy.toml`, when the first simulation crate exists (phase 4) `[K, verify V5]`.
+Enforced today by the **banned-import check** (crate graph + `use` scan from `gates/architecture.toml`, the Rust form of the old "banned-import" check): the OS-facing `std` modules, thread creation and clocks (L0-L2, outside the crates that own them), and in the `physics` crate only `HashMap`/`HashSet` (tests included) and unstable sort. Math code that lives in `base` is not covered by the `physics` rules and relies on review. Not scanned: unseeded RNG and implicit FMA or fast-math (review and the protected toolchain and cargo config), and the floating-point control state (a runtime assertion in each simulation job). Since card 4-19 (governance, wiki v0.95) Clippy `disallowed-methods` / `disallowed-types` is the **second line** for the `physics` crate, in the crate-level file `engine/physics/clippy.toml` (see the paragraph below the diagram).
 
 ```mermaid
 flowchart LR
@@ -57,16 +57,33 @@ flowchart LR
   Arch["arch-check scan, gates/architecture.toml: enforced today"]
   Rev["review and the protected toolchain and cargo config"]
   Test["runtime assertion at the start of each simulation job, tested"]
-  Clippy["Clippy disallowed-methods: planned with the physics crate, phase 4, same bans"]
+  Clippy["Clippy disallowed-methods and disallowed-types in engine/physics/clippy.toml: enforced since card 4-19"]
   B1 --> Arch
   B2 --> Arch
   B3 --> Arch
   B4 --> Rev
   B5 --> Rev
   B6 --> Test
-  B1 -.-> Clippy
-  B2 -.-> Clippy
-  B3 -.-> Clippy
+  B1 --> Clippy
+  B2 --> Clippy
+  B3 --> Clippy
+  B5 --> Clippy
+```
+
+**Clippy as the second line (card 4-19).** Clippy reads one `clippy.toml` per crate, the nearest one above the crate's manifest, and a crate-level file **replaces** the root file, it does not extend it. So `engine/physics/clippy.toml` repeats the four clean-code thresholds with the numbers of `gates/gates.toml` and `tools/lint-profile` fails CI when any `clippy.toml` or `.clippy.toml` in the tree differs from `gates.toml` or lacks a key (otherwise a crate file could silently relax a limit), or carries another setting, or when the physics file loses one of its required bans. The file bans, with a reason each, for `f32` and `f64`: the libm-dependent functions (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, the hyperbolic ones, `sin_cos`, `exp`, `exp2`, `exp_m1`, `ln`, `ln_1p`, `log`, `log2`, `log10`, `powf`, `powi`, `hypot`, `cbrt`) and `mul_add`; `std::time::Instant::now` and `SystemTime::now`; the unstable sorts and selections of slices (`slice::sort_unstable`, `_by`, `_by_key`, `select_nth_unstable`, `_by`, `_by_key`); and the types `std::collections::HashMap`, `HashSet` and `std::hash::RandomState`. The exact IEEE operations (`sqrt`, `abs`, `min`, `max`, `floor`, `ceil`, `round`, `clamp`, ...) stay allowed. Clippy resolves the path through imports and aliases, which the regex scan cannot; the scan, for its part, matches the method name on any receiver, also one whose type is not inferred in the source text; the two lines overlap on purpose. Tests are covered (CI runs Clippy with `--all-targets`). `base` has no such file: `dmath` calls libm legitimately. An invalid path in the list is a Clippy warning, which `-D warnings` turns into a failure. The unstable sort is banned outright here, and so does the scan (`sort_unstable*`, `select_nth_unstable*`), because whether keys are equal is not decidable by either tool; a sort on unique keys uses the stable `sort`.
+
+```mermaid
+flowchart TD
+  Src["physics source and tests"]
+  Src --> Scan["arch-check scan: regex on source, gates/architecture.toml, trusted checkout of main"]
+  Src --> Clippy["cargo clippy --all-targets -D warnings"]
+  Clippy --> Crate["engine/physics/clippy.toml: thresholds + disallowed-methods + disallowed-types"]
+  Clippy --> Root["clippy.toml (root): thresholds only, for every other crate"]
+  Crate -. replaces, does not merge .-> Root
+  Crate --> Facade["allowed path: base::dmath facade (no file, libm legitimate)"]
+  LP["tools/lint-profile test"] -->|"every clippy.toml carries the four gates.toml numbers; physics file keeps required bans"| Crate
+  LP --> Root
+  Gates["gates/gates.toml [clean_code]"] --> LP
 ```
 
 `THIRD_PARTY.md` (phase 0) lists every external thing the repository touches - including each OS API family and each external crate - with tier, license, version, port, replacement plan. CI fails if something external appears that is not listed.

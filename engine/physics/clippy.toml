@@ -1,0 +1,87 @@
+# Clippy configuration of the physics crate (card 4-19, governance).
+#
+# Clippy reads ONE clippy.toml per crate: the nearest one above the crate's manifest. This file
+# therefore REPLACES the root clippy.toml for this crate, it does not extend it. The four clean-code
+# thresholds are repeated here with the numbers of gates/gates.toml [clean_code]; tools/lint-profile
+# fails CI when this file differs from gates.toml (a crate file must never relax a limit).
+#
+# The bans are the second line of defence of the physics determinism rules (wiki/architecture/physics.md
+# section 3, rules 1, 6 and 7); the first line is the arch-check scan (gates/architecture.toml). The
+# libm-dependent float functions and fused multiply-add are reached only through the deterministic math
+# facade in `base` (dmath), which is not subject to this file. sqrt, abs, min, max, floor, ceil, ... are
+# exact under IEEE 754 and stay allowed.
+too-many-lines-threshold = 60
+cognitive-complexity-threshold = 20
+too-many-arguments-threshold = 5
+excessive-nesting-threshold = 3
+
+disallowed-methods = [
+    { path = "f32::sin", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::cos", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::tan", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::asin", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::acos", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::atan", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::atan2", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::sinh", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::cosh", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::tanh", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::asinh", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::acosh", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::atanh", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::sin_cos", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::exp", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::exp2", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::exp_m1", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::ln", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::ln_1p", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::log", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::log2", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::log10", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::powf", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::powi", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::hypot", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::cbrt", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f32::mul_add", reason = "fused multiply-add differs by CPU; call madd of the math facade in base (physics.md section 3)" },
+    { path = "f64::sin", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::cos", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::tan", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::asin", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::acos", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::atan", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::atan2", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::sinh", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::cosh", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::tanh", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::asinh", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::acosh", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::atanh", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::sin_cos", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::exp", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::exp2", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::exp_m1", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::ln", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::ln_1p", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::log", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::log2", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::log10", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::powf", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::powi", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::hypot", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::cbrt", reason = "libm-dependent float function; call the deterministic math facade in base (physics.md section 3, rule 7)" },
+    { path = "f64::mul_add", reason = "fused multiply-add differs by CPU; call madd of the math facade in base (physics.md section 3)" },
+    { path = "std::time::Instant::now", reason = "wall clock in simulation code (physics.md section 3)" },
+    { path = "std::time::SystemTime::now", reason = "wall clock in simulation code (physics.md section 3)" },
+    { path = "slice::sort_unstable", reason = "unstable sort or selection in simulation code; equal keys may reorder (physics.md section 3)" },
+    { path = "slice::sort_unstable_by", reason = "unstable sort or selection in simulation code; equal keys may reorder (physics.md section 3)" },
+    { path = "slice::sort_unstable_by_key", reason = "unstable sort or selection in simulation code; equal keys may reorder (physics.md section 3)" },
+    { path = "slice::select_nth_unstable", reason = "unstable sort or selection in simulation code; equal keys may reorder (physics.md section 3)" },
+    { path = "slice::select_nth_unstable_by", reason = "unstable sort or selection in simulation code; equal keys may reorder (physics.md section 3)" },
+    { path = "slice::select_nth_unstable_by_key", reason = "unstable sort or selection in simulation code; equal keys may reorder (physics.md section 3)" },
+]
+
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "unordered iteration or random seeding in simulation code (physics.md section 3)" },
+    { path = "std::collections::HashSet", reason = "unordered iteration or random seeding in simulation code (physics.md section 3)" },
+    { path = "std::hash::RandomState", reason = "unordered iteration or random seeding in simulation code (physics.md section 3)" },
+]
