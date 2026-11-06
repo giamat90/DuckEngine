@@ -5,6 +5,7 @@
 
 use crate::args::Args;
 use crate::cli::{RunError, RunReport};
+use crate::input::Controls;
 use crate::looping::{Step, count_frames, poll};
 use crate::sample::{GOLDEN_SHADER, Sample};
 use crate::scene::scene_for;
@@ -75,14 +76,20 @@ impl Opened {
         Ok((info.framebuffer_width, info.framebuffer_height))
     }
 
-    /// Pumps the window events; true when the user asked to close.
-    fn closing(&mut self, queue: &mut EventQueue) -> bool {
+    /// Pumps the window events, hands each to `on_event`; true when the user asked to close.
+    fn pump(&mut self, queue: &mut EventQueue, mut on_event: impl FnMut(&Event)) -> bool {
         self.windows.pump(queue);
         let mut closing = false;
         while let Some(event) = queue.pop() {
             closing |= matches!(event, Event::CloseRequested { .. } | Event::Quit);
+            on_event(&event);
         }
         closing
+    }
+
+    /// Pumps the window events and drops them; true when the user asked to close.
+    fn closing(&mut self, queue: &mut EventQueue) -> bool {
+        self.pump(queue, |_| {})
     }
 }
 
@@ -147,12 +154,8 @@ fn first_size(opened: &mut Opened) -> Result<(u32, u32), RunError> {
     })
 }
 
-/// Opens the window and the device, loads the shader asset and runs the loop.
-///
-/// # Errors
-/// [`RunError::NoDevice`] when GLFW, the window or the OpenGL 4.5 device is not available,
-/// [`RunError::Failed`] when a later step fails.
-pub fn run(args: &Args) -> Result<RunReport, RunError> {
+/// The window and device opened, the shader asset loaded and the sample built.
+fn start() -> Result<(Opened, Sample), RunError> {
     let mut opened = Opened::open()?;
     let size = first_size(&mut opened)?;
     let surface = opened
@@ -164,7 +167,61 @@ pub fn run(args: &Args) -> Result<RunReport, RunError> {
         })
         .map_err(failed)?;
     let program = Program::parse(GOLDEN_SHADER).map_err(failed)?;
-    let mut sample = Sample::new(&mut opened.device, &program, surface, size).map_err(failed)?;
+    let sample = Sample::new(&mut opened.device, &program, surface, size).map_err(failed)?;
+    Ok((opened, sample))
+}
+
+/// Opens the window and the device, loads the shader asset and runs the loop.
+///
+/// # Errors
+/// [`RunError::NoDevice`] when GLFW, the window or the OpenGL 4.5 device is not available,
+/// [`RunError::Failed`] when a later step fails.
+pub fn run(args: &Args) -> Result<RunReport, RunError> {
+    let (mut opened, mut sample) = start()?;
     let frames = run_loop(*args, &mut opened, &mut sample)?;
+    Ok(RunReport { frames })
+}
+
+/// One interactive frame: follows a changed framebuffer size, then draws the controls' sprites.
+fn draw_controls_frame(
+    opened: &mut Opened,
+    sample: &mut Sample,
+    controls: &Controls,
+) -> Result<Step, RunError> {
+    let size = opened.framebuffer()?;
+    if size.0 == 0 || size.1 == 0 {
+        return Ok(Step::Skipped);
+    }
+    if size != sample.size() {
+        sample.resize(&mut opened.device, size).map_err(failed)?;
+    }
+    sample
+        .draw_controls(&mut opened.device, controls)
+        .map_err(failed)?;
+    match opened.device.take_gl_error() {
+        0 => Ok(Step::Drawn),
+        code => Err(RunError::Failed(format!("OpenGL error {code:#06x}"))),
+    }
+}
+
+/// Like [`run`], for the interactive example: the window events steer the sprites (arrows or WASD
+/// move one, the mouse places and clicks tint the other); Escape or closing the window ends it.
+///
+/// # Errors
+/// As [`run`].
+pub fn run_interactive(args: &Args) -> Result<RunReport, RunError> {
+    let (mut opened, mut sample) = start()?;
+    let mut controls = Controls::new(sample.size());
+    let mut queue = EventQueue::with_capacity(EVENT_CAPACITY);
+    let frames = count_frames(args.frames, |_| {
+        let closing = opened.pump(&mut queue, |event| controls.apply(event));
+        if closing || controls.quit() {
+            return Ok(Step::Closing);
+        }
+        controls.step();
+        let step = draw_controls_frame(&mut opened, &mut sample, &controls)?;
+        std::thread::sleep(FRAME);
+        Ok(step)
+    })?;
     Ok(RunReport { frames })
 }

@@ -3,6 +3,7 @@
 //! device is passed in (`&mut dyn IRenderDevice`), so the same code runs on the Null device in
 //! tests and on the OpenGL device in the window.
 
+use crate::input::Controls;
 use crate::scene::{
     CHECKER_SIDE, Scene, SceneTextures, WHITE_TEXEL, checker_pixels, fill_sprites,
     triangle_vertices,
@@ -330,6 +331,11 @@ impl Sample {
         frame: u32,
     ) -> Result<(), SampleError> {
         fill_sprites(frame, &self.gpu.textures, &mut self.sprites);
+        self.upload_sprites(device)
+    }
+
+    /// Sorts, batches and uploads the sprites now in `self.sprites`.
+    fn upload_sprites(&mut self, device: &mut dyn IRenderDevice) -> Result<(), SampleError> {
         self.batcher.prepare(&self.sprites, &mut self.staging)?;
         let written = encode_staged(&self.staging, self.sprites.len(), &mut self.vertex_bytes)
             .ok_or(SampleError::Staging)?;
@@ -378,6 +384,26 @@ impl Sample {
             self.stage_sprites(device, frame)?;
         }
         self.record(scene)?;
+        self.present(device)
+    }
+
+    /// Draws one frame of the interactive example: the sprites of `controls`, and presents it.
+    ///
+    /// # Errors
+    /// The first [`SampleError`] of staging, recording or the device (a lost surface included).
+    pub fn draw_controls(
+        &mut self,
+        device: &mut dyn IRenderDevice,
+        controls: &Controls,
+    ) -> Result<SubmitStats, SampleError> {
+        controls.fill_sprites(&self.gpu.textures, &mut self.sprites);
+        self.upload_sprites(device)?;
+        self.record(Scene::Sprites)?;
+        self.present(device)
+    }
+
+    /// Submits the recorded stream and presents the frame.
+    fn present(&mut self, device: &mut dyn IRenderDevice) -> Result<SubmitStats, SampleError> {
         let id = device.begin_frame(self.surface)?;
         let submitted = device.submit(id, &self.stream);
         let ended = device.end_frame(id);
