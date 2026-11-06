@@ -554,6 +554,20 @@ stateDiagram-v2
   Stale --> [*]
 ```
 
+- **As built in card 4-17.** The stability exit criterion is exercised by one integration test target, `engine/physics/tests/stability/` (34 tests, tests only: no engine file changed, no hash pin changed). (1) *Scenes*: pyramids of 5 and 10 rows of the W1 boxes, columns of 2 to 10 boxes with a maximum-height probe, mass ratios 1:10 and 1:100, hanging and horizontal chains of 20 and 30 links with end weights, a bridge with a load, and a mixed scene (pyramid, whip and a bin of circles); the bounds (`limits.rs`: drift 0.05 m, rest speed 0.02 m/s, penetration 0.02 m, hinge error 0.05 m) were written before measuring (the few that changed after measuring are listed in the review and in `limits.rs`) and each test prints `STABILITY | scene | metric | measured | bound`. (2) *Execution matrix*: eight scenes give the same state hash after every step under scalar serial, lanes serial, and pools of 1, 2, 4 and 6 workers with lanes on and off, and the resting scenes also give the same sleep flags. (3) *Properties*: 8 properties over 25 seeded `Pcg32` scenes (25 scenes, 200 checks; finite and in bounds, energy does not rise, no deep contact once calm, same seed same hash, serial equals parallel equals lanes, sleeping equals awake until the first sleep, refused calls change nothing, a full world reports overflow as a value). (4) *Findings*: the solver does not meet five of the bounds stated in advance (a column of 11 or more boxes drifts or topples, a 1:100:1:100 column collapses, a chain of 50 links stretches, a pyramid of 20 rows compresses by 0.0527 m, the heavy bridge load is still moving at 8 s); W1-scale stacking (about 1,000 boxes) is therefore not demonstrated, the largest passing pyramid has 55 boxes; `findings.rs` keeps each as a test that asserts the bound is still exceeded, so an improvement turns it red and the scene moves back to the settled tests. Numbers, tolerance table, mutation-style checks and the exit-criterion mapping: [reviews/4-17](../../reviews/4-17.md).
+
+```mermaid
+flowchart LR
+  scene[scene builders] --> settled[settled scenes: pyramids, stacks, mass ratio, chains, mixed]
+  scene --> gen[seeded generator]
+  settled --> matrix[execution matrix: serial, lanes, pools 1/2/4/6]
+  gen --> props[8 properties x 25 seeds]
+  settled --> sleep[sleeping tests]
+  settled -. bound missed .-> findings[findings: bound still exceeded]
+  matrix --> hash[state hash equal everywhere]
+  props --> hash
+```
+
 - **Borrowed closures.** `parallel_for` and `run_scope` take closures that borrow the caller's data, so that no `Box` is allocated per frame (the existing `platform::threads::Job` is a `Box<dyn FnOnce() + 'static>`, which allocates). Running a borrowing closure on a worker thread needs a small amount of `unsafe` (lifetime erasure guarded by the scope waiting for completion). This is the one place where `jobs` is expected to use `unsafe` (section 8).
 - **`World<D>`.** The step takes a scheduler and a per-step scratch `Arena` as parameters, so there is no global state and no hidden thread. `WorldConfig` fixes the capacities (bodies, shapes, joints, contacts, tree nodes) at creation; creating a body past the capacity returns an error value and never reallocates, so a steady-state frame allocates nothing (section 7). `dt` is `f32` seconds computed once from `FixedStep::step_ticks`.
 - **Body state.** 2D rotation is stored as a `(cos, sin)` pair, not an angle, and is advanced in the step by a first-order update followed by a normalisation, so the step itself calls no `sin`, `cos` or `atan2`. Those are needed only to create a body from an angle and to read an angle back, and both go through the facade (section 5). This follows Box2D v3 **[K, from background knowledge, not re-read this session]** and is a design choice made so that the hot loop needs no libm at all.
