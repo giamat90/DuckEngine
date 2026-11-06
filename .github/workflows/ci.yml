@@ -92,6 +92,9 @@ jobs:
       - name: Test the swap-diff tool
         run: python -m unittest -q test_swap_diff
         working-directory: tools/swap-diff
+      - name: Test the golden hash checker
+        run: python -m unittest -q test_golden_check
+        working-directory: tools/golden-check
       - name: Test the release tools
         run: |
           python -m unittest -q test_next_version
@@ -445,3 +448,72 @@ jobs:
         run: cargo clippy --workspace --exclude 'adapter_*' --all-targets --locked -- -D warnings
       - name: Test
         run: cargo test --workspace --exclude 'adapter_*' --locked
+
+  # Card 4-20: D2, the same physics state on Windows x86-64 and Linux x86-64 (rules-digest section 5, ADR-0007).
+  # The golden file (gates/golden/physics-replay.toml) and the checker come from a checkout of main, like the
+  # gate tools in `gates` (digest section 8): the pushed commit is the code under test and nothing else. The
+  # recorder prints the state hash after chosen steps of 12 scenes with the feature `cross-platform-determinism`
+  # on; the checker compares the lines with the file and a difference is red, with the first differing scene
+  # and step. The only skip is "not run: physics crate absent": `main` can be behind `develop` and have no
+  # `engine/physics/Cargo.toml` yet. The checker (`presence`) decides it from the two trees: a crate in the
+  # pushed commit always runs the job (a missing recorder or golden is red); a crate on main that the pushed
+  # commit lacks is red, never a skip. Report only: the cost step (feature on against off). ARM64 is not gated.
+  # This workflow file is part of the push, so the owner reads any change to it.
+  d2_determinism:
+    name: D2 golden hashes (${{ matrix.os }}, feature on)
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          path: trusted
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: head
+          persist-credentials: false
+      - name: The golden file is well formed
+        run: python trusted/tools/golden-check/golden_check.py lint --golden trusted/gates/golden/physics-replay.toml
+      - name: Find the physics crate
+        id: physics
+        run: python trusted/tools/golden-check/golden_check.py presence --trusted trusted --head head --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Install the pinned toolchain
+        if: steps.physics.outputs.present == 'true'
+        run: rustup show active-toolchain
+        working-directory: head
+      # The build refuses fma itself (compile_error! in base) and the recorder prints the fma cfg; this step
+      # also fails on the text, so a target-cpu in RUSTFLAGS or a Cargo config is caught before the build.
+      - name: No target-cpu or fma flag in the build
+        if: steps.physics.outputs.present == 'true'
+        run: python trusted/tools/golden-check/golden_check.py flags --repo head
+      - name: Record the hashes with the feature on
+        if: steps.physics.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          cargo test -p physics --features cross-platform-determinism --test determinism --locked -- golden:: --nocapture --test-threads=1 | tee "$RUNNER_TEMP/golden.txt"
+        working-directory: head
+      - name: Compare with the golden file of main
+        if: steps.physics.outputs.present == 'true'
+        run: python trusted/tools/golden-check/golden_check.py verify --golden trusted/gates/golden/physics-replay.toml --output "$RUNNER_TEMP/golden.txt" --summary "$GITHUB_STEP_SUMMARY"
+      # Report only (D-10): the same recorder with the feature on and off, wall time of the run after both builds.
+      - name: Cost of the feature (report only)
+        if: steps.physics.outputs.present == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cargo test -p physics --features cross-platform-determinism --test determinism --locked --no-run
+          cargo test -p physics --test determinism --locked --no-run
+          timed() { local s e; s=$(date +%s%N); "$@" > /dev/null 2>&1 || true; e=$(date +%s%N); echo $(( (e - s) / 1000000 )); }
+          on=$(timed cargo test -p physics --features cross-platform-determinism --test determinism --locked -- golden:: --test-threads=1)
+          off=$(timed cargo test -p physics --test determinism --locked -- golden:: --test-threads=1)
+          echo "### D2 cost on ${{ matrix.os }}: golden recorder, feature on ${on} ms, off ${off} ms (report only)" >> "$GITHUB_STEP_SUMMARY"
+        working-directory: head

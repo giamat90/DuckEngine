@@ -345,6 +345,49 @@ class Ci(unittest.TestCase):
         self.assertNotRegex(job, r"(?m)^\s+if:")
         self.assertNotIn("qemu", job)
 
+    def d2_job(self):
+        job = CI[CI.index("\n  d2_determinism:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        return job[:following.start()] if following else job
+
+    def test_the_d2_job_runs_on_windows_and_linux_with_the_feature_on_and_a_trusted_golden_file(self):
+        # Card 4-20: the golden file and the checker come from main; the pushed commit is the code under test.
+        job = self.d2_job()
+        self.assertIn("os: [windows-latest, ubuntu-latest]", job)
+        self.assertIn("fail-fast: false", job)
+        self.assertIn("ref: main\n          path: trusted", job)
+        self.assertIn("path: head", job)
+        self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
+        self.assertIn("cargo test -p physics --features cross-platform-determinism --test determinism --locked -- golden:: --nocapture", job)
+        self.assertIn("python trusted/tools/golden-check/golden_check.py verify --golden trusted/gates/golden/physics-replay.toml", job)
+        self.assertNotIn("head/gates", job)
+        self.assertNotIn("head/tools", job)
+        self.assertNotIn("aarch64", job)
+
+    def test_the_d2_job_can_skip_only_through_the_presence_check_and_only_for_the_cargo_steps(self):
+        job = self.d2_job()
+        self.assertIn("golden_check.py presence --trusted trusted --head head --github-output", job)
+        self.assertIn("lint --golden trusted/gates/golden/physics-replay.toml", job)
+        # The lint and the presence check never carry a condition; every other check does and nothing else does.
+        steps = job.split("\n      - ")
+        for step in steps:
+            if "name: The golden file is well formed" in step or "name: Find the physics crate" in step:
+                self.assertNotIn("if:", step)
+        self.assertEqual(job.count("if: steps.physics.outputs.present == 'true'"), 5)
+        self.assertEqual(len(re.findall(r"(?m)^\s+if:", job)), 5)
+
+    def test_the_d2_job_cannot_be_allowed_to_fail_except_the_cost_report(self):
+        job = self.d2_job()
+        self.assertEqual(job.count("continue-on-error"), 1)
+        cost = job[job.index("- name: Cost of the feature"):]
+        self.assertIn("continue-on-error: true", cost)
+        self.assertNotIn("continue-on-error", job[:job.index("- name: Cost of the feature")])
+        self.assertIn("set -euo pipefail", job[job.index("Record the hashes"):job.index("Compare with the golden")])
+
+    def test_the_d2_job_checks_the_build_flags_before_it_builds(self):
+        job = self.d2_job()
+        self.assertLess(job.index("golden_check.py flags --repo head"), job.index("cargo test -p physics"))
+
     def test_ci_runs_the_tests_of_every_tool_folder(self):
         for folder, module in (("tools/templates", "test_templates"), ("tools/token-probe", "test_probe"),
                                ("tools/local-gates", "test_local_gates"),
@@ -354,6 +397,7 @@ class Ci(unittest.TestCase):
                                ("tools/classify-change", "test_classify_change"),
                                ("tools/arch-check", "test_arch_check"),
                                ("tools/wiki-lint", "test_wiki_lint"),
+                               ("tools/golden-check", "test_golden_check"),
                                ("tools/metrics", "test_approval_report"),
                                ("acceptance", "test_validate")):
             with self.subTest(folder=folder):
