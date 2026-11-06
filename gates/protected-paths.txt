@@ -11,6 +11,7 @@ tools/classify-change/
 tools/arch-check/
 tools/wiki-lint/
 tools/lint-profile/
+tools/golden-check/
 tools/release/
 tools/templates/
 tools/metrics/

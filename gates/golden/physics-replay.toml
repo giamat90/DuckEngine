@@ -1,0 +1,280 @@
+# D2 golden hashes of the physics crate (card 4-20). Protected path (gates/): a change is a governance change.
+# State hash (FNV-1a 64 bit, World::state_hash) after the listed steps of each scene, scalar serial reference,
+# feature cross-platform-determinism on. Regenerate only in a governance task: see wiki/architecture/physics.md section 3.
+format = 1
+feature = "cross-platform-determinism"
+toolchain = "1.94.1"
+recorded = "2026-11-06, Windows x86-64; identical on Linux x86-64 (WSL2)"
+recorder = "cargo test -p physics --features cross-platform-determinism --test determinism -- golden:: --nocapture"
+
+[[scene]]
+name = "pyramid"
+steps = 45
+stride = 5
+[scene.hash]
+1 = "1a6b18bb68e76076"
+5 = "e1f55c0ef8e7b1b9"
+10 = "5b4e5385124d3e5e"
+15 = "457df1f1a41ad8ae"
+20 = "b45197fb9f3e80bd"
+25 = "38dc1cbcd781d357"
+30 = "25646b5c4796cc2e"
+35 = "8bea36673e592fb8"
+40 = "d49c923e175307b1"
+45 = "199d40769406e1f8"
+
+[[scene]]
+name = "row of boxes"
+steps = 60
+stride = 5
+[scene.hash]
+1 = "3113069fb25b204c"
+5 = "ecd6f101f20777e5"
+10 = "f36eec2325a61839"
+15 = "ee690ac5f95a932c"
+20 = "f4b7675a29c2777c"
+25 = "08ea00c865a43c3e"
+30 = "d1fb9d7cdd4a58cf"
+35 = "1bdce6afeaa5716a"
+40 = "367848d3493e9358"
+45 = "f6eafd1d53a7b754"
+50 = "b52715f26213e7de"
+55 = "d62d99c5e0b30e7f"
+60 = "1ecd46db64dfc049"
+
+[[scene]]
+name = "chain"
+steps = 60
+stride = 5
+[scene.hash]
+1 = "2fc37eeabe61cfd4"
+5 = "aa14271deba68cda"
+10 = "309943cda169d7f3"
+15 = "1658c9066ce0986e"
+20 = "401e632953614fb0"
+25 = "e4636591764e7a76"
+30 = "d6c6da5c73aad244"
+35 = "c5d16cb7345f242c"
+40 = "c543c5101fbe8336"
+45 = "e3e44c4de35f51c5"
+50 = "d6d0be0c1a29425f"
+55 = "ce0fa58714c83758"
+60 = "932972f9b4217a06"
+
+[[scene]]
+name = "scatter seed 3"
+steps = 70
+stride = 5
+[scene.hash]
+1 = "0c1e4bf48f580646"
+5 = "ce54c0d751d5c2ea"
+10 = "c4f5c752261a3d41"
+15 = "79d69e009f246b79"
+20 = "d540b8f00ddbfce9"
+25 = "21ba8d2daf66c5fd"
+30 = "5f40b4e3d97dbca8"
+35 = "2e2ab196bb07366c"
+40 = "f0181fdb36a29bb9"
+45 = "0af32be7500f9f71"
+50 = "d8fce95c313ded1c"
+55 = "074e8cc834e4a393"
+60 = "2069868ee7955b2c"
+65 = "c158c6f8c535ab84"
+70 = "9a361745599c2367"
+
+[[scene]]
+name = "scatter seed 11"
+steps = 70
+stride = 5
+[scene.hash]
+1 = "2b233857f0527bae"
+5 = "764effb4515d2a9c"
+10 = "4b3f56aad29ef675"
+15 = "fc677e98269ccc1f"
+20 = "ccc8709ef67acbf8"
+25 = "7bf5798a90a53858"
+30 = "8a27c09dcf980ed0"
+35 = "6c3b8bd7b849d11e"
+40 = "e4ecd9cfbb545445"
+45 = "97d9e371033f4bfe"
+50 = "5accea89f83e1f44"
+55 = "1f2f4a727bf4edb6"
+60 = "140a3401c73a4437"
+65 = "2d93a34a64433386"
+70 = "29dd7d9aeafe0940"
+
+[[scene]]
+name = "scatter seed 2024"
+steps = 70
+stride = 5
+[scene.hash]
+1 = "4132ee3394cbcc5b"
+5 = "91b0db9467e8771f"
+10 = "24c33ac278b8ce3a"
+15 = "201bfddcb49ebd9c"
+20 = "c798abee38640676"
+25 = "7558aec343ae0450"
+30 = "45bbbb7430f50b87"
+35 = "411c758311e8a721"
+40 = "fff11d51097b89ac"
+45 = "b8649f779e3b323f"
+50 = "641b6635f4517b09"
+55 = "84faa81b4e981476"
+60 = "86d79c51bd6acbc2"
+65 = "83ae8979bbe4985f"
+70 = "e4f96b4edd212d51"
+
+[[scene]]
+name = "sleep and wake"
+steps = 160
+stride = 5
+[scene.hash]
+1 = "13abe1707dd2fe29"
+5 = "d3d6c668ba7b6c0a"
+10 = "79c61f131a341ab8"
+15 = "0d93163afae215a2"
+20 = "f12a2590757b5d5c"
+25 = "cb226a17c2bf7b71"
+30 = "0c950745feaa7927"
+35 = "0c950745feaa7927"
+40 = "0c950745feaa7927"
+45 = "0c950745feaa7927"
+50 = "0c950745feaa7927"
+55 = "0c950745feaa7927"
+60 = "0c950745feaa7927"
+65 = "0c950745feaa7927"
+70 = "0c950745feaa7927"
+75 = "73c128714c7a459b"
+80 = "33e5accafd5f3577"
+85 = "606dc213eab8d6d6"
+90 = "48879ea6c7affd26"
+95 = "021e7bd87e2d3dac"
+100 = "69109ad8720bb46e"
+105 = "9dae72635b4cce1c"
+110 = "928947fdcf0773b1"
+115 = "08dc2bf522db3541"
+120 = "72fb2002d26c3356"
+125 = "b0d1a065aecb2feb"
+130 = "06a560b66d1531f2"
+135 = "ca2ea474771e9854"
+140 = "c21da31aa0ae9960"
+145 = "31c55e864d179871"
+150 = "4b4b10f6ffef6df4"
+155 = "cd7d7cc3fc16c8a9"
+160 = "43ea37b3b52da4cf"
+
+[[scene]]
+name = "creation and destruction"
+steps = 60
+stride = 5
+[scene.hash]
+1 = "056213d02fb6bc75"
+5 = "9cb2c0a390b4896a"
+10 = "d49e81f4e59f6ab1"
+15 = "c74795342c406fb0"
+20 = "ef5f24a3b14d2e49"
+25 = "7bca1e4438a92f9c"
+30 = "99820133a93b6ab8"
+35 = "f58a9065ed839db2"
+40 = "7238815fa91766d4"
+45 = "b7a73b2c9fd10291"
+50 = "59c988f3a8ecbc7e"
+55 = "e925a0d31bf700c8"
+60 = "d31478e0d29b0fe3"
+
+[[scene]]
+name = "colour overflow hub"
+steps = 45
+stride = 5
+[scene.hash]
+1 = "34f70e2c250ca054"
+5 = "bf528bee1d7497c3"
+10 = "081355971d06337e"
+15 = "1e2d5fcc203ac0f0"
+20 = "98e307c50deedee1"
+25 = "e8d0d97ce1a47f03"
+30 = "5b09e0286ee7cb10"
+35 = "9dfd0ba9a8201b9a"
+40 = "4856d4472496e6fa"
+45 = "85c4b341922d8c49"
+
+[[scene]]
+name = "joints and contacts"
+steps = 60
+stride = 5
+[scene.hash]
+1 = "0f8ded814332073c"
+5 = "79165ef9c2a8ef17"
+10 = "2dabc7b7a101004f"
+15 = "f9e7f974dc801639"
+20 = "8026ff48b04b66da"
+25 = "ab9f96ed84274b03"
+30 = "965bbc10438e9806"
+35 = "a7cb72434e16f929"
+40 = "44b5e1b45fe3e24a"
+45 = "cf65adf72164b35a"
+50 = "1bb35263ed4df2d7"
+55 = "68e97872ce75accf"
+60 = "04c568b470985a73"
+
+[[scene]]
+name = "scatter seed 3, long"
+steps = 600
+stride = 25
+[scene.hash]
+1 = "0c1e4bf48f580646"
+25 = "21ba8d2daf66c5fd"
+50 = "d8fce95c313ded1c"
+75 = "52df31b69b65931a"
+100 = "c7a58e178245d790"
+125 = "ce7a4c1a4b2cf656"
+150 = "d67d78611e134bf5"
+175 = "93f7352fd9d8d665"
+200 = "74154db12bb357ba"
+225 = "74154db12bb357ba"
+250 = "74154db12bb357ba"
+275 = "74154db12bb357ba"
+300 = "74154db12bb357ba"
+325 = "74154db12bb357ba"
+350 = "74154db12bb357ba"
+375 = "74154db12bb357ba"
+400 = "74154db12bb357ba"
+425 = "74154db12bb357ba"
+450 = "74154db12bb357ba"
+475 = "74154db12bb357ba"
+500 = "74154db12bb357ba"
+525 = "74154db12bb357ba"
+550 = "74154db12bb357ba"
+575 = "74154db12bb357ba"
+600 = "74154db12bb357ba"
+
+[[scene]]
+name = "joints and contacts, long"
+steps = 600
+stride = 25
+[scene.hash]
+1 = "0f8ded814332073c"
+25 = "ab9f96ed84274b03"
+50 = "1bb35263ed4df2d7"
+75 = "8c00bdb03d9e3f27"
+100 = "021bbb31df85d693"
+125 = "f9acfe6c3345d0ef"
+150 = "035a7550903b24fd"
+175 = "7c4d745f417d19d1"
+200 = "313768552c9e3be2"
+225 = "2bdd7370e96933f2"
+250 = "bb857f16d680bbf4"
+275 = "40fc3812cf2a0219"
+300 = "58b45a94e267ccb9"
+325 = "922ff8bff98a6b99"
+350 = "b111092e7ef9203c"
+375 = "8b51219166c87a54"
+400 = "565083eb9e1bbe87"
+425 = "54fb05f45e7261ba"
+450 = "4c90a79803fc8254"
+475 = "ed8bcf7218cbd6ef"
+500 = "a170eef593121242"
+525 = "0cf2d20e9fef9310"
+550 = "bb8712f6ca51f195"
+575 = "6696e3113845a645"
+600 = "282673d3006910a5"

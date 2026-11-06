@@ -42,11 +42,11 @@ flowchart LR
 
 ## 2. Jobs of the `ci` workflow
 
-Source: `.github/workflows/ci.yml`. Seven independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
+Source: `.github/workflows/ci.yml`. Nine independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
 
 ```mermaid
 flowchart TB
-  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64
+  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism
 
   subgraph g1["g1: build, test, fmt, clippy (Windows and Ubuntu)"]
     direction TB
@@ -101,7 +101,18 @@ flowchart TB
     r1["test: uname -m is aarch64"] --> r2["cargo clippy --workspace --exclude adapter_*"] --> r3["cargo test --workspace --exclude adapter_*"]
   end
 
-  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 --> done(["all green = the commit may merge"])
+  subgraph d2_determinism["d2_determinism (Windows and Ubuntu x86-64, card 4-20): golden hashes with the feature on"]
+    direction TB
+    k0["checkout main as trusted/, the push as head/"] --> k1["lint the golden file (trusted)"]
+    k1 --> k2{"engine/physics/Cargo.toml: in head, in trusted"}
+    k2 -- "neither" --> k3["notice: not run, physics crate absent (the only skip)"]
+    k2 -- "only in trusted" --> k4["RED: crate deleted"]
+    k2 -- "in head, no recorder" --> k5["RED: recorder missing"]
+    k2 -- "in head" --> k6["flags: no target-cpu, no +fma"] --> k7["cargo test -p physics --features cross-platform-determinism, golden:: lines"]
+    k7 --> k8["golden_check verify against trusted golden: RED on any difference"] --> k9["cost report, feature on and off (report only)"]
+  end
+
+  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism --> done(["all green = the commit may merge"])
 ```
 
 ---
