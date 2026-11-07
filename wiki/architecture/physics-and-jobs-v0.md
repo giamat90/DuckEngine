@@ -494,6 +494,17 @@ sequenceDiagram
   S->>S: restitution, finish, warm cache (serial)
 ```
 
+- **As built in card 4-31 (F-W1).** Why the 990-box pyramid of workload W1 "does not stand", measured (release, 44 rows, 300 steps of 1/60 s, sleeping off). Two different things were mixed in the finding: (1) **creep**: with the default 4 sub-steps and 1 relax pass the pyramid is still moving at step 300 (0.037 m/s, 0.149 m between step 100 and 300) and keeps settling for about 2400 steps (it rests at 0.0015 m/s then); with 8 sub-steps it is at rest by step 300 (0.009 m/s, 0.009 m settled drift), with 16 at 0.0001; more relax passes help less than more sub-steps (4 relax: 0.021 m/s); a stiffer contact (60 Hz) is worse (0.17 m/s) and a softer one (15 Hz) compresses more (0.76 m). (2) **compression**: the largest displacement from the start is 0.23 to 0.25 m with every setting that rests, because 43 rows of boxes squeeze the soft contacts of the bottom rows; so the absolute bound of 0.05 m from the start of workload W1 is not reachable by tuning sub-steps, only by a stiffer contact model (not built). Decision (owner, card 4-31): the default stays at 4 sub-steps (8 would roughly double the solve time and change every pinned hash and the D2 golden file); the limit is recorded in tests (`finding_the_w1_pyramid_is_still_settling_...`, and `the_w1_pyramid_is_at_rest_..._with_eight_sub_steps`) and here. Rule of thumb: pyramids and stacks of more than about 20 rows want `sub_steps: 8` if they must come to rest within five seconds.
+
+```mermaid
+flowchart LR
+  d["default: 4 sub-steps"] --> c["creep: rests after about 2400 steps"]
+  e["8 sub-steps"] --> r["at rest by step 300"]
+  d --> k["compression 0.25 m"]
+  e --> k
+  k --> b["absolute 0.05 m bound not met by either"]
+```
+
 - **As built in card 4-30 (F-SCALE).** The staged colour solve of card 4-15 is cheaper and scales: the constraints and bodies stay in their shared arrays, read only during a pass; a chunk builds its work in its own pre-sized output buffer (one `Mutex` per chunk, locked once, never contended) and the serial scatter writes the buffers back in canonical order. Before, each constraint sat behind its own `Mutex` and was copied in, out and again in the scatter. The arithmetic per constraint, the cut into chunks and the order of the write-back are unchanged, so every hash is unchanged. `SolverExecution` is unchanged; the buffers are made by `World::set_execution` (one per chunk of the largest possible colour, none for the serial reference) and a step still allocates nothing. A chunk is now idempotent (it clears its buffer first), so a scheduler that runs one twice no longer changes the result. **Measured** (Windows laptop, interleaved rounds, ratio to the serial scalar solve; absolute times are not comparable because the machine throttled, `reviews/4-30.md`): the pool at one worker went from 1.9 to 2.2 times serial to 1.2 to 1.6; on the 990-box pyramid (44 rows, about 120 constraints per colour, 4 chunks) the pool at 2 and 4 workers is about equal to serial (0.7 to 1.0), at 6 workers up to 1.3 times slower; on a pyramid of 80 rows (3240 boxes) the pool takes 0.62 (2 workers), 0.42 (4) and 0.48 (6) of the serial time, parallel efficiency 0.8 at 2 and 0.6 at 4 workers. **Rule of thumb for the application:** a pool pays from colours of a few hundred constraints (pyramids of about 60 rows and more); below that use the serial reference. The solver does not switch by itself (owner decision open). The lane path was not re-measured.
 
 ```mermaid

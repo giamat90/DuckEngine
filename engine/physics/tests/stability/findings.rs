@@ -7,10 +7,10 @@
 //! of `above`, and the scene moves to the settled tests of its topic with the original bound.
 
 use super::chains::{chain_scene, loaded_bridge};
-use super::limits::{DRIFT, HINGE_ERROR, W1_STEPS};
-use super::measure::{above, below, observe, positions};
-use super::scene::{Lie, W1_HALF, column, pyramid};
-use physics::d2::{PhysicsError, SleepConfig};
+use super::limits::{DRIFT, HINGE_ERROR, REST_SPEED, W1_STEPS};
+use super::measure::{above, below, fastest, observe, positions};
+use super::scene::{Lie, W1_HALF, column, pyramid, pyramid_with};
+use physics::d2::{PhysicsError, SleepConfig, SolverConfig};
 
 /// The envelope of a finding that exceeds the drift bound by a small amount: a drift below this
 /// many metres. Fixed after the measurements (0.0527 and 0.0516).
@@ -195,6 +195,130 @@ fn finding_the_load_of_the_heavy_bridge_is_still_bouncing_after_eight_seconds()
         "load speed after 480 steps (m/s), envelope",
         speed,
         LOAD_ENVELOPE,
+    );
+    Ok(())
+}
+
+/// Rows of the pyramid of workload W1: 44 rows, 990 boxes of 0.5 m.
+const W1_ROWS: u8 = 44;
+
+/// Envelope of the max drift of the W1 pyramid, in metres (measured 0.2473 with the default
+/// solver and 0.2300 with 8 sub-steps). Most of it is the compression of the soft contacts under
+/// the weight of 43 rows, not motion: it is the same at 8 sub-steps, where the pyramid rests.
+const W1_DRIFT_ENVELOPE: f32 = 0.30;
+
+/// Envelope of the drift between step 100 and step 300 of the W1 pyramid with the default solver,
+/// in metres (measured 0.1492): it is still settling at step 300.
+const W1_SETTLED_ENVELOPE: f32 = 0.20;
+
+/// Envelope of the speed of the W1 pyramid at step 300 with the default solver, in metres per
+/// second (measured 0.0370).
+const W1_SPEED_ENVELOPE: f32 = 0.05;
+
+/// The drift between step 100 and step 300 that counts as settled for the W1 pyramid with 8
+/// sub-steps, in metres (measured 0.0090).
+const W1_SETTLED_WITH_EIGHT: f32 = 0.02;
+
+/// What the W1 pyramid does over 300 steps: the largest displacement from the start, the
+/// displacement between step 100 and the end, and the fastest box at the end.
+struct Settling {
+    max_drift: f32,
+    settled_drift: f32,
+    final_speed: f32,
+}
+
+fn w1_pyramid_run(solver: SolverConfig) -> Result<Settling, PhysicsError> {
+    let mut scene = pyramid_with(W1_ROWS, W1_HALF, SleepConfig::DISABLED, solver)?;
+    let start = positions(&scene)?;
+    let mut at_100 = Vec::new();
+    let mut max_drift = 0.0_f32;
+    for step in 1..=W1_STEPS {
+        scene.world.step(super::limits::DT)?;
+        let now = positions(&scene)?;
+        max_drift = now
+            .iter()
+            .zip(&start)
+            .map(|(p, q)| (*p - *q).length())
+            .fold(max_drift, f32::max);
+        if step == SETTLED_FROM {
+            at_100 = now;
+        }
+    }
+    let end = positions(&scene)?;
+    let settled_drift = end
+        .iter()
+        .zip(&at_100)
+        .map(|(p, q)| (*p - *q).length())
+        .fold(0.0, f32::max);
+    let final_speed = fastest(&scene)?;
+    Ok(Settling {
+        max_drift,
+        settled_drift,
+        final_speed,
+    })
+}
+
+#[test]
+fn finding_the_w1_pyramid_is_still_settling_after_300_steps_with_the_default_solver()
+-> Result<(), PhysicsError> {
+    let name = "finding: W1 pyramid 44 rows, default solver";
+    let run = w1_pyramid_run(SolverConfig::DEFAULT)?;
+    above(name, "max drift (m), bound exceeded", run.max_drift, DRIFT);
+    below(
+        name,
+        "max drift (m), envelope",
+        run.max_drift,
+        W1_DRIFT_ENVELOPE,
+    );
+    above(
+        name,
+        "drift from step 100 to 300 (m), not settled",
+        run.settled_drift,
+        SETTLED_DRIFT,
+    );
+    below(
+        name,
+        "drift from step 100 to 300 (m), envelope",
+        run.settled_drift,
+        W1_SETTLED_ENVELOPE,
+    );
+    above(
+        name,
+        "final speed (m/s), not at rest",
+        run.final_speed,
+        REST_SPEED,
+    );
+    below(
+        name,
+        "final speed (m/s), envelope",
+        run.final_speed,
+        W1_SPEED_ENVELOPE,
+    );
+    Ok(())
+}
+
+#[test]
+fn the_w1_pyramid_is_at_rest_after_300_steps_with_eight_sub_steps() -> Result<(), PhysicsError> {
+    let name = "W1 pyramid 44 rows, 8 sub-steps";
+    let solver = SolverConfig {
+        sub_steps: 8,
+        ..SolverConfig::DEFAULT
+    };
+    let run = w1_pyramid_run(solver)?;
+    below(
+        name,
+        "drift from step 100 to 300 (m)",
+        run.settled_drift,
+        W1_SETTLED_WITH_EIGHT,
+    );
+    below(name, "final speed (m/s)", run.final_speed, REST_SPEED);
+    // the compression of the soft contacts under 43 rows is real and is not removed by sub-steps
+    above(name, "max drift (m), compression", run.max_drift, DRIFT);
+    below(
+        name,
+        "max drift (m), envelope",
+        run.max_drift,
+        W1_DRIFT_ENVELOPE,
     );
     Ok(())
 }
