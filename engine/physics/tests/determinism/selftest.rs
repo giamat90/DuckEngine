@@ -121,12 +121,22 @@ fn a_change_of_one_unit_in_the_last_place_changes_the_trace() -> Result<(), Phys
     Ok(())
 }
 
+/// A chunk that runs twice is not a fault of the solver any more (card 4-30): a chunk builds its
+/// result in its own cleared buffer from inputs nobody changes during the pass, so the second run
+/// gives the same bits. Before, the impulses of the constraint accumulated twice.
+fn seen_by_the_replay(fault: Fault) -> bool {
+    !matches!(fault, Fault::RunsFirstChunkTwice)
+}
+
 #[test]
 fn every_faulty_scheduler_is_seen_on_scenes_whose_colours_go_to_the_scheduler()
 -> Result<(), PhysicsError> {
     for name in ["pyramid", "colour overflow hub", "row of boxes"] {
         let expected = reference(name)?;
-        for fault in LOOP_FAULTS {
+        for fault in LOOP_FAULTS
+            .into_iter()
+            .filter(|&fault| seen_by_the_replay(fault))
+        {
             let execution = SolverExecution {
                 scheduler: Some(Arc::new(Faulty(fault))),
                 simd: false,
@@ -136,6 +146,21 @@ fn every_faulty_scheduler_is_seen_on_scenes_whose_colours_go_to_the_scheduler()
             let message = same(&expected, &got, "faulty").err();
             assert!(message.is_some(), "{name}: {fault:?} was not seen");
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_chunk_that_runs_twice_changes_nothing() -> Result<(), PhysicsError> {
+    for name in ["pyramid", "colour overflow hub", "row of boxes"] {
+        let expected = reference(name)?;
+        let execution = SolverExecution {
+            scheduler: Some(Arc::new(Faulty(Fault::RunsFirstChunkTwice))),
+            simd: false,
+            chunk: CHUNK,
+        };
+        let got = record(&scene(name)?, &execution)?;
+        assert_eq!(expected.first_difference(&got), None, "{name}");
     }
     Ok(())
 }

@@ -34,7 +34,7 @@ use self::constraint::{
     SolverBody, Staged, StepTerms, Surface, Sweep,
 };
 use self::joint::{JointConstraint, JointPass, JointSet, JointSetup, JointSweep, rigid_softness};
-use self::stage::{ColourJob, Slot, scatter};
+use self::stage::{ChunkOut, ColourJob, make_outputs, scatter};
 use self::warm::WarmCache;
 use crate::core::cells::{index_u32, put};
 use crate::core::{
@@ -43,6 +43,7 @@ use crate::core::{
 };
 use crate::d2::{D2, Joint2};
 use base::fpenv::FpGuard;
+use std::sync::Mutex;
 
 /// The scalar contact solver of the 2D instance. All storage is allocated by [`Solver2::new`].
 pub struct Solver2 {
@@ -54,7 +55,12 @@ pub struct Solver2 {
     touched: Vec<bool>,
     /// Slot indices of the touched dynamic bodies.
     active: Vec<usize>,
-    constraints: Vec<Slot>,
+    constraints: Vec<Staged>,
+    /// The buffers of the staged path, one per chunk of the largest possible colour; empty while
+    /// the execution is the plain serial reference.
+    outputs: Vec<Mutex<ChunkOut>>,
+    /// The chunk size `outputs` was made for.
+    outputs_chunk: usize,
     /// How the sweeps execute (serial scalar reference, lanes, scheduler).
     execution: SolverExecution,
     /// The colours of the constraints; the sweeps follow its order.
@@ -136,9 +142,21 @@ fn visit_constraint(bodies: &mut [SolverBody], constraint: &mut Constraint, pass
 }
 
 /// Runs `pass` on the constraint `index` of the step, if there is one.
-fn visit_member(constraints: &mut [Slot], bodies: &mut [SolverBody], index: u32, pass: Pass) {
-    if let Some(slot) = constraints.get_mut(index as usize) {
-        visit_constraint(bodies, &mut slot.get_mut().constraint, pass);
+fn visit_member(constraints: &mut [Staged], bodies: &mut [SolverBody], index: u32, pass: Pass) {
+    if let Some(staged) = constraints.get_mut(index as usize) {
+        visit_constraint(bodies, &mut staged.constraint, pass);
+    }
+}
+
+/// Runs `pass` on the constraints `members`, one after the other.
+fn visit_members(
+    constraints: &mut [Staged],
+    bodies: &mut [SolverBody],
+    members: &[u32],
+    pass: Pass,
+) {
+    for &index in members {
+        visit_member(constraints, bodies, index, pass);
     }
 }
 
@@ -168,6 +186,8 @@ impl ContactSolver<D2> for Solver2 {
             touched: vec![false; bodies],
             active: Vec::with_capacity(bodies),
             constraints: Vec::with_capacity(manifolds),
+            outputs: Vec::new(),
+            outputs_chunk: 0,
             execution: SolverExecution::SERIAL,
             colouring: Colouring::new(bodies, manifolds),
             max_constraints: manifolds,
@@ -204,6 +224,7 @@ impl ContactSolver<D2> for Solver2 {
 
     fn set_execution(&mut self, execution: SolverExecution) {
         self.execution = execution;
+        self.size_outputs();
     }
 
     fn is_finite(&self) -> bool {
@@ -375,7 +396,7 @@ impl Solver2 {
         if let Some(cached) = self.warm.find(cursor, entry.first, entry.second) {
             constraint.warm_from(cached);
         }
-        self.constraints.push(Slot::new(&Staged::new(constraint)));
+        self.constraints.push(Staged::new(constraint));
     }
 
     /// The sub-step loop, then restitution.
@@ -465,27 +486,50 @@ impl Solver2 {
         }
     }
 
-    /// Solves colour `colour` as fixed chunks, then stores the bodies back in canonical order.
+    /// Makes the buffers of the staged path for the current execution (once per change of the
+    /// chunk size; setting the same execution again allocates nothing).
+    fn size_outputs(&mut self) {
+        if !self.execution.is_staged() {
+            self.outputs = Vec::new();
+            self.outputs_chunk = 0;
+        } else if self.outputs_chunk != self.execution.chunk_size() {
+            self.outputs_chunk = self.execution.chunk_size();
+            self.outputs = make_outputs(self.max_constraints, self.outputs_chunk);
+        }
+    }
+
+    /// Solves colour `colour` as fixed chunks, then stores the results back in canonical order.
     fn stage_colour(&mut self, colour: usize, pass: Pass) {
         let members = self.colouring.members(colour);
         let job = ColourJob {
-            slots: &self.constraints,
+            constraints: &self.constraints,
             bodies: &self.bodies,
             members,
             pass,
             simd: self.execution.simd,
             chunk: self.execution.chunk_size(),
+            outputs: &self.outputs,
         };
+        if !job.has_room() {
+            // Not reachable for a solver that sized its buffers, kept so that no chunk is lost.
+            return visit_members(&mut self.constraints, &mut self.bodies, members, pass);
+        }
+        let chunks = job.chunk_count();
         job.run(self.execution.scheduler.as_deref());
-        scatter(&mut self.constraints, &mut self.bodies, members);
+        scatter(
+            &mut self.outputs,
+            chunks,
+            &mut self.constraints,
+            &mut self.bodies,
+        );
     }
 
     /// Keeps the impulses and writes the new motion into the bodies.
     fn finish(&mut self, bodies: &mut [Option<Body<D2>>], frame: &StepFrame<D2>) {
         self.next.clear();
         self.joints.finish();
-        for slot in &mut self.constraints {
-            self.next.push(slot.get_mut().constraint.cached());
+        for staged in &self.constraints {
+            self.next.push(staged.constraint.cached());
         }
         for (index, slot) in bodies.iter_mut().enumerate() {
             self.write_back(index, slot, frame);
@@ -639,7 +683,7 @@ mod tests {
             .constraints
             .get(index as usize)
             .into_iter()
-            .flat_map(Slot::ends)
+            .flat_map(|staged| [staged.constraint.a, staged.constraint.b])
             .filter(|&slot| solver.bodies.get(slot).is_some_and(|b| !b.is_static()))
     }
 
@@ -672,8 +716,7 @@ mod tests {
             *listed.get_mut(index as usize).must("an index") += 1;
         }
         for (index, constraint) in solver.constraints.iter().enumerate() {
-            let moves = constraint
-                .ends()
+            let moves = [constraint.constraint.a, constraint.constraint.b]
                 .into_iter()
                 .any(|slot| solver.active.contains(&slot));
             assert_eq!(
