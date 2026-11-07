@@ -79,8 +79,11 @@ fn draw_frame(
 /// the window is closed or Escape is pressed.
 fn run_window(frames: Option<u32>, setup: Setup) -> Result<Report, RunError> {
     let (mut opened, mut session) = start(setup)?;
-    let mut shown = session.describe();
-    eprintln!("scene: {shown} (P switches scene, S switches sub-steps, R restarts)");
+    let mut shown = session.simulation().setup();
+    eprintln!(
+        "scene: {} (P switches scene, S switches sub-steps, R restarts)",
+        session.describe()
+    );
     let mut queue = EventQueue::with_capacity(EVENT_CAPACITY);
     let mut last = Instant::now();
     let drawn = count_frames(frames, |_| {
@@ -89,9 +92,9 @@ fn run_window(frames: Option<u32>, setup: Setup) -> Result<Report, RunError> {
             return Ok(Step::Closing);
         }
         let step = draw_frame(&mut opened, &mut session, &mut last)?;
-        if session.describe() != shown {
-            shown = session.describe();
-            eprintln!("scene: {shown}");
+        if session.simulation().setup() != shown {
+            shown = session.simulation().setup();
+            eprintln!("scene: {}", session.describe());
         }
         std::thread::sleep(FRAME);
         Ok(step)
