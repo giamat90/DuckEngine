@@ -18,7 +18,7 @@
 //!
 //! Card 4-30 replaced a lock and several copies of the whole record per constraint and pass (a
 //! `Mutex<Staged>` per constraint) by one lock per chunk and two copies (into the buffer, back in
-//! the scatter): the staged path took 2.7 times the time of the whole serial solve loop on one
+//! the scatter): the staged solve loop took 2.9 times the time of the serial one on one
 //! thread (`reviews/4-30.md`).
 //!
 //! The path assumes what the world guarantees before a solve: a constraint end that the colouring
@@ -193,7 +193,7 @@ impl ColourJob<'_> {
             range.for_each(|index| self.run_chunk(index as usize));
         });
         // `IScheduler` runs no chunk when it returns an error, so running them all here once is
-        // right (a chunk is not idempotent: the impulses accumulate).
+        // right (a chunk clears its own buffer first, so running it again is harmless anyway).
         if ran.is_err() {
             self.run_inline();
         }
