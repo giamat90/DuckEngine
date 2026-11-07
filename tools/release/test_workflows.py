@@ -249,6 +249,16 @@ class Ci(unittest.TestCase):
         job = CI[CI.index("\n  metrics:"):CI.index("\n  deny:")]
         self.assertIn("if: github.ref_type == 'branch' && github.ref != 'refs/heads/main'", job)
 
+    def test_cargo_deny_runs_once_on_linux_because_the_graph_names_both_targets(self):
+        # deny.toml [graph].targets lists the Windows and the Linux triple, so one Linux leg checks the same graph
+        # as two legs would (card 4-28); the Windows leg only cost wall clock.
+        deny = (WORKFLOWS.parent.parent / "deny.toml").read_text(encoding="utf-8")
+        self.assertIn("x86_64-pc-windows-msvc", deny)
+        self.assertIn("x86_64-unknown-linux-gnu", deny)
+        job = re.split(r"\n  [a-z_0-9]+:\n", CI[CI.index("\n  deny:") + 1:], maxsplit=1)[0]
+        self.assertIn("ubuntu-latest", job)
+        self.assertNotIn("windows-latest", job)
+
     def test_ci_lints_and_tests_base_with_the_profiling_feature_on_in_the_build_job(self):
         # The profiling hook compiles to nothing with the feature off, so the default run never sees it (card 1-41).
         build = CI[:CI.index("\n  gates:")]
