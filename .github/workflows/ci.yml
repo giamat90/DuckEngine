@@ -5,6 +5,7 @@ name: ci
 # commit (`gh workflow run ci.yml --ref <branch>`); the develop-to-main PR runs the full CI (card 2-9).
 # Merging is policy (no branch protection or ruleset is configured, an owner choice): the agent waits for green. On main it
 # shows a broken merge result. It does not gate the release.
+# The repository was recreated with a clean history (card 4-27, wiki/workflow/github-plan-findings.md).
 on:
   push:
     branches: [main]

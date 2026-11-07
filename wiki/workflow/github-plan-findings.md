@@ -89,3 +89,21 @@ flowchart LR
 | Branch protection and rulesets | not configured (policy, owner choice) | section 5 above |
 | Collaborators | the owner only | outside contributions come as fork pull requests |
 | Issues | the owner's choice | `CONTRIBUTING.md` points bugs to issues and vulnerabilities to private reporting |
+
+## Repository migration to a clean history (card 4-27)
+
+Decision D2 of card 4-26 (owner, 2026-11-07): the repository was recreated instead of rewritten in place, because GitHub keeps pull request refs (`refs/pull/N/head`) reachable after a force-push, so only a new repository removes old data from view.
+
+```mermaid
+flowchart LR
+  O["DuckEngine (public, old history)"] -->|"rename, make private"| OLD["DuckEngine-old (private, kept until the owner deletes it)"]
+  O -->|"git filter-repo in a local mirror"| C["clean history: main, develop, 79 tags"]
+  C -->|"push"| N["DuckEngine (public, new)"]
+  N -->|"first workflow-file change on main"| A["Actions registers the workflows"]
+```
+
+What the rewrite changed: the personal author address became the GitHub noreply address in 36 commits, build output under `tools/alloc-bench/target/` was removed from history, and the `Claude-Session:` trailers were stripped from 15 commit messages. The file trees of `main` and `develop` were byte-identical to the old repository before card 4-27; commit hashes differ. Only `main`, `develop` and the release tags were carried over.
+
+What does not carry over: pull requests and their discussion, the 77 GitHub Releases and their assets (79 tags exist; the tags remain; the next release is created from the latest tag as before), Actions run history, stars, and repository settings, which the owner recreates in the UI (section "Public repository: settings the owner keeps"). Until the first release on the new repository exists there is no GitHub Release, so `SECURITY.md` ("latest release only") refers to the latest tag, v0.7.0. `baselines.json` is written into each release and never read back, so no release step depends on the old releases. The old repository stays private as the archive until the owner deletes it.
+
+GitHub did not register the workflow files that arrived in the first push; one change to a workflow file on `main` (a comment in `ci.yml`, this card) is expected to fix that; it is verified only when this card's push to `main` shows the workflows in the Actions list, and the review report says what was observed.
