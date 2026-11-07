@@ -95,6 +95,9 @@ jobs:
       - name: Test the golden hash checker
         run: python -m unittest -q test_golden_check
         working-directory: tools/golden-check
+      - name: Test the instruction-count gate
+        run: python -m unittest -q test_icount_gate
+        working-directory: tools/icount-gate
       - name: Test the release tools
         run: |
           python -m unittest -q test_next_version
@@ -595,3 +598,119 @@ jobs:
         if: steps.physics.outputs.present != 'true'
         run: |
           echo "### TSan physics tests: not run: physics crate absent (engine/physics/Cargo.toml is on neither main nor the pushed commit)" >> "$GITHUB_STEP_SUMMARY"
+
+  # Card 4-23: the physics instruction-count gate (rules-digest section 7: "PR benchmark gate on instruction counts
+  # (warn 5%, fail 10%)"; physics-and-jobs-v0 O11). The measure is card 4-22's: the serial W1 pyramid of
+  # `tools_physics_bench icount-workload` under `valgrind --tool=callgrind` on this Ubuntu runner (spread 0.0% over six
+  # runs there; perf and Windows are not feasible; the parallel path is not counted).
+  #   Meaning of the comparison: BASE is what `main` was before this run (the `main` tip for a manual run on a branch,
+  #   the commit before the push for a push to `main`); HEAD is the pushed commit. Both are built and counted in THIS
+  #   job, so a drift of the runner image or of valgrind moves both counts and cancels. For the release PR of
+  #   `develop` into `main` this answers: how much more or less work does the physics workload do than on `main`.
+  #   Ordinary card PRs into `develop` run no CI (card 1-38), so the gate speaks at the release and by hand.
+  # `trusted` is `main` as it was BEFORE the run: for a push to `main` the ref `main` is the pushed commit itself, so
+  # the checkout uses `github.event.before` there (the same SHA as base); on a manual run it is the `main` tip. A
+  # push whose `before` is unreachable (new branch, force push) fails the checkout, which is red, never a skip.
+  # Trust (digest section 8): the comparator, the bands (`gates/gates.toml [benchmark]`), the registered workload
+  # (`gates/benchmarks.toml`) and the count parser come from the checkout of `main` (`trusted`); the pushed commit is
+  # built and run as data. The count is read from valgrind's own log file, not from anything the program prints.
+  #   * the gate tool not on `main` yet (only before the card that adds it is merged): stated in the summary;
+  #   * tool in neither tree: the job writes "not run: physics benchmark tool absent" to the summary (never green by
+  #     silence); tool deleted by the push: red; tool only in HEAD (the first release): "no baseline, recorded only",
+  #     which is neither a pass nor a fail; the base measurement failing or a missing count: red;
+  #   * above the warn band: a `::warning::` annotation and the summary; above the fail band: red.
+  # Cost: valgrind from apt, two release builds of the benchmark tool (the engine crates it depends on) and four short
+  # valgrind runs (a few seconds each); the budget is stated in reviews/4-23.md. Runs on `main` and by hand only.
+  # This workflow file is part of the push, so the owner reads any change to it.
+  physics_icount:
+    name: Physics instruction count (ubuntu-latest, valgrind callgrind, base against head)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'push' && github.event.before || 'main' }}
+          path: trusted
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'push' && github.event.before || 'main' }}
+          path: base
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: head
+          persist-credentials: false
+      # The pushed code runs in this job (cargo build runs its build scripts, the workload is its binary) as the
+      # same user: make the gate files unwritable for it before any of it runs.
+      - name: Lock the trusted checkout
+        run: |
+          set -euo pipefail
+          sudo chown -R root:root trusted
+          sudo chmod -R go-w trusted
+      # Bootstrap: until the card that adds the gate tool is merged, main cannot supply it. That is stated in the
+      # summary (not red, not silent); once the tool is on main this step is always ready=true.
+      - name: Find the gate tool on main
+        id: gate
+        run: |
+          set -euo pipefail
+          if [ -f trusted/tools/icount-gate/icount_gate.py ] && [ -f trusted/gates/benchmarks.toml ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "### Physics instruction count: not run: icount-gate is not on main yet (tools/icount-gate and gates/benchmarks.toml are absent from the trusted checkout)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Find the benchmark tool
+        id: bench
+        if: steps.gate.outputs.ready == 'true'
+        run: python trusted/tools/icount-gate/icount_gate.py presence --gates trusted/gates/gates.toml --benchmarks trusted/gates/benchmarks.toml --base base --head head --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Install valgrind
+        if: steps.bench.outputs.head == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq valgrind
+          valgrind --version
+      - name: Build the benchmark tool of the pushed commit
+        if: steps.bench.outputs.head == 'true'
+        env:
+          PACKAGE: ${{ steps.bench.outputs.package }}
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain
+          cargo build --release -p "$PACKAGE" --locked
+          echo "### Physics instruction count: head built with $(rustc --version)" >> "$GITHUB_STEP_SUMMARY"
+        working-directory: head
+      - name: Build the benchmark tool of the base tree
+        if: steps.bench.outputs.base == 'true'
+        env:
+          PACKAGE: ${{ steps.bench.outputs.package }}
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain
+          cargo build --release -p "$PACKAGE" --locked
+          echo "### Physics instruction count: base built with $(rustc --version)" >> "$GITHUB_STEP_SUMMARY"
+        working-directory: base
+      - name: Count the instructions of the pushed commit
+        if: steps.bench.outputs.head == 'true'
+        env:
+          PACKAGE: ${{ steps.bench.outputs.package }}
+        run: python trusted/tools/icount-gate/icount_gate.py measure --gates trusted/gates/gates.toml --benchmarks trusted/gates/benchmarks.toml --bench "head/target/release/$PACKAGE" --out "$RUNNER_TEMP/head.json"
+      - name: Count the instructions of the base tree
+        if: steps.bench.outputs.base == 'true'
+        env:
+          PACKAGE: ${{ steps.bench.outputs.package }}
+        run: python trusted/tools/icount-gate/icount_gate.py measure --gates trusted/gates/gates.toml --benchmarks trusted/gates/benchmarks.toml --bench "base/target/release/$PACKAGE" --out "$RUNNER_TEMP/base.json"
+      - name: Compare with the bands of main
+        if: steps.bench.outputs.head == 'true'
+        env:
+          HAS_BASE: ${{ steps.bench.outputs.base }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$HAS_BASE" = true ]; then args=(--base "$RUNNER_TEMP/base.json"); fi
+          python trusted/tools/icount-gate/icount_gate.py compare --gates trusted/gates/gates.toml --benchmarks trusted/gates/benchmarks.toml --head "$RUNNER_TEMP/head.json" "${args[@]}" --summary "$GITHUB_STEP_SUMMARY"

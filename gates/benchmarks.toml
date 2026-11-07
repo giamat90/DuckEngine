@@ -1,0 +1,19 @@
+# The registered instruction-count benchmarks (card 4-23). Protected path (Class 3, gates/).
+#
+# The bands (warn 5 %, fail 10 %) stay in gates/gates.toml [benchmark], the one place the digest check and the wiki
+# lint compare with the digest. Which benchmark is counted and with which arguments is registered here, because those
+# two checkers admit scalar thresholds only. tools/icount-gate reads both files from a checkout of main and passes
+# the workload arguments to the base tree and the pushed commit alike, so a change of the workload is a change of
+# this file (governance), never of the tree under test.
+
+# The serial W1 pyramid under `valgrind --tool=callgrind`, counted on the base tree and on the pushed commit in the
+# same job (job `physics_icount` in .github/workflows/ci.yml) and compared with the two bands.
+# noise_max_percent: the runs of one tree must agree within this share, or the bands cannot be read; at most one tenth
+# of warn_percent, a multiple of 0.1 (the feasibility rule of card 4-22; measured spread on a hosted runner: 0.0 %).
+[physics_icount]
+package = "tools_physics_bench"
+manifest = "engine/tools_physics_bench/Cargo.toml"
+rows = 20
+steps = 30
+runs = 2
+noise_max_percent = 0.5

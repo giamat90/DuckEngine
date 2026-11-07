@@ -436,6 +436,84 @@ class Ci(unittest.TestCase):
         self.assertNotIn("continue-on-error", job)
         self.assertNotIn("head/gates", job)
 
+    def icount_job(self):
+        job = CI[CI.index("\n  physics_icount:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        return job[:following.start()] if following else job
+
+    def test_the_icount_job_takes_every_decision_from_a_trusted_main_checkout(self):
+        # Card 4-23: the comparator, the bands and the registered workload come from main; the pushed commit is data.
+        job = self.icount_job()
+        self.assertIn("runs-on: ubuntu-latest", job)
+        self.assertNotIn("matrix", job)
+        self.assertIn("|| 'main' }}\n          path: trusted", job)
+        self.assertRegex(job, r"(?m)^          path: base$")
+        self.assertRegex(job, r"(?m)^          path: head$")
+        self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
+        self.assertEqual(job.count("actions/checkout@"), 3)
+        for tree in ("head", "base"):
+            self.assertNotIn(f"{tree}/gates", job)
+            self.assertNotIn(f"{tree}/tools", job)
+        for command in ("presence", "measure", "compare"):
+            line = next(l for l in job.splitlines() if f"icount_gate.py {command}" in l)
+            self.assertIn("python trusted/tools/icount-gate/icount_gate.py", line)
+            self.assertIn("--gates trusted/gates/gates.toml --benchmarks trusted/gates/benchmarks.toml", line)
+        self.assertNotIn("continue-on-error", job)
+
+    def test_the_icount_trusted_tree_is_main_before_a_push_never_the_pushed_commit_and_is_locked(self):
+        # On a push to main the ref `main` IS the pushed commit; the gate files must come from the tree before it.
+        job = self.icount_job()
+        self.assertEqual(job.count("github.event.before"), 2)
+        lock = job.index("sudo chown -R root:root trusted")
+        self.assertIn("sudo chmod -R go-w trusted", job)
+        self.assertLess(lock, job.index("cargo build --release"))
+        self.assertLess(lock, job.index("id: gate"))
+        self.assertLess(job.index("cargo build --release"), job.index("icount_gate.py measure"))
+
+    def test_the_icount_base_is_main_before_the_push_or_the_main_tip(self):
+        job = self.icount_job()
+        self.assertIn("ref: ${{ github.event_name == 'push' && github.event.before || 'main' }}\n          path: base", job)
+
+    def test_the_icount_job_builds_both_trees_in_one_job_and_measures_both_with_the_trusted_tool(self):
+        job = self.icount_job()
+        self.assertEqual(job.count('cargo build --release -p "$PACKAGE" --locked'), 2)
+        self.assertIn("working-directory: head", job)
+        self.assertIn("working-directory: base", job)
+        self.assertIn("sudo apt-get install -y -qq valgrind", job)
+        self.assertIn('--bench "head/target/release/$PACKAGE"', job)
+        self.assertIn('--bench "base/target/release/$PACKAGE"', job)
+        # The package name is data of benchmarks.toml and reaches the shell through env, not through an expression.
+        for line in (l for l in job.splitlines() if "cargo build" in l or "--bench" in l):
+            self.assertNotIn("${{", line)
+
+    def test_the_icount_job_skips_only_through_the_presence_check_and_states_it(self):
+        job = self.icount_job()
+        presence = next(l for l in job.splitlines() if "icount_gate.py presence" in l)
+        self.assertIn('--summary "$GITHUB_STEP_SUMMARY"', presence)
+        # Only the presence step can be switched off, and only by the bootstrap check below; the others follow it.
+        presence_step = next(s for s in job.split("\n      - ") if "name: Find the benchmark tool" in s)
+        self.assertIn("if: steps.gate.outputs.ready == 'true'", presence_step)
+        self.assertEqual(job.count("if: steps.bench.outputs.head == 'true'"), 4)
+        self.assertEqual(job.count("if: steps.bench.outputs.base == 'true'"), 2)
+        self.assertEqual(len(re.findall(r"(?m)^\s+if:", job)), 7)
+        # The compare step runs whenever the head has the tool, with or without a base result.
+        self.assertIn("HAS_BASE", job)
+
+    def test_the_icount_job_states_the_bootstrap_case_when_main_has_no_gate_tool_yet(self):
+        # Before the card that adds the tool is merged, main cannot supply it: stated in the summary, not red and not silent.
+        job = self.icount_job()
+        step = next(s for s in job.split("\n      - ") if "id: gate" in s)
+        self.assertIn("trusted/tools/icount-gate/icount_gate.py", step)
+        self.assertIn("trusted/gates/benchmarks.toml", step)
+        self.assertIn("not run: icount-gate is not on main yet", step)
+        self.assertIn("ready=false", step)
+        self.assertNotIn("if:", step)
+        self.assertLess(job.index("id: gate"), job.index("id: bench"))
+
+    def test_the_icount_tool_states_its_skip_line(self):
+        gate = (Path(__file__).resolve().parents[2] / "tools" / "icount-gate" / "icount_gate.py").read_text(encoding="utf-8")
+        self.assertIn("not run: physics benchmark tool absent", gate)
+
     def test_ci_runs_the_tests_of_every_tool_folder(self):
         for folder, module in (("tools/templates", "test_templates"), ("tools/token-probe", "test_probe"),
                                ("tools/local-gates", "test_local_gates"),
@@ -446,6 +524,7 @@ class Ci(unittest.TestCase):
                                ("tools/arch-check", "test_arch_check"),
                                ("tools/wiki-lint", "test_wiki_lint"),
                                ("tools/golden-check", "test_golden_check"),
+                               ("tools/icount-gate", "test_icount_gate"),
                                ("tools/metrics", "test_approval_report"),
                                ("acceptance", "test_validate")):
             with self.subTest(folder=folder):
