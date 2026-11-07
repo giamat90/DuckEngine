@@ -505,6 +505,17 @@ flowchart LR
   k --> b["absolute 0.05 m bound not met by either"]
 ```
 
+- **As built in card 4-34.** The sample `app_physics_sample` gains the pyramid of workload W1 so that the finding of card 4-31 can be watched: `--scene pyramid` (or the key P in the window) shows the 44-row pyramid of 990 boxes of 0.5 m on the floor of the arena, drawn zoomed out (10 pixels to the metre instead of 20; the world shown is twice as wide, the camera only) and with the debug drawing off by default (990 outlines are unreadable; D turns them on); `--sub-steps N` (1 to 16) or the key S switches the solver between the default 4 sub-steps and 8. Changing the scene or the sub-steps starts that setup from step zero (the sub-steps are fixed when the world is built); R restarts the current one. The pyramid never sleeps, as in the stability tests, so the solver alone holds it up; clicks still drop a body. A line on stderr names the running setup. Default run (`stream`, 4 sub-steps) is bit-for-bit what it was (same state hash). What to expect: with 4 sub-steps the pyramid sags a little and keeps shifting for tens of seconds; with 8 it settles within about five seconds; the 0.25 m sag is about 3 pixels at this zoom. Headless: `--null --frames N --scene pyramid --sub-steps 8` prints its own stable state hash. No solver or physics code changed.
+
+```mermaid
+flowchart LR
+  A["args: --scene, --sub-steps"] --> S["Session::with_setup"]
+  K["keys P, S, R, D"] --> C[Controls] --> S
+  S --> Sim["Simulation: Setup {scene, sub_steps}"]
+  Sim --> W["World: arena + stream, or arena + 990 boxes"]
+  S --> V["View: camera zoom 1 or 2"]
+```
+
 - **As built in card 4-30 (F-SCALE).** The staged colour solve of card 4-15 is cheaper and scales: the constraints and bodies stay in their shared arrays, read only during a pass; a chunk builds its work in its own pre-sized output buffer (one `Mutex` per chunk, locked once, never contended) and the serial scatter writes the buffers back in canonical order. Before, each constraint sat behind its own `Mutex` and was copied in, out and again in the scatter. The arithmetic per constraint, the cut into chunks and the order of the write-back are unchanged, so every hash is unchanged. `SolverExecution` is unchanged; the buffers are made by `World::set_execution` (one per chunk of the largest possible colour, none for the serial reference) and a step still allocates nothing. A chunk is now idempotent (it clears its buffer first), so a scheduler that runs one twice no longer changes the result. **Measured** (Windows laptop, interleaved rounds, ratio to the serial scalar solve; absolute times are not comparable because the machine throttled, `reviews/4-30.md`): the pool at one worker went from 1.9 to 2.2 times serial to 1.2 to 1.6; on the 990-box pyramid (44 rows, about 120 constraints per colour, 4 chunks) the pool at 2 and 4 workers is about equal to serial (0.7 to 1.0), at 6 workers up to 1.3 times slower; on a pyramid of 80 rows (3240 boxes) the pool takes 0.62 (2 workers), 0.42 (4) and 0.48 (6) of the serial time, parallel efficiency 0.8 at 2 and 0.6 at 4 workers. **Rule of thumb for the application:** a pool pays from colours of a few hundred constraints (pyramids of about 60 rows and more); below that use the serial reference. The solver does not switch by itself (owner decision open). The lane path was not re-measured.
 
 ```mermaid

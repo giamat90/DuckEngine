@@ -22,10 +22,18 @@ use render::stream::CommandStream;
 
 /// Sprites one frame can hold: the bodies and the debug drawing. A debug sprite past it is dropped
 /// and counted ([`View::dropped`]).
-pub const SPRITE_CAPACITY: usize = 8192;
+pub const SPRITE_CAPACITY: usize = 16_384;
 const CLEAR: [f32; 4] = [0.05, 0.07, 0.12, 1.0];
 /// Bytes the command stream starts with (it does not grow in a frame of this size).
 const STREAM_BYTES: usize = 1 << 12;
+
+/// The size of the part of the world, in sprite pixels, that a window of `size` shows.
+fn zoomed(size: (u32, u32), zoom_out: u32) -> (u32, u32) {
+    (
+        size.0.saturating_mul(zoom_out.max(1)),
+        size.1.saturating_mul(zoom_out.max(1)),
+    )
+}
 
 /// The device resources and the buffers of a frame.
 pub struct View {
@@ -39,6 +47,7 @@ pub struct View {
     vertex_bytes: Vec<u8>,
     stream: CommandStream,
     dropped: usize,
+    zoom_out: u32,
 }
 
 impl View {
@@ -88,6 +97,7 @@ impl View {
             vertex_bytes,
             stream: CommandStream::with_capacity(STREAM_BYTES),
             dropped: 0,
+            zoom_out: 1,
         })
     }
 
@@ -118,11 +128,32 @@ impl View {
         device: &mut dyn IRenderDevice,
         size: (u32, u32),
     ) -> Result<(), SampleError> {
-        let camera = camera_bytes(size)?;
+        let camera = camera_bytes(zoomed(size, self.zoom_out))?;
         device.resize_surface(self.surface, size.0, size.1)?;
         device.write_buffer(self.bindings.uniforms, 0, &camera)?;
         self.size = size;
         Ok(())
+    }
+
+    /// Shows `zoom_out` times more of the world in the same window (1 is 20 pixels to the metre).
+    ///
+    /// # Errors
+    /// The render device's error.
+    pub fn set_zoom_out(
+        &mut self,
+        device: &mut dyn IRenderDevice,
+        zoom_out: u32,
+    ) -> Result<(), SampleError> {
+        self.zoom_out = zoom_out.max(1);
+        let camera = camera_bytes(zoomed(self.size, self.zoom_out))?;
+        device.write_buffer(self.bindings.uniforms, 0, &camera)?;
+        Ok(())
+    }
+
+    /// How many times more of the world a pixel covers.
+    #[must_use]
+    pub fn zoom_out(&self) -> u32 {
+        self.zoom_out
     }
 
     /// Makes the sprites of `world`: the bodies, then the debug drawing when `debug`. The bodies

@@ -3,8 +3,8 @@
 //! runs it, and CI can run it without a GPU.
 
 use crate::cli::{Report, RunError};
-use crate::session::Session;
-use crate::simulation::{DEFAULT_SEED, STEP_TICKS};
+use crate::session::{Session, Start};
+use crate::simulation::{DEFAULT_SEED, STEP_TICKS, Setup};
 use app_sprite_sample::GOLDEN_SHADER;
 use app_sprite_sample::app::{HEIGHT, WIDTH, failed};
 use app_sprite_sample::looping::{Step, count_frames};
@@ -18,6 +18,14 @@ use render::null::NullDevice;
 /// # Errors
 /// [`RunError::Failed`] when a step or the device fails.
 pub fn run_null(frames: u32) -> Result<Report, RunError> {
+    run_null_with(frames, Setup::default())
+}
+
+/// As [`run_null`], starting from `setup`.
+///
+/// # Errors
+/// [`RunError`] when the sample cannot run.
+pub fn run_null_with(frames: u32, setup: Setup) -> Result<Report, RunError> {
     let mut device = NullDevice::new();
     let surface = device
         .create_surface(SurfaceDesc {
@@ -27,14 +35,13 @@ pub fn run_null(frames: u32) -> Result<Report, RunError> {
         })
         .map_err(failed)?;
     let program = Program::parse(GOLDEN_SHADER).map_err(failed)?;
-    let mut session = Session::new(
-        &mut device,
-        &program,
+    let start = Start {
         surface,
-        (WIDTH, HEIGHT),
-        DEFAULT_SEED,
-    )
-    .map_err(failed)?;
+        size: (WIDTH, HEIGHT),
+        seed: DEFAULT_SEED,
+        setup,
+    };
+    let mut session = Session::with_setup(&mut device, &program, start).map_err(failed)?;
     let drawn = count_frames(Some(frames), |_| {
         session.frame(&mut device, STEP_TICKS).map_err(failed)?;
         Ok(Step::Drawn)
