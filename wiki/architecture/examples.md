@@ -15,8 +15,22 @@ The examples that open a window or print a result, and how to run them. They are
 
 ## 2. Running a window example on Windows
 
-1. The GLFW library is not in git ([THIRD_PARTY](../../THIRD_PARTY.md)): put `glfw3.dll` from the official 3.4 Windows build (`lib-vc2022`, SHA-256 in `THIRD_PARTY.md`) next to the program (`target\release\`), or set `DUCK_GLFW_LIB` to its full path.
-2. Run the command of the table. `cargo clean` removes the copy next to the program.
+1. Build as usual. The build of `adapter_window_glfw` brings `glfw3.dll` next to the program by itself (card 4-35): it downloads the official 3.4 Windows zip once over https, checks the SHA-256 of the zip and of the DLL against the manifest `engine/adapter_window_glfw/runtime-lib.txt` (the same values as in [THIRD_PARTY](../../THIRD_PARTY.md)), keeps the DLL in a per-user cache (`%LOCALAPPDATA%\DuckEngineuntime-libs`, or `DUCK_RUNTIME_LIBS_CACHE`) and copies it into the profile folder, `deps` and `examples` of the target folder. The first build needs a network; later builds, also after `cargo clean`, use the cache. `DUCK_RUNTIME_LIBS_OFFLINE=1` forbids the download.
+2. If the download cannot be done, the build still succeeds and prints a warning that names the file and what to do (put `glfw3.dll` next to the program yourself, or set `DUCK_GLFW_LIB` to its full path; with that variable set nothing is downloaded). A program that cannot find the library says where it looked.
+3. Run the command of the table.
+
+```mermaid
+flowchart TD
+    B[cargo build of adapter_window_glfw] --> M{DUCK_GLFW_LIB set or not Windows?}
+    M -- yes --> N[nothing to do]
+    M -- no --> C{checked copy in the cache?}
+    C -- yes --> P[copy next to the programs]
+    C -- no --> O{offline?}
+    O -- yes --> W[warning, build goes on]
+    O -- no --> D[download zip, check SHA-256, unpack DLL, check SHA-256]
+    D -- ok --> K[keep in the cache] --> P
+    D -- failed --> W
+```
 
 On Linux the library is `libglfw.so.3` from the distribution package.
 

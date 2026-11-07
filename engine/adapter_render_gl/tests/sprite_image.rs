@@ -9,7 +9,7 @@
 //! a missing device a failure. The reference painter and the comparison run everywhere.
 
 use adapter_render_gl::GlDevice;
-use adapter_window_glfw::GlfwWindows;
+use adapter_window_glfw::{GlfwWindows, explain};
 use assets::dshd::{Program, Stage};
 use base::math::Vec2;
 use platform::window::{IWindowSystem, WindowDesc};
@@ -287,7 +287,7 @@ struct Rig {
 }
 
 fn open_rig() -> Result<Rig, String> {
-    let mut windows = GlfwWindows::load_default(1).map_err(|e| format!("GLFW: {e}"))?;
+    let mut windows = GlfwWindows::load_default(1).map_err(explain)?;
     let desc = WindowDesc {
         title: "DuckEngine 3-15: sprite image",
         width: SIDE,
