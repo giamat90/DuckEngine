@@ -1,0 +1,17 @@
+[package]
+name = "tools_physics_bench"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Dev-time benchmark of the physics crate (card 4-22): workload W1, a scaling scene, scheduler overhead, work counters and the instruction-count investigation; report only."
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+jobs = { path = "../jobs", version = "0.1.0" }
+physics = { path = "../physics", version = "0.1.0" }
+platform = { path = "../platform", version = "0.1.0" }
+
+[lints]
+workspace = true

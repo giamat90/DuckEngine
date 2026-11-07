@@ -5,6 +5,7 @@
 pub mod app;
 pub mod args;
 pub mod cli;
+pub mod input;
 pub mod looping;
 pub mod sample;
 pub mod scene;

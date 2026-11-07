@@ -5,6 +5,7 @@
 
 use crate::args::Args;
 use crate::cli::{RunError, RunReport};
+use crate::input::Controls;
 use crate::looping::{Step, count_frames, poll};
 use crate::sample::{GOLDEN_SHADER, Sample};
 use crate::scene::scene_for;
@@ -18,38 +19,51 @@ use std::fmt::Display;
 use std::time::Duration;
 
 const TITLE: &str = "DuckEngine 3-15: triangle and sprites";
-const WIDTH: u32 = 800;
-const HEIGHT: u32 = 450;
-const EVENT_CAPACITY: u32 = 64;
+/// Window size at the start, in screen units.
+pub const WIDTH: u32 = 800;
+/// See [`WIDTH`].
+pub const HEIGHT: u32 = 450;
+/// Events the queue of the loop holds.
+pub const EVENT_CAPACITY: u32 = 64;
 /// About 60 frames a second; the sample does not wait for the display.
-const FRAME: Duration = Duration::from_millis(16);
+pub const FRAME: Duration = Duration::from_millis(16);
 /// How long `run` waits for a window that reports no size.
 const SIZE_WAIT: Duration = Duration::from_secs(2);
 /// Polls in that wait, one per [`FRAME`] (125 of 16 ms is 2 s).
 const SIZE_ATTEMPTS: u32 = 125;
 
-fn no_device(what: &str, error: impl Display) -> RunError {
+/// A missing part of the stack as [`RunError::NoDevice`].
+pub fn no_device(what: &str, error: impl Display) -> RunError {
     RunError::NoDevice(format!("{what}: {error}"))
 }
 
-fn failed(error: impl Display) -> RunError {
+/// Any other error as [`RunError::Failed`].
+pub fn failed(error: impl Display) -> RunError {
     RunError::Failed(error.to_string())
 }
 
 /// The window system, its one window and the device on it. The device is the first field so it
 /// is dropped before the window system that owns its window.
-struct Opened {
-    device: GlDevice,
-    token: NativeToken,
+///
+/// Shared with `app_physics_sample` (card 4-24).
+pub struct Opened {
+    /// The OpenGL device.
+    pub device: GlDevice,
+    /// The native token of the window, for `create_surface`.
+    pub token: NativeToken,
     window: WindowId,
     windows: GlfwWindows,
 }
 
 impl Opened {
-    fn open() -> Result<Self, RunError> {
+    /// Loads GLFW, opens a window titled `title` and the OpenGL 4.5 device on it.
+    ///
+    /// # Errors
+    /// [`RunError::NoDevice`] when GLFW, the window or the device is not available.
+    pub fn open(title: &'static str) -> Result<Self, RunError> {
         let mut windows = GlfwWindows::load_default(1).map_err(|error| no_device("GLFW", error))?;
         let desc = WindowDesc {
-            title: TITLE,
+            title,
             width: WIDTH,
             height: HEIGHT,
         };
@@ -70,19 +84,28 @@ impl Opened {
     }
 
     /// The framebuffer size in pixels.
-    fn framebuffer(&self) -> Result<(u32, u32), RunError> {
+    ///
+    /// # Errors
+    /// [`RunError::Failed`] when the window is gone.
+    pub fn framebuffer(&self) -> Result<(u32, u32), RunError> {
         let info = self.windows.window_info(self.window).map_err(failed)?;
         Ok((info.framebuffer_width, info.framebuffer_height))
     }
 
-    /// Pumps the window events; true when the user asked to close.
-    fn closing(&mut self, queue: &mut EventQueue) -> bool {
+    /// Pumps the window events, hands each to `on_event`; true when the user asked to close.
+    pub fn pump(&mut self, queue: &mut EventQueue, mut on_event: impl FnMut(&Event)) -> bool {
         self.windows.pump(queue);
         let mut closing = false;
         while let Some(event) = queue.pop() {
             closing |= matches!(event, Event::CloseRequested { .. } | Event::Quit);
+            on_event(&event);
         }
         closing
+    }
+
+    /// Pumps the window events and drops them; true when the user asked to close.
+    fn closing(&mut self, queue: &mut EventQueue) -> bool {
+        self.pump(queue, |_| {})
     }
 }
 
@@ -127,7 +150,10 @@ fn run_loop(args: Args, opened: &mut Opened, sample: &mut Sample) -> Result<u32,
 
 /// The framebuffer size once it is not zero. A window can report zero for its first moments (or
 /// when it starts minimised): events are pumped for up to [`SIZE_WAIT`] before giving up.
-fn first_size(opened: &mut Opened) -> Result<(u32, u32), RunError> {
+///
+/// # Errors
+/// [`RunError::Failed`] when the window is closed or still has no size after the wait.
+pub fn first_size(opened: &mut Opened) -> Result<(u32, u32), RunError> {
     let mut queue = EventQueue::with_capacity(EVENT_CAPACITY);
     let size = poll(SIZE_ATTEMPTS, || {
         if opened.closing(&mut queue) {
@@ -147,13 +173,9 @@ fn first_size(opened: &mut Opened) -> Result<(u32, u32), RunError> {
     })
 }
 
-/// Opens the window and the device, loads the shader asset and runs the loop.
-///
-/// # Errors
-/// [`RunError::NoDevice`] when GLFW, the window or the OpenGL 4.5 device is not available,
-/// [`RunError::Failed`] when a later step fails.
-pub fn run(args: &Args) -> Result<RunReport, RunError> {
-    let mut opened = Opened::open()?;
+/// The window and device opened, the shader asset loaded and the sample built.
+fn start() -> Result<(Opened, Sample), RunError> {
+    let mut opened = Opened::open(TITLE)?;
     let size = first_size(&mut opened)?;
     let surface = opened
         .device
@@ -164,7 +186,61 @@ pub fn run(args: &Args) -> Result<RunReport, RunError> {
         })
         .map_err(failed)?;
     let program = Program::parse(GOLDEN_SHADER).map_err(failed)?;
-    let mut sample = Sample::new(&mut opened.device, &program, surface, size).map_err(failed)?;
+    let sample = Sample::new(&mut opened.device, &program, surface, size).map_err(failed)?;
+    Ok((opened, sample))
+}
+
+/// Opens the window and the device, loads the shader asset and runs the loop.
+///
+/// # Errors
+/// [`RunError::NoDevice`] when GLFW, the window or the OpenGL 4.5 device is not available,
+/// [`RunError::Failed`] when a later step fails.
+pub fn run(args: &Args) -> Result<RunReport, RunError> {
+    let (mut opened, mut sample) = start()?;
     let frames = run_loop(*args, &mut opened, &mut sample)?;
+    Ok(RunReport { frames })
+}
+
+/// One interactive frame: follows a changed framebuffer size, then draws the controls' sprites.
+fn draw_controls_frame(
+    opened: &mut Opened,
+    sample: &mut Sample,
+    controls: &Controls,
+) -> Result<Step, RunError> {
+    let size = opened.framebuffer()?;
+    if size.0 == 0 || size.1 == 0 {
+        return Ok(Step::Skipped);
+    }
+    if size != sample.size() {
+        sample.resize(&mut opened.device, size).map_err(failed)?;
+    }
+    sample
+        .draw_controls(&mut opened.device, controls)
+        .map_err(failed)?;
+    match opened.device.take_gl_error() {
+        0 => Ok(Step::Drawn),
+        code => Err(RunError::Failed(format!("OpenGL error {code:#06x}"))),
+    }
+}
+
+/// Like [`run`], for the interactive example: the window events steer the sprites (arrows or WASD
+/// move one, the mouse places and clicks tint the other); Escape or closing the window ends it.
+///
+/// # Errors
+/// As [`run`].
+pub fn run_interactive(args: &Args) -> Result<RunReport, RunError> {
+    let (mut opened, mut sample) = start()?;
+    let mut controls = Controls::new(sample.size());
+    let mut queue = EventQueue::with_capacity(EVENT_CAPACITY);
+    let frames = count_frames(args.frames, |_| {
+        let closing = opened.pump(&mut queue, |event| controls.apply(event));
+        if closing || controls.quit() {
+            return Ok(Step::Closing);
+        }
+        controls.step();
+        let step = draw_controls_frame(&mut opened, &mut sample, &controls)?;
+        std::thread::sleep(FRAME);
+        Ok(step)
+    })?;
     Ok(RunReport { frames })
 }

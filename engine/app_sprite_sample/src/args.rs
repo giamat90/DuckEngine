@@ -1,4 +1,4 @@
-//! The command line: `app_sprite_sample [--frames N]`.
+//! The command line of the examples: `app_sprite_sample [--frames N]` and `app_input_sample [--frames N]`.
 
 use std::fmt;
 
@@ -43,7 +43,7 @@ impl fmt::Display for ArgsError {
 impl std::error::Error for ArgsError {}
 
 /// The usage line, printed after an argument error.
-pub const USAGE: &str = "usage: app_sprite_sample [--frames N]";
+pub const USAGE: &str = "usage: app_sprite_sample [--frames N]  (app_input_sample takes the same)";
 
 /// One `--frames N` pair: `flag` must be `--frames` and `value` a whole number in range.
 fn frames_option(flag: &str, value: Option<String>) -> Result<u32, ArgsError> {

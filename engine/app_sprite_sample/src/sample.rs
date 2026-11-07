@@ -3,6 +3,7 @@
 //! device is passed in (`&mut dyn IRenderDevice`), so the same code runs on the Null device in
 //! tests and on the OpenGL device in the window.
 
+use crate::input::Controls;
 use crate::scene::{
     CHECKER_SIDE, Scene, SceneTextures, WHITE_TEXEL, checker_pixels, fill_sprites,
     triangle_vertices,
@@ -31,16 +32,17 @@ pub const GOLDEN_SHADER: &[u8] = include_bytes!("../../tools_shaderc/golden/spri
 
 /// Sprites one frame can hold.
 const SPRITE_CAPACITY: usize = 64;
-const VERTICES_PER_SPRITE: usize = 4;
+/// Vertices of one sprite.
+pub const VERTICES_PER_SPRITE: usize = 4;
 /// Bytes of one sprite's four vertices.
-const SPRITE_BYTES: usize = VERTICES_PER_SPRITE * VERTEX_STRIDE as usize;
+pub const SPRITE_BYTES: usize = VERTICES_PER_SPRITE * VERTEX_STRIDE as usize;
 /// Bytes of the camera matrix (a std140 `mat4`).
 const CAMERA_BYTES: u32 = 64;
 /// Bytes of the three triangle vertices.
 const TRIANGLE_BYTES: usize = 3 * VERTEX_STRIDE as usize;
 const CLEAR: [f32; 4] = [0.05, 0.07, 0.12, 1.0];
 /// The slot the sprite batcher binds the camera and the texture to.
-const SLOT: u8 = 0;
+pub const SLOT: u8 = 0;
 
 /// Why the sample could not build or draw a frame.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,8 +96,11 @@ impl From<GraphError> for SampleError {
 
 /// The vertex and fragment modules, after checking that the asset's reflection matches what the
 /// sample feeds it: the sprite vertex (position, uv, colour), the camera block and the texture on
-/// the slot the batcher binds.
-fn check_asset<'a>(program: &Program<'a>) -> Result<(Module<'a>, Module<'a>), SampleError> {
+/// the slot the batcher binds. Shared with `app_physics_sample` (card 4-24).
+///
+/// # Errors
+/// [`SampleError::Asset`] when a module or a binding does not fit the sprite vertex layout.
+pub fn check_asset<'a>(program: &Program<'a>) -> Result<(Module<'a>, Module<'a>), SampleError> {
     let (Some(vertex), Some(fragment)) = (
         program.module_for(Stage::Vertex),
         program.module_for(Stage::Fragment),
@@ -137,7 +142,11 @@ fn create_shader(
     })
 }
 
-fn create_pipeline(
+/// The sprite pipeline (alpha blend, no depth) from the checked modules.
+///
+/// # Errors
+/// The device's error.
+pub fn create_pipeline(
     device: &mut dyn IRenderDevice,
     vertex: &Module<'_>,
     fragment: &Module<'_>,
@@ -158,7 +167,11 @@ fn create_pipeline(
     })
 }
 
-fn create_buffer(
+/// A buffer of `usage` holding `bytes`.
+///
+/// # Errors
+/// The device's error, or [`RenderError::InvalidDescription`] for a size beyond `u32`.
+pub fn create_buffer(
     device: &mut dyn IRenderDevice,
     usage: BufferUsage,
     bytes: &[u8],
@@ -169,7 +182,11 @@ fn create_buffer(
     Ok(buffer)
 }
 
-fn create_texture(
+/// An RGBA8 texture of `side` by `side` texels holding `pixels`.
+///
+/// # Errors
+/// The device's error.
+pub fn create_texture(
     device: &mut dyn IRenderDevice,
     side: u32,
     pixels: &[u8],
@@ -237,7 +254,10 @@ impl Gpu {
 }
 
 /// The camera of a view of `size` pixels: one unit per pixel, the origin in the middle, Y up.
-fn camera_bytes(size: (u32, u32)) -> Result<[u8; 64], SampleError> {
+///
+/// # Errors
+/// [`SampleError::NoCamera`] for a zero side.
+pub fn camera_bytes(size: (u32, u32)) -> Result<[u8; 64], SampleError> {
     OrthographicCamera::pixel_perfect(size.0, size.1, Vec2::new(0.0, 0.0), 1.0)
         .and_then(|camera| camera.view_projection())
         .map(|matrix| matrix_bytes(&matrix))
@@ -246,7 +266,8 @@ fn camera_bytes(size: (u32, u32)) -> Result<[u8; 64], SampleError> {
 
 /// Encodes the vertices of the first `sprites` staged sprites into `out`; the bytes written, or
 /// `None` when the staging or the byte buffer is too small.
-fn encode_staged(staging: &[SpriteVertex], sprites: usize, out: &mut [u8]) -> Option<usize> {
+#[must_use]
+pub fn encode_staged(staging: &[SpriteVertex], sprites: usize, out: &mut [u8]) -> Option<usize> {
     let vertices = sprites * VERTICES_PER_SPRITE;
     let bytes = vertices * VERTEX_STRIDE as usize;
     let staged = staging.get(..vertices)?;
@@ -330,6 +351,11 @@ impl Sample {
         frame: u32,
     ) -> Result<(), SampleError> {
         fill_sprites(frame, &self.gpu.textures, &mut self.sprites);
+        self.upload_sprites(device)
+    }
+
+    /// Sorts, batches and uploads the sprites now in `self.sprites`.
+    fn upload_sprites(&mut self, device: &mut dyn IRenderDevice) -> Result<(), SampleError> {
         self.batcher.prepare(&self.sprites, &mut self.staging)?;
         let written = encode_staged(&self.staging, self.sprites.len(), &mut self.vertex_bytes)
             .ok_or(SampleError::Staging)?;
@@ -378,6 +404,26 @@ impl Sample {
             self.stage_sprites(device, frame)?;
         }
         self.record(scene)?;
+        self.present(device)
+    }
+
+    /// Draws one frame of the interactive example: the sprites of `controls`, and presents it.
+    ///
+    /// # Errors
+    /// The first [`SampleError`] of staging, recording or the device (a lost surface included).
+    pub fn draw_controls(
+        &mut self,
+        device: &mut dyn IRenderDevice,
+        controls: &Controls,
+    ) -> Result<SubmitStats, SampleError> {
+        controls.fill_sprites(&self.gpu.textures, &mut self.sprites);
+        self.upload_sprites(device)?;
+        self.record(Scene::Sprites)?;
+        self.present(device)
+    }
+
+    /// Submits the recorded stream and presents the frame.
+    fn present(&mut self, device: &mut dyn IRenderDevice) -> Result<SubmitStats, SampleError> {
         let id = device.begin_frame(self.surface)?;
         let submitted = device.submit(id, &self.stream);
         let ended = device.end_frame(id);

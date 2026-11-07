@@ -7,6 +7,7 @@ These are defaults proposed by the agent and accepted by the owner in one block 
 | Topic | Convention |
 |---|---|
 | Scalar type | `f32` for world, physics and rendering; `f64` only inside explicitly named high-precision code (large-world offsets, offline tools). The scalar type is a type alias in `base/math` so a later switch is mechanical. |
+| Transcendental functions | Code whose results must agree across platforms (physics, lockstep or rollback code) calls `base::dmath` (`sin`, `cos`, `tan`, `atan2`, `asin`, `acos`, `exp`, `log`, `pow`, `powi`, `madd`) and never the `std` method. With the feature `cross-platform-determinism` the facade uses own functions with identical bits on every IEEE-754 platform; without it, the platform `std` ([physics](physics.md) section 3 rule 7). |
 | Units | SI: metres, kilograms, seconds, radians. No hidden unit conversions; names carry units where ambiguous (`dt_seconds`). |
 | Coordinate system | Right-handed, **Y up**, forward **-Z** for cameras. 2D: X right, Y up, rotation counter-clockwise in radians. |
 | Matrices | Column-major storage, column vectors, `M * v`. |

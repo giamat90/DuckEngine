@@ -1,0 +1,25 @@
+[package]
+name = "physics"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Layer 2 physics crate: a dimension-generic rigid-body world core with a narrow Dim trait and the 2D instance (world, handles, bodies, shapes, integration, fixed capacities, state hash)."
+
+[features]
+# Forwards to `base`: the deterministic math facade uses the engine's own functions instead of the
+# platform libm, so angle conversions are bit-identical on every IEEE-754 platform (D2). Off by default.
+cross-platform-determinism = ["base/cross-platform-determinism"]
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+jobs = { path = "../jobs", version = "0.1.0" }
+
+[dev-dependencies]
+# The generic scheduler contract suite, run by the determinism harness on every scheduler it uses.
+jobs = { path = "../jobs", version = "0.1.0", features = ["contract-tests"] }
+platform = { path = "../platform", version = "0.1.0" }
+
+[lints]
+workspace = true

@@ -18,7 +18,7 @@ Fixed inputs, not reopened here: physics is a standalone module with no ECS depe
 | `IThreads` (`spawn`, `parallelism`, `has_threads`), `StdThreads`, `NullThreads` | `platform::threads` | exist; the job given to `spawn` is a `Box<dyn FnOnce>` |
 | `FixedStep` (integer ticks, `count`, `alpha`, `dropped`) | `engine/frame` | exists; no dependency on `jobs` yet |
 | Layer map and edges: `jobs = 1`, `physics = 2`, edges `physics -> jobs`, `jobs -> platform`, forbidden `physics -> ecs`; scan rules for the `physics` crate (libm functions, `mul_add`, fused intrinsics, `HashMap`/`HashSet`, unstable sort; the estimate-intrinsic rule covers `physics` and `base`); thread creation allowed only in `platform` and `jobs` | `gates/architecture.toml` | exist (read, not run for this card) |
-| Not present | | no `jobs` and no `physics` crate; no `cross-platform-determinism` feature anywhere (search of `*.toml`, `*.rs`, `*.yml`); no `gates/golden/` folder; no facade for transcendental functions; no code that sets or asserts the floating-point control state when this note was written (since card 4-9 it is `base::fpenv`); no Miri job in `.github/workflows/ci.yml` (the TSan job `tsan` was added by card 4-21); no instruction-count benchmark tool |
+| Not present | | no `jobs` and no `physics` crate; no `cross-platform-determinism` feature anywhere (search of `*.toml`, `*.rs`, `*.yml`); no `gates/golden/` folder; no facade for transcendental functions; no code that sets or asserts the floating-point control state when this note was written (since card 4-9 it is `base::fpenv`); no Miri job in `.github/workflows/ci.yml` (the TSan job `tsan` was added by card 4-21); no instruction-count benchmark tool (since card 4-22 the crate `tools_physics_bench` and the script `tools/icount/icount.sh` exist) |
 
 ## 1. Where the code lives
 
@@ -26,7 +26,7 @@ Fixed inputs, not reopened here: physics is a standalone module with no ECS depe
 flowchart TB
   subgraph L4["Layer 4: composition roots and tools"]
     sample["app_physics_sample (optional, O8)"]
-    pbench["tools_physics_bench (W1 scene, scaling, golden recorder)"]
+    pbench["tools_physics_bench (W1 scene, scaling, overhead, counters, icount helpers)"]
     spike["tools_physics_spike (ADR-0018 / ADR-0004 spikes)"]
   end
   subgraph L2["Layer 2: domain modules and glue"]
@@ -119,6 +119,455 @@ classDiagram
 - **`IScheduler`.** Three needs, from [core-runtime §3](core-runtime.md): run a loop over a range in parallel (`parallel_for`, chunks of at least `grain` indices), run a set of independent tasks to completion (`run_scope`), and ask how many workers there are. A task counter and a `wait_help` call (the waiting thread executes jobs) are the internal mechanism, not the first public surface. Dispatch is `&dyn IScheduler`: one virtual call per phase of the step (a few per step), never per body or per contact (ADR-0005).
 - **As built in card 4-4.** `run_scope` takes a slice of borrowed tasks (`&[&dyn Fn() + Sync]`), not a closure that spawns, and `for_each` is added; the signatures and bounds are in [core-runtime](core-runtime.md) section 3.
 - **As built in card 4-7.** `jobs::pool::WorkStealingPool` is the pool decided in [ADR-0004](../decisions/adr-0004-job-system.md) (lock-free Chase-Lev deques, binary splitting, threads only through `IThreads`, a 200 microsecond spin-yield-park budget); its description, class and state views are in [core-runtime](core-runtime.md) section 3.
+- **As built in card 4-10.** The `physics` crate exists (`engine/physics`, layer 2, depends on `base` only; the edge to `jobs` is not used yet; arch-check needed no new row). Modules `core` (generic: `Dim`, `World<D>`, `Body<D>`, `BodyDesc<D>`, `BodyHandle<D>`, `PhysicsError`, `StateHasher`) and `d2` (`D2`, `Rot2`, `Shape2`, aliases `World`, `Body`, `BodyDesc`, `BodyHandle`, `WorldConfig`); no `d3` yet (phase 8), a test instance in `tests/generic_core.rs` proves the core steps for a second dimension. Differences from the sketch above: `step(dt)` takes no scheduler and no scratch arena yet (nothing to parallelise before cards 4-11 to 4-15), `WorldConfig` has `max_bodies` and `gravity` only (shapes, joints and contacts get capacities with their cards), bodies are static or dynamic (kinematic is not built), shapes are a circle and a box (polygons come with the narrowphase, card 4-12), and `body()` returns a read-only view with accessors, not a `BodyState` copy. `Dim` has five associated types and three methods (ADR-0018 trigger: about 30 methods). Details, the class and sequence views and the numbers: [reviews/4-10](../../reviews/4-10.md).
+
+```mermaid
+classDiagram
+  class Dim {
+    <<trait, core>>
+    Vec Ang Rot InvInertia Shape
+    +apply_inverse_inertia(rot, inv, torque) Ang
+    +advance_rotation(rot, w, dt) Rot
+    +mass_properties(shape, density) Result
+  }
+  class World~D~ {
+    <<core, fixed capacity>>
+    +new(WorldConfig) Result
+    +create_body(BodyDesc) Result~BodyHandle~
+    +destroy_body(BodyHandle) Result
+    +body(BodyHandle) Result~Body~
+    +step(dt) Result
+    +state_hash() u64
+  }
+  class Body~D~ {
+    <<core, state>>
+    kind position rotation velocities
+    force torque mass inv_inertia
+  }
+  class BodyHandle~D~ {
+    <<base Handle, 8 bytes>>
+    index generation
+  }
+  class D2 { <<instance>> Vec2 f32 Rot2 Shape2 }
+  class Rot2 { <<cos, sin pair>> }
+  class Shape2 { <<Circle, Box>> }
+  Dim <|.. D2
+  World~D~ ..> Dim
+  World~D~ *-- Body~D~
+  World~D~ ..> BodyHandle~D~
+  D2 ..> Rot2
+  D2 ..> Shape2
+```
+
+- **As built in card 4-11.** The world has a broadphase: two dynamic AABB trees (one for static bodies with margin 0, one for dynamic bodies with the margin of `WorldConfig`, default 0.1 m) and a canonical pair list. `Dim` gains one associated type (`Bounds`, an axis-aligned box with the six operations of the `Bounds` trait) and one method (`shape_bounds`); 2D uses `Aabb2`. The tree (`core::tree::Tree<B>`) is a Box2D v2.4 style tree on an arena of `2 * capacity - 1` nodes allocated once: sibling choice by the surface-area heuristic (a tie goes to the second child), AVL rotations after every insert and remove (the validator test checks height <= floor(log2(n + 2)) * 1.44 + 1), fat box = tight box + margin, a leaf is re-inserted only when its tight box leaves its fat box, queries walk the tree without a stack (parent links), the leaf id is the body slot index. Nothing allocates after `World::new`. The pair list (`core::pairs::PairList<D>`) has a fixed capacity (`WorldConfig::max_pairs`, at most 2^24); each step regenerates it: every dynamic body asks the dynamic tree (only for bodies with a higher slot index, so a pair is found once) and the static tree, so two static bodies are never paired, and the list is sorted by (lower slot index, higher slot index) with an in-place heap sort (`core::sort`; the standard stable sort allocates and the unstable one is banned). Touching boxes count as overlapping. When the list is full, further pairs are counted (`missing()`), `is_complete()` is false and the step still returns `Ok`; this is the documented overflow flag. There is no collision filtering because this note defines none. The state hash is unchanged (a pinned test compares it with the value of card 4-10); `broadphase_hash()` hashes the tree structure and is separate. Tree performance is not measured here (card 4-22). Class and sequence views below; evidence and numbers: [reviews/4-11](../../reviews/4-11.md).
+
+```mermaid
+classDiagram
+  class World~D~ {
+    +step(dt) Result
+    +find_pairs()
+    +pairs() PairList
+    +broadphase_hash() u64
+  }
+  class Broadphase~D~ {
+    <<core, private>>
+    static_tree dynamic_tree pairs
+    +move_proxies(slots) Result
+    +find_pairs(slots)
+  }
+  class Tree~B~ {
+    <<arena, fixed capacity>>
+    +insert(bounds, id) Result~ProxyId~
+    +remove(proxy) Result
+    +update(proxy, bounds) Result~bool~
+    +query(region, visit)
+    +structure_hash() u64
+  }
+  class PairList~D~ {
+    <<fixed capacity>>
+    +as_slice() Pair
+    +missing() usize
+    +is_complete() bool
+  }
+  class Bounds {
+    <<trait>>
+    overlaps union contains measure fattened is_valid
+  }
+  class Aabb2 { min max }
+  class Dim { <<trait>> +shape_bounds(shape, pos, rot) Bounds }
+  World~D~ *-- Broadphase~D~
+  Broadphase~D~ *-- Tree~B~
+  Broadphase~D~ *-- PairList~D~
+  Tree~B~ ..> Bounds
+  Aabb2 ..|> Bounds
+  Dim ..> Bounds
+```
+
+```mermaid
+sequenceDiagram
+  participant W as World::step
+  participant B as Broadphase
+  participant D as dynamic Tree
+  participant S as static Tree
+  participant P as PairList
+  W->>W: integrate bodies (semi-implicit Euler)
+  W->>B: move_proxies(slots)
+  B->>D: update(proxy, tight box) for each dynamic body
+  W->>B: find_pairs(slots)
+  B->>P: clear
+  loop each dynamic body, in slot order
+    B->>D: query(fat box): other slot above own
+    D-->>P: push(own, other)
+    B->>S: query(fat box)
+    S-->>P: push(own, static)
+  end
+  B->>P: heap sort by (lower, higher) slot
+```
+
+- **As built in card 4-12.** After the broadphase the step runs the narrowphase: every pair of the pair list, in list order, is collided by `Dim::collide(a, b, margin)` (`Dim` gains one associated type, `Manifold`, and this one method; `Placed<D>` is the shape, position and rotation of a body) and the result goes into a fixed-capacity buffer owned by the world (`core::manifolds::ManifoldList<D>`, capacity `WorldConfig::max_manifolds`, at most 2^24, overflow counted by `missing()` and `is_complete()` like the pair list). A pair with no contact (further apart than the speculative margin, `WorldConfig::speculative_margin`, default 0.02 m) leaves no entry, so the list is a subsequence of the pair list in the same order. The 2D narrowphase (`d2::narrowphase`, `d2::polygon`) handles the four pairs of the shapes that exist: circle-circle in closed form, circle-box by the Box2D face and vertex regions of the box, box-box by the separating axis test on the face normals of both boxes with reference and incident face clipping (up to two points); the roles of the two boxes are fixed by a small bias (`REFERENCE_FACE_BIAS`, 0.0005 m) that keeps the first body's face as the reference when two faces are almost equally good, ties go to the lower index, and a circle and a box give bit-identical results in either order (the result is computed with the box as first shape and flipped). All work is done in a frame whose origin is the first body's centre, so moving both bodies by the same exact amount changes no relative bit. A `Manifold2` has the unit normal (from the first body to the second), up to `MAX_MANIFOLD_POINTS` = 2 points, and per point the world position (the middle between the two surfaces), the separation (negative when overlapping), the two anchors (the point relative to each body centre, in world axes) and a 16-bit `FeatureId` (kind, and the vertex or face indices that produced the point) that stays the same while the same features touch, which the solver needs for warm starting (card 4-13). Only `+ - * /` and `sqrt` are used, no `sin`, `cos` or `atan2`, no libm, and a result that is not finite (huge coordinates) is `None`, so there is no NaN in a manifold. Degenerate cases are values: coincident centres give the x axis as the normal, zero-radius circles are valid, touching shapes give separation 0. There is **no polygon shape**: this note fixes no vertex limit, so none was invented; the clipping code works on up to 8 vertices internally and is tested with a hexagon and a triangle, but the public shape set is still circle and box. Nothing is applied to the bodies (no force, no impulse; the solver is card 4-13), the state hash is unchanged (pinned test), and the list has its own hash (`ManifoldList::hash`, separate from the state hash). Nothing allocates (per-thread counting allocator test, overflow included). Narrowphase performance is not measured here (card 4-22). Class and sequence views below; evidence and numbers: [reviews/4-12](../../reviews/4-12.md).
+
+```mermaid
+classDiagram
+  class World~D~ {
+    +step(dt) Result
+    +collide()
+    +manifolds() ManifoldList
+  }
+  class ManifoldList~D~ {
+    <<fixed capacity>>
+    +as_slice() ContactManifold
+    +missing() usize
+    +is_complete() bool
+    +hash() u64
+  }
+  class ContactManifold~D~ { first second manifold }
+  class Placed~D~ { shape position rotation }
+  class Dim {
+    <<trait>>
+    +collide(a, b, margin) Option~Manifold~
+  }
+  class D2 { <<2D instance>> }
+  class Manifold2 { normal count points }
+  class ContactPoint2 { point anchor_a anchor_b separation id }
+  class FeatureId { <<u16>> kind first second }
+  class Narrowphase2 {
+    <<d2, private>>
+    circles / circle-box / box-box
+  }
+  class Polygon2 {
+    <<d2, private>>
+    SAT, reference and incident face, clipping
+  }
+  World~D~ *-- ManifoldList~D~
+  ManifoldList~D~ *-- ContactManifold~D~
+  ContactManifold~D~ ..> Manifold2
+  Manifold2 *-- ContactPoint2
+  ContactPoint2 *-- FeatureId
+  D2 ..|> Dim
+  D2 ..> Narrowphase2
+  Narrowphase2 ..> Polygon2
+  Dim ..> Placed~D~
+```
+
+```mermaid
+sequenceDiagram
+  participant W as World::step
+  participant B as Broadphase
+  participant M as ManifoldList
+  participant D as Dim::collide (D2)
+  participant N as narrowphase
+  W->>B: move_proxies, find_pairs (4-11)
+  B-->>W: pairs in canonical order
+  W->>M: clear
+  loop each pair, in list order
+    W->>D: collide(placed first, placed second, margin)
+    D->>N: circles / box-box / circle-box
+    N-->>D: Option of Manifold2 (normal, up to 2 points, ids)
+    D-->>W: Some manifold within the margin, else None
+    W->>M: push (counts missing when full)
+  end
+  Note over W,M: no force is applied; the solver reads the list (card 4-13)
+```
+
+- **As built in card 4-13.** The step now moves bodies by contact. `World::step` hands the manifold list of the last step to the contact solver (`Dim` gains `type Solver: ContactSolver<Self>`; the seam and the tunables `SolverConfig` live in `core::solver`, the 2D scalar solver `Solver2` in `d2::solver`), commits, and then runs the broadphase and the narrowphase on the new positions (cards 4-11 and 4-12). The solver is a soft step in the manner of `Box2D` v3 **[K]** (owner choice O2): per step `sub_steps` sub-steps (default 4) and per sub-step the order integrate velocities, warm start, solve soft contacts (friction first, then the normal), integrate positions, relax (`relax_iterations`, default 1); after the last sub-step restitution (threshold 1 m/s), and the accumulated impulses are kept for the next step, matched by body pair and feature id with a cursor over the pair-ordered list (no search, no hash map). The separation of a point is updated from the motion of its two anchors, so the manifold is made once per step; a point with a positive separation is speculative (it may close the gap within one sub-step and no more). Friction is mixed as the square root of the product, restitution as the maximum, a static body has infinite mass. The constraints are visited in manifold-list order and every operation is plain `f32` in a fixed order (no `mul_add`, no `sin`, no `cos`; the rotation of an anchor is a `(cos, sin)` multiply), so the SIMD solver of card 4-15 can be required to equal this one bit for bit. A body no manifold touches takes the old single Euler step, so a world without contacts hashes exactly as before. The step is atomic: the solver works on a scratch copy of the bodies and the world commits only if everything is finite and representable, else it returns `NotFinite` and changes nothing. Defaults and the reasons for them are in [reviews/4-13](../../reviews/4-13.md); the one that differs from `Box2D`, a linear slop of 1 mm instead of 5 mm, was measured on the pyramid. Nothing in the step allocates. Performance is not measured (card 4-22); the golden hash across platforms is card 4-20.
+
+```mermaid
+classDiagram
+  class World~D~ {
+    +step(dt) Result
+    -solver D_Solver
+    -scratch Bodies
+  }
+  class Dim {
+    <<trait>>
+    type Solver
+  }
+  class ContactSolver~D~ {
+    <<trait>>
+    +solve(bodies, manifolds, frame)
+    +is_finite() bool
+    +commit()
+    +write_bits(hasher)
+  }
+  class SolverConfig {
+    sub_steps relax_iterations
+    contact_hertz damping_ratio push_speed
+    restitution_threshold linear_slop
+  }
+  class FreeSolver { <<core, no contacts>> }
+  class Solver2 { <<d2, scalar reference>> }
+  class Constraint {
+    <<d2 private>>
+    warm_start() solve() restitute()
+  }
+  class Point { anchors masses impulses feature id }
+  class Softness { bias_rate mass_scale impulse_scale }
+  class WarmCache { <<fixed capacity>> find(cursor, pair) }
+  World~D~ --> ContactSolver~D~
+  Dim ..> ContactSolver~D~
+  World~D~ *-- SolverConfig
+  FreeSolver ..|> ContactSolver~D~
+  Solver2 ..|> ContactSolver~D~
+  Solver2 *-- Constraint
+  Solver2 *-- WarmCache
+  Constraint *-- Point
+  Constraint *-- Softness
+```
+
+```mermaid
+sequenceDiagram
+  participant W as World::step
+  participant S as Solver2
+  participant C as Constraints
+  W->>W: copy bodies to scratch
+  W->>S: solve(scratch, manifolds, gravity, dt)
+  S->>C: one constraint per manifold, warm start from the cache
+  loop sub-step, n times
+    S->>S: integrate velocities of touched bodies
+    S->>C: warm start, then solve with bias (friction, normal)
+    S->>S: integrate positions
+    S->>C: relax (solve without bias)
+  end
+  S->>C: restitution
+  S->>S: untouched bodies take one Euler step
+  W->>S: is_finite and bounds representable?
+  alt yes
+    W->>S: commit (impulses kept)
+    W->>W: copy scratch back, broadphase, pairs, manifolds
+  else no
+    W-->>W: NotFinite, nothing changed
+  end
+```
+
+- **As built in card 4-14.** The world now knows which bodies can influence each other, lets resting groups sleep, and solves the contacts colour by colour. (1) *Islands* (`core::islands`, private): a union-find over the manifold list, built after every collide, joins the two bodies of a manifold when both are dynamic (a static body never joins, so two piles on one floor are two islands); the root is always the lowest slot, so the island id (`World::island_of`) is the lowest body slot whatever the manifold order. (2) *Sleeping* (`core::sleep`: `SleepConfig` with `enabled`, `time_to_sleep` 0.5 s, `linear_speed` 0.05 m/s, `angular_speed` 2 degrees per second; values from Box2D v3 and v2 **[K, from memory, not re-read]**): every awake dynamic body keeps a rest timer; an island whose bodies are all awake and all rested for the time falls asleep, its velocities become zero and the step leaves it alone (no integration, no constraint, the contacts and their warm start persist). It wakes by an awake body in contact (the solve wakes the island first, on the scratch copies, so a refused step wakes nothing), by `World::wake`, by every setter (`set_linear_velocity`, `set_angular_velocity`, `apply_force`, `apply_torque`), when a static body is created (every sleeper wakes, because a static body is in no island), and when a body is destroyed (its island and the islands of the bodies that touched it wake). A new dynamic body wakes what it touches by the awake-contact rule. The sleep flag is hashed as one tag byte after the body, only when set, so the flag itself adds no bytes to a world in which nothing sleeps (the contact hashes still changed once, because of the new solve order, see below) and `WorldConfig::sleep.enabled = false` is bit-identical to sleeping on until the first island sleeps. (3) *Colouring* (`core::colouring`, public so card 4-15 can drive it): a greedy, serial colouring in manifold order gives each constraint the lowest of at most 24 colours that none of its dynamic bodies uses yet (one `u32` mask per body; static bodies are exempt); a constraint that finds no colour goes to the overflow set, solved after the colours in canonical order, reported by `SolverStats::overflow` and never an error; a counting sort gives the solve order (colour 0, 1, ..., overflow), canonical inside a colour. `Solver2` sweeps its constraints in that order; a static body is no longer written back by a constraint, so the order inside a colour changes no bit (a test reverses and shuffles the order inside the colours and compares the state hash after 120 steps). The contact hashes were re-pinned once, for the new solve order and for sleeping (reasons in `tests/hash_pin.rs`); the rest timers are not hashed (the flag shows their effect), the island and sleep passes cost O(capacity) per step (to be measured in card 4-22), and card 4-15 must equal this serial result bit for bit. All storage is allocated at creation; zero allocator calls per step with sleeping, waking and overflow (per-thread counters).
+
+```mermaid
+classDiagram
+  class World~D~ {
+    +step(dt) Result
+    +wake(handle)
+    +is_asleep(handle) bool
+    +island_of(handle) Option
+    +island_count() usize
+    +sleeping_count() usize
+    +rest_time(handle) f32
+    +solver_stats() SolverStats
+  }
+  class SleepConfig {
+    enabled
+    time_to_sleep
+    linear_speed
+    angular_speed
+  }
+  class Islands {
+    <<private>>
+    label rest awake smallest
+    build(slots, manifolds)
+    wake_touched(bodies)
+    tick(slots, config, dt)
+    sleep(slots, config)
+  }
+  class Body~D~ {
+    asleep
+    rests_below(linear, angular)
+    fall_asleep()
+    wake_up()
+  }
+  class Colouring {
+    +push(ConstraintEnds)
+    +assign()
+    +order() slice
+    +members(colour) slice
+    +overflow() slice
+    +colour_count() usize
+  }
+  class ConstraintEnds { a b : Option_u32 }
+  class Solver2 { <<d2>> constraints colouring }
+  class SolverStats { solved frozen colours overflow }
+  World~D~ *-- SleepConfig
+  World~D~ *-- Islands
+  World~D~ o-- Body~D~
+  Solver2 *-- Colouring
+  Colouring o-- ConstraintEnds
+  Solver2 ..> SolverStats
+  World~D~ ..> SolverStats
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> Awake: create_body
+  Awake --> Awake: moves above a limit, rest timer 0
+  Awake --> Resting: slower than both limits
+  Resting --> Awake: moves above a limit
+  Resting --> Asleep: every body of the island rested 0.5 s
+  Asleep --> Awake: awake body in contact
+  Asleep --> Awake: wake(), a setter, a force
+  Asleep --> Awake: support created or destroyed
+  Awake --> [*]: destroy_body
+  Asleep --> [*]: destroy_body
+```
+
+```mermaid
+sequenceDiagram
+  participant W as World::step
+  participant I as Islands
+  participant S as Solver2
+  participant K as Colouring
+  W->>W: copy bodies to scratch
+  W->>I: wake_touched(scratch)
+  W->>S: solve(scratch, manifolds)
+  S->>K: push ends of each awake constraint
+  S->>K: assign (greedy, canonical order)
+  loop sub-step
+    S->>K: sweep colour 0, 1, ..., overflow
+  end
+  W->>W: commit if finite
+  W->>I: tick (rest timers)
+  W->>W: broadphase, pairs, collide
+  W->>I: build (islands), then sleep
+```
+
+- **As built in card 4-15.** The solver can run a colour as parallel chunks and four constraints at a time; the result is bit for bit the serial scalar one. (1) *Execution options* (`core::execution::SolverExecution`, set with `World::set_execution`): an optional `Arc<dyn IScheduler>`, a `simd` flag and a chunk size (default 32, `DEFAULT_CHUNK`); the default `SolverExecution::SERIAL` is the scalar reference of card 4-14 on the calling thread and nothing else changes. `physics` now depends on `jobs` (layer 2 on layer 1, an edge the architecture file already allows; no gate file was touched) and only uses the `IScheduler` port, so the caller (a test, later the application) builds the pool. (2) *Staged colour solve* (`d2::solver::stage`): each colour's members, in canonical order, are cut into chunks of a fixed size (the cut depends on the colour size and the chunk size, never on the worker count); one `parallel_for(chunks, grain 1)` runs the chunks and its join is the barrier between colours. A chunk copies each constraint and the two bodies it joins out of a `Mutex` slot (each member is locked twice per pass, once to load and once to store, by one chunk only, so the lock is never contended) and from the shared body array (read only), computes on the copies, and stores the constraint back; after the join the dynamic bodies are stored back **serially in canonical order** (static ends never, as in the reference). That is why no `unsafe` is needed: no thread ever writes a body array another thread reads. The overflow set, `touch`, `finish`, restitution's store, the position integration and the warm-start cache stay serial. A colour with one chunk, a missing scheduler or a scheduler that refuses the call (`Busy`, `TooManyChunks`) is run on the calling thread by the same code. (3) *Lane path* (`d2::solver::constraint::lanes`): four constraints per group in `base::simd::F32x4` (the safe SSE2 or NEON type; no intrinsic and no `unsafe` in `physics`); `solve` and `warm_start` run lane-wise with the same operations in the same order as the scalar code, the branches (speculative or soft term, friction clamp, `max` of the accumulated impulse) are taken per lane by the scalar functions the reference calls, a one-point manifold leaves its second point unchanged by selecting the old lane, and restitution (staged like the other passes, with a scalar body per group) plus the remainder of a chunk (fewer than four) use the scalar code. The lane branch gives the same bits as the scalar one, so a test-only counter shows that it ran, and mutation testing checks it. (4) *Floating-point state*: `Solver2::solve` takes one `base::fpenv::FpGuard::deterministic()` for the whole solve (the calling thread), and every chunk takes its own, which covers the pool workers; each chunk runs its arithmetic in a function that is never inlined (the opaque boundary of the helper). Performance caveat: the staged path copies the constraint and both bodies per pass and scatters serially, so with few constraints per colour it can be slower than the serial path; nothing is measured here (card 4-22). Not done: parallel velocity and position integration of the bodies, a hand-written intrinsic path (needs a governance step), scaling numbers (card 4-22), TSan (card 4-21), the cross-platform golden (card 4-20). Tests: `tests/parallel.rs` (hash after every step equal for scalar serial, lanes serial, staged scalar, lanes and scalar through a pool of 1, 2, 4 and 6 workers, chunk sizes 1 to 1000, reversed, shuffled and single-range schedulers, a refusing scheduler, pile, pyramid, hub with overflow, sleeping and waking islands), `tests/parallel_allocation.rs` (no allocator call on the caller or on any worker) and the lane unit tests; review [reviews/4-15](../../reviews/4-15.md).
+
+```mermaid
+classDiagram
+  class World~D~ { +set_execution(SolverExecution) +step(dt) }
+  class SolverExecution { scheduler: Option~Arc IScheduler~ simd: bool chunk: u32 }
+  class Solver2 { sweep_constraints(Pass) stage_colour(colour, Pass) }
+  class ColourJob { slots bodies members pass simd chunk +run(scheduler) +run_chunk(i) }
+  class Slot { Mutex~Staged~ +load() +store() }
+  class Staged { constraint a b }
+  class Pass { <<enum>> WarmStart Solve Restitute }
+  class lanes { <<module>> run(group of 4, Pass) }
+  class IScheduler { <<port, jobs>> parallel_for run_scope }
+  World~D~ --> Solver2 : set_execution
+  Solver2 *-- SolverExecution
+  Solver2 *-- Slot
+  Solver2 ..> ColourJob : one per colour and pass
+  ColourJob --> Slot : lock to load and to store
+  Slot *-- Staged
+  ColourJob ..> lanes : four at a time
+  ColourJob ..> IScheduler : parallel_for(chunks, 1)
+  lanes ..> Pass
+```
+
+```mermaid
+sequenceDiagram
+  participant S as Solver2 (caller thread)
+  participant P as IScheduler workers
+  participant C as chunk k (any worker)
+  S->>S: prepare, colour (serial)
+  loop each sub-step, each pass (warm start, solve, relax)
+    loop colour 0 .. n-1 (barrier between colours)
+      S->>P: parallel_for(chunks of the colour, grain 1)
+      par chunks in any order, any grouping
+        P->>C: run_chunk(k)
+        C->>C: FpGuard, load slots and body copies (read only)
+        C->>C: scalar or four-lane arithmetic on the copies
+        C->>C: store the constraints back (own slots only)
+      end
+      P-->>S: join
+      S->>S: scatter dynamic bodies, canonical order
+    end
+    S->>S: overflow set, one constraint at a time
+  end
+  S->>S: restitution, finish, warm cache (serial)
+```
+
+- **As built in card 4-16.** The world has joints: a revolute joint (a hinge, with optional angle limits and a small motor) and a distance joint (a rod, a spring, a rope or a strut), solved in the same soft-step scheme as the contacts. (1) *Handles and descriptions* (`core::joint`, `d2::joint`): `JointHandle` is a generation-checked `base::pool` handle like a body handle; `WorldConfig::max_joints` fixes the capacity (above `MAX_JOINTS` the world is refused, a full table returns `JointCapacityExhausted` as a value, a stale handle `StaleJoint`, a bad number `InvalidJoint` or `NotFinite`); `World::create_joint(&JointDesc)`, `destroy_joint`, `joint`, `joints` (slot order), `contains_joint`, `joint_count`. `Dim` gains one associated type, `Joint` (a `JointShape` that validates itself; 2D: `Joint2` with `Revolute(RevoluteJoint2)` and `Distance(DistanceJoint2)`), so the generic core stores joints without knowing their kinds. One end may be static, two static ends or one body twice is `InvalidJoint`. Destroying a body destroys its joints (their handles go stale) and wakes the bodies at their other ends. Bodies joined by a joint do not collide with each other unless `JointDesc::collide_connected` is set (the Box2D default **[K]**); the exemption is a sorted list of body-slot pairs searched by `contact_of`, so it ends with the joint. (2) *Revolute*: anchors in each body's frame (relative to its centre of mass), a reference angle, optional `AngleLimits` and an optional `Motor` (`max_torque`, `speed`); order of the constraints inside a joint: motor, lower limit, upper limit, then the point constraint (a 2x2 symmetric solve). Limits are speculative while the angle is inside them (the joint may close the gap within one sub-step and no more), soft when violated. (3) *Distance*: a rest length, a rigid rod when `spring` is `None`, a spring with `hertz` above zero (own softness), slack with `hertz` zero (a rope or strut: only the limits act, and limits are allowed only with a spring field), optional `LengthLimits` with `0 <= min <= length <= max`. (4) *In the solver* (`d2::solver::joint`): the joints are prepared after the contacts (so the bodies of a world without joints are touched in the same order as before), carry a `JointWarm` cache matched by joint handle with a forward cursor (no search), and use the rigid softness `SolverConfig::joint_hertz` (`DEFAULT_JOINT_HERTZ` = 60, capped at a quarter of the sub-step rate) and `joint_damping_ratio` (`DEFAULT_JOINT_DAMPING_RATIO` = 2.0), the values of Box2D v3.0 **[K]**. **Ordering decision:** the joints are not coloured. In every pass of every sub-step (warm start, solve, relax) all joints are visited first, serially on the calling thread in joint-slot order, then the contacts colour by colour. A joint therefore never reaches the scheduler or the lanes, so the parallel and SIMD paths equal the scalar serial one by construction, the staged path only has to write its bodies back after every colour (it already does), and the hashes of scenes without joints did not change. The price is that the joints are a serial part of the step (a long chain is solved on one thread; colouring the joints together with the contacts and a SIMD joint path are follow-ups once a benchmark, card 4-22, shows the joints matter). (5) *Islands and sleeping:* a joint between two dynamic bodies unites them in the union-find (a static end joins nothing), so a chain is one island and sleeps and wakes as one; `create_joint` and `destroy_joint` rouse the dynamic ends. A joint is solved when one of its bodies is awake, and its warm start is kept as it is while both sleep. (6) *Hash:* the state hash covers the joint impulses (a count, then per joint its handle and six floats) and nothing at all while there are no joints; joint parameters are not hashed (like body shapes, a replay recreates them). `SolverStats` gains `joints_solved` and `joints_frozen`. The step stays atomic and allocation free (per-thread counters, `tests/joint_allocation.rs`). Measured and tuned numbers, the decisions and the open points: [reviews/4-16](../../reviews/4-16.md).
+
+```mermaid
+classDiagram
+  class World~D~ { +create_joint(JointDesc) +destroy_joint(JointHandle) +joint(JointHandle) +joints() }
+  class JointTable~D~ { <<private>> slots live no_contact +create +destroy +destroy_touching +forbids_contact }
+  class JointDesc~D~ { first second collide_connected shape }
+  class JointShape { <<trait>> validate() }
+  class Joint2 { <<enum>> Revolute Distance }
+  class RevoluteJoint2 { anchor_a anchor_b reference_angle limits motor }
+  class DistanceJoint2 { anchor_a anchor_b length spring limits }
+  class Islands { build(slots, manifolds, joints) }
+  class JointSet { <<d2 solver>> constraints warm next +sweep(bodies, JointPass) }
+  class JointConstraint { hinge rod warm_start solve }
+  class Solver2 { sub_step }
+  World~D~ *-- JointTable~D~
+  World~D~ ..> JointDesc~D~
+  JointDesc~D~ --> JointShape
+  Joint2 ..|> JointShape
+  Joint2 *-- RevoluteJoint2
+  Joint2 *-- DistanceJoint2
+  World~D~ ..> Islands : joints unite dynamic ends
+  World~D~ ..> Solver2 : live joints
+  Solver2 *-- JointSet
+  JointSet *-- JointConstraint
+```
+
+```mermaid
+sequenceDiagram
+  participant S as Solver2 (caller thread)
+  participant J as JointSet (serial)
+  participant C as contacts (colour by colour, maybe parallel)
+  S->>S: prepare contacts, then joints (touch bodies, warm start from the cache)
+  loop each sub-step
+    S->>S: integrate velocities
+    S->>J: warm start, all joints in slot order
+    S->>C: warm start, colour by colour
+    S->>J: solve with bias, all joints in slot order
+    S->>C: solve with bias, colour by colour
+    S->>S: integrate positions
+    S->>J: relax, all joints in slot order
+    S->>C: relax, colour by colour
+  end
+  S->>C: restitution
+  S->>S: finish: keep joint and contact impulses, write bodies back
+```
+
+```mermaid
+stateDiagram-v2
+  [*] --> Live : create_joint
+  Live --> Live : step (solved while an end is awake, impulses kept)
+  Live --> Frozen : both dynamic ends asleep
+  Frozen --> Live : island woken, create_joint or destroy_joint on an end
+  Live --> Stale : destroy_joint
+  Frozen --> Stale : destroy_joint
+  Live --> Stale : destroy_body of an end
+  Frozen --> Stale : destroy_body of an end
+  Stale --> [*]
+```
+
+- **As built in card 4-17.** The stability exit criterion is exercised by one integration test target, `engine/physics/tests/stability/` (34 tests, tests only: no engine file changed, no hash pin changed). (1) *Scenes*: pyramids of 5 and 10 rows of the W1 boxes, columns of 2 to 10 boxes with a maximum-height probe, mass ratios 1:10 and 1:100, hanging and horizontal chains of 20 and 30 links with end weights, a bridge with a load, and a mixed scene (pyramid, whip and a bin of circles); the bounds (`limits.rs`: drift 0.05 m, rest speed 0.02 m/s, penetration 0.02 m, hinge error 0.05 m) were written before measuring (the few that changed after measuring are listed in the review and in `limits.rs`) and each test prints `STABILITY | scene | metric | measured | bound`. (2) *Execution matrix*: eight scenes give the same state hash after every step under scalar serial, lanes serial, and pools of 1, 2, 4 and 6 workers with lanes on and off, and the resting scenes also give the same sleep flags. (3) *Properties*: 8 properties over 25 seeded `Pcg32` scenes (25 scenes, 200 checks; finite and in bounds, energy does not rise, no deep contact once calm, same seed same hash, serial equals parallel equals lanes, sleeping equals awake until the first sleep, refused calls change nothing, a full world reports overflow as a value). (4) *Findings*: the solver does not meet five of the bounds stated in advance (a column of 11 or more boxes drifts or topples, a 1:100:1:100 column collapses, a chain of 50 links stretches, a pyramid of 20 rows compresses by 0.0527 m, the heavy bridge load is still moving at 8 s); W1-scale stacking (about 1,000 boxes) is therefore not demonstrated, the largest passing pyramid has 55 boxes; `findings.rs` keeps each as a test that asserts the bound is still exceeded, so an improvement turns it red and the scene moves back to the settled tests. Numbers, tolerance table, mutation-style checks and the exit-criterion mapping: [reviews/4-17](../../reviews/4-17.md).
+
+```mermaid
+flowchart LR
+  scene[scene builders] --> settled[settled scenes: pyramids, stacks, mass ratio, chains, mixed]
+  scene --> gen[seeded generator]
+  settled --> matrix[execution matrix: serial, lanes, pools 1/2/4/6]
+  gen --> props[8 properties x 25 seeds]
+  settled --> sleep[sleeping tests]
+  settled -. bound missed .-> findings[findings: bound still exceeded]
+  matrix --> hash[state hash equal everywhere]
+  props --> hash
+```
+
 - **Borrowed closures.** `parallel_for` and `run_scope` take closures that borrow the caller's data, so that no `Box` is allocated per frame (the existing `platform::threads::Job` is a `Box<dyn FnOnce() + 'static>`, which allocates). Running a borrowing closure on a worker thread needs a small amount of `unsafe` (lifetime erasure guarded by the scope waiting for completion). This is the one place where `jobs` is expected to use `unsafe` (section 8).
 - **`World<D>`.** The step takes a scheduler and a per-step scratch `Arena` as parameters, so there is no global state and no hidden thread. `WorldConfig` fixes the capacities (bodies, shapes, joints, contacts, tree nodes) at creation; creating a body past the capacity returns an error value and never reallocates, so a steady-state frame allocates nothing (section 7). `dt` is `f32` seconds computed once from `FixedStep::step_ticks`.
 - **Body state.** 2D rotation is stored as a `(cos, sin)` pair, not an angle, and is advanced in the step by a first-order update followed by a normalisation, so the step itself calls no `sin`, `cos` or `atan2`. Those are needed only to create a body from an angle and to read an angle back, and both go through the facade (section 5). This follows Box2D v3 **[K, from background knowledge, not re-read this session]** and is a design choice made so that the hot loop needs no libm at all.
@@ -148,7 +597,7 @@ flowchart LR
 | Solver | Soft-Step-style: soft contact constraints, sub-stepping (a small number of sub-steps per step) instead of velocity and position iteration counts, a relax pass, restitution applied after the solve, contacts built once per step. Scalar reference first, SIMD form after, tested bit for bit against the reference | [S] Box2D v3 (release post and migration notes linked in [physics §2](physics.md)). The reference machine workload W1 is written in iteration counts (section 10, O9) |
 | Parallel solve | graph colouring: constraints are assigned a colour so that no two constraints of one colour touch the same dynamic body; the colours are solved one after the other, and the constraints inside a colour in parallel; constraints that do not fit into the colour limit go to a serial overflow set solved last | colour assignment is a serial pass in a fixed constraint order, so it is the same at any thread count. Inside a colour the constraints share no body, so the arithmetic of each constraint is independent of the others and of the chunking. There is no floating-point reduction across threads in the solve; any sum that must exist (island energy, sleep time) is accumulated serially in handle order |
 | Sleeping | islands built serially by union-find over touching non-static bodies in handle order; an island sleeps when all its bodies stay below a velocity threshold for a time; a sleeping island wakes when a body of another island touches it or a joint or a user call changes it | the island order is the order of the lowest body handle; thresholds are fixed config values, tested |
-| Joints | v0: **revolute** and **distance** joints, soft, in the same solver and colouring (O6) | a chain is a row of revolute joints, which is the "chain stability" exit scene, if read that way |
+| Joints | v0: **revolute** and **distance** joints, soft, in the same soft-step solver (O6); as built in card 4-16 the joints are solved serially before the contacts in every pass and are not coloured | a chain is a row of revolute joints, which is the "chain stability" exit scene, if read that way |
 | Not in v0 | time-of-impact CCD (v0 has a speculative margin for fast bodies **[K]**), prismatic, weld, wheel, motor limits beyond revolute, rounded polygons, compound shapes, sensors beyond overlap events, soft bodies, cloth, vehicles | [physics §6](physics.md) keeps the feature list short on purpose |
 | Large worlds | usable world size documented and tested at the limit; recentring is the caller's job | [physics §2](physics.md) (Box2D notes about 20 km **[S]**) |
 
@@ -162,7 +611,7 @@ flowchart LR
 - **How it relates to D0 and D1.** A scheduler decides *which thread runs which chunk and in what order*; the physics decides *what a chunk computes*. D1 holds when the result of every chunk is a pure function of the chunk's index range and of data that no other chunk in the same phase writes. The scheduler contract therefore promises nothing about order, and the contract suite proves the weaker, testable property: every index is run exactly once, `parallel_for` returns only after all chunks finished, and results written to disjoint slots are visible to the caller afterwards. To catch an accidental dependence on order **without needing a many-core machine**, `jobs` offers test schedulers on one thread: in order, in reverse order, and in a seeded shuffled order (`Pcg32`). A physics scene that gives the same hash under all of them has no order dependence in the code the test schedulers reach.
 - **Worker count is a parameter, not read from the machine.** The pool takes a worker count at construction (`PoolScheduler::new(workers)`), so the D1 tests run at 1, 2, 3 and 7 workers on any runner, including a two-core hosted one; `IThreads::parallelism()` only supplies the default.
 - **`Caps::has_threads` false** selects the inline scheduler, as today's Headless platform does by default ([platform-ports §2.2](platform-ports.md)).
-- **Floating-point control state.** Each worker, and the calling thread, sets and asserts the control state (round to nearest even, denormals kept) at the start of every simulation job ([rules-digest §5](../rules-digest.md), [physics §3](physics.md) rule 6). A driver or audio library loaded in-process can change it **[K]**. Where this helper lives is O10. **As built in card 4-9:** the helper is the module `base::fpenv` (O10: in `base`); `set_deterministic`, `assert_deterministic` and `FpGuard` are described in [reviews/4-9](../../reviews/4-9.md) and in the module comment. `jobs` and `physics` do not call it yet; the pool calls it at the start of each job in a later card.
+- **Floating-point control state.** Each worker, and the calling thread, sets and asserts the control state (round to nearest even, denormals kept) at the start of every simulation job ([rules-digest §5](../rules-digest.md), [physics §3](physics.md) rule 6). A driver or audio library loaded in-process can change it **[K]**. Where this helper lives is O10. **As built in card 4-9:** the helper is the module `base::fpenv` (O10: in `base`); `set_deterministic`, `assert_deterministic` and `FpGuard` are described in [reviews/4-9](../../reviews/4-9.md) and in the module comment. `jobs` does not call it; **as built in card 4-15** the solver of `physics` takes a `FpGuard::deterministic()` for the whole solve and one at the start of every colour chunk (the guard restores what it found), which covers the calling thread and every pool worker without a change to `jobs`.
 
 ```mermaid
 sequenceDiagram
@@ -198,14 +647,14 @@ D0 (same machine, same thread count) and D1 (any thread count) are required; D2 
 | Replay test D0/D1, always on | one scene run twice, and at 1, 2, 3, 7 workers, and under the in-order, reversed and shuffled test schedulers, in one process; all hash lists must be equal; reads no stored value | no |
 | Seeded scenes | pyramid, row of boxes, chain, scatter of mixed shapes from `Pcg32`, a sleeping and waking scene, a scene with body creation and destruction between steps | no |
 | Hash/scan bans | `HashMap`/`HashSet`, unstable sort, libm functions, `mul_add`, fused and estimate intrinsics in `physics`: already refused by arch-check (`gates/architecture.toml`) | no change needed |
-| Clippy `disallowed-methods` for `physics` | planned second line for the same bans ([ports-and-adapters](ports-and-adapters.md)); `clippy.toml` is a protected path and is workspace-wide, so a per-crate `disallowed-methods` needs a crate-level `clippy.toml` (also protected, `**/clippy.toml`) | **yes** (governance card) |
-| Facade of deterministic math in `base` | one signature per function (`sin`, `cos`, `tan`, `atan2`, `exp`, `log`, `pow`, `powi`), two implementations: platform `std` with the feature off, own functions built from `+ - * /`, `sqrt` and comparisons with the feature on; `madd(a, b, c)`: fused when the CPU has FMA and the feature is off, `a * b + c` otherwise; tested against a high-precision oracle with a stated ULP bound and bit for bit against stored test vectors. Module name decided when it is built | no (Class 2: determinism math; `base` may call libm, so the scan does not apply) |
+| Clippy `disallowed-methods` for `physics` | **done in card 4-19** (crate-level `engine/physics/clippy.toml`); it was planned as the second line for the same bans ([ports-and-adapters](ports-and-adapters.md)); `clippy.toml` is a protected path and is workspace-wide, so a per-crate `disallowed-methods` needs a crate-level `clippy.toml` (also protected, `**/clippy.toml`) | **yes** (governance card) |
+| Facade of deterministic math in `base` | one signature per function (`sin`, `cos`, `tan`, `atan2`, `exp`, `log`, `pow`, `powi`), two implementations: platform `std` with the feature off, own functions built from `+ - * /`, `sqrt` and comparisons with the feature on; `madd(a, b, c)`: fused when the CPU has FMA and the feature is off, `a * b + c` otherwise; tested against a high-precision oracle with a stated ULP bound and bit for bit against stored test vectors. Module `base::dmath` (card 4-8) | no (Class 2: determinism math; `base` may call libm, so the scan does not apply) |
 | Cargo feature `cross-platform-determinism` | in `base` (switch of the facade) and in `physics` (forwards to `base`); off by default | no (`Cargo.toml` of a crate is not a protected path; a workspace `.cargo/config.toml` would be) |
 | Build guard | `compile_error!` when the feature is on and `target_feature = "fma"` is enabled (for example through `RUSTFLAGS` with `-C target-cpu=native`) **[K that `cfg(target_feature)` reflects `target-cpu=native`; to be tested on both targets]**, plus a CI check of `RUSTFLAGS` | the `compile_error!` no; the CI check **yes** (workflow) |
 | `base` math that calls libm (`Mat3` rotation constructors, `Quat::from_axis_angle`, `Quat::slerp`) | routed through the facade when the feature is on; scan does not see libm reached through `base` ([physics §3](physics.md) Limits), so this must land before D2 is claimed | no (Class 2) |
 | Floating-point control state helper | set and assert round-to-nearest-even and denormals kept at the start of each simulation job; reading and writing the control register needs `std::arch` or assembly, which the scan allows only in `base` (`MXCSR` on x86-64 and `FPCR` on AArch64 **[K, to be checked in the card: whether the stable `std::arch` intrinsics for `MXCSR` are usable on the pinned toolchain 1.94.1]**); new `unsafe` lines in `base` | **yes**, if it adds `unsafe`: a row or a raised budget in `gates/unsafe-budget.toml` |
-| Golden file `gates/golden/physics-replay.toml` | a fixed set of scenes, the hash after each step (or each K-th) with the feature on; format and recorder defined in the card; the folder does not exist today | **yes**: `gates/` is protected; an intended change of physics results is a governance change that the owner sees (the price stated in [physics §3](physics.md) rule 8) |
-| D2 CI job, Windows x86-64 and Linux x86-64, feature on | compares the stored hashes; the existing `ci` workflow runs only on `main` and by hand, so the job is added to it and the owner runs it by hand on a branch like `gl_linux` was ([delivery-pipeline](../workflow/delivery-pipeline.md)) | **yes** (workflow) |
+| Golden file `gates/golden/physics-replay.toml` | a fixed set of scenes, the hash after each step (or each K-th) with the feature on; format and recorder defined in the card; the folder did not exist when this note was written; **created by card 4-20** (12 scenes, 200 hashes) | **yes**: `gates/` is protected; an intended change of physics results is a governance change that the owner sees (the price stated in [physics §3](physics.md) rule 8) |
+| D2 CI job, Windows x86-64 and Linux x86-64, feature on | **done in card 4-20** (job in `ci.yml`); it compares the stored hashes; the existing `ci` workflow runs only on `main` and by hand, so the job is added to it and the owner runs it by hand on a branch like `gl_linux` was ([delivery-pipeline](../workflow/delivery-pipeline.md)) | **yes** (workflow) |
 | D2 cost report | the same scene with the feature on and off, wall time reported (D-10) | no |
 
 ```mermaid
@@ -236,9 +685,97 @@ flowchart TB
 
 **Toolchain.** The pinned `rust-toolchain.toml` is part of the D2 promise (physics §3 rule 10): a compiler update is accepted only when the golden hash still matches on both platforms. A toolchain change is already a governance change (`rust-toolchain.toml` is protected).
 
+**As built in card 4-8.** The facade is the module `base::dmath` ([engine/base/src/dmath](../../engine/base/src/dmath/mod.rs)): the free functions `sin`, `cos`, `sin_cos`, `tan`, `atan2`, `asin`, `acos`, `exp`, `log`, `pow`, `powi` and `madd`, one signature each, switched by the Cargo feature `cross-platform-determinism` of `base` (off by default; `physics` will forward it). Off: the `std` function of the platform. On: the own function of `base::dmath::portable`, which does all arithmetic in IEEE `f64` with `+ - * /` and `sqrt` only (Cody-Waite reduction by `pi/2` and `ln 2`, Taylor series whose coefficients are computed at compile time, argument halving for the arctangent), and rounds once to `f32` in integer arithmetic, so the result depends on neither a libm nor the rounding-mode register. Measured: at most 0.5000 `f32` ulp against the `f64` functions of `std` for every function over dense sweeps (the documented bound is 0.51; `powi` 1 ulp for `|n| <= 2^16`), and identical bit patterns on Windows x86-64 and Linux x86-64 (WSL) for the pinned table and a 40960-value hash. `sin`, `cos` and `tan` are accurate for every finite `f32` (Cody-Waite up to `2^20`, an exact Payne-Hanek reduction with 256 bits of `2/pi` above it); NaN and the infinities give NaN. `Mat3::from_rotation_x/y/z`, `Quat::from_axis_angle` and `Quat::slerp` call the facade, so they are deterministic with the feature on and unchanged with it off. A `compile_error!` refuses the feature together with `target_feature = "fma"`; it is a conservative policy guard (Rust never fuses by itself and the own functions call no `mul_add`), kept so that the build is the one the reference results are taken with; a second one refuses 32-bit x86 without SSE2 (x87; this one is not tested, no such target is built). The FMA guard was checked: `-C target-feature=+fma` and `-C target-cpu=native` on the reference machine both trigger it. The CI check of `RUSTFLAGS` and the D2 job stay with cards 4-19 and 4-20. Details and measurements: [review 4-8](../../reviews/4-8.md).
+
+```mermaid
+classDiagram
+  class dmath {
+    <<facade in base>>
+    DETERMINISTIC
+    sin cos sin_cos tan
+    atan2 asin acos
+    exp log pow powi
+    madd
+  }
+  class portable {
+    <<own, f64 inside, one rounding>>
+    trig inverse explog
+  }
+  class series {
+    <<const coefficients, horner>>
+  }
+  class convert {
+    <<to_f32 in integer arithmetic>>
+  }
+  class StdLibm {
+    <<platform libm, feature off>>
+  }
+  class Mat3 {
+    from_rotation_x y z
+  }
+  class Quat {
+    from_axis_angle
+    slerp
+  }
+  class Physics {
+    <<crate, phase 4>>
+  }
+  dmath ..> portable : feature on
+  dmath ..> StdLibm : feature off
+  portable --> series
+  portable --> convert
+  Mat3 ..> dmath
+  Quat ..> dmath
+  Physics ..> dmath : never calls std sin or cos
+```
+
+```mermaid
+flowchart LR
+  B["cargo build base"] --> F{"feature cross-platform-determinism?"}
+  F -->|"off"| S["facade calls std; madd fused only with target_feature fma"]
+  F -->|"on"| G{"target_feature fma?"}
+  G -->|"yes"| E["compile_error!"]
+  G -->|"no"| P["facade calls portable; madd is a * b + c"]
+```
+
+**As built in card 4-18.** The harness of this section is an integration test target, `engine/physics/tests/determinism/` (16 tests, tests only: no engine file, no hash pin and no gate file changed; `physics` gains the dev-dependency `jobs` with the feature `contract-tests`). A recorder runs a scene (a world builder, an optional hook before each step for body and joint creation and destruction, a step count) under one `SolverExecution` and keeps, after every step, the state hash, the sleeping count, the solver counters and the bit pattern of every live body; a difference is reported as the first step, body and field. The matrix runs 10 scenes (pyramid, row of boxes, whip chain, three scatters of circles and boxes from `Pcg32` seeds, sleepers woken by a ball, creation and destruction with slot reuse, a hub that overflows the 24 colours, hinges and contacts together) under 39 configurations (scalar serial, lanes serial, and scalar and lanes through the inline, reversed, one-range, three shuffled and four pool schedulers at 1, 2, 3 and 7 workers, chunk sizes 1, 7, 32 and huge on the interleaving ones, and two refusing schedulers), pool and shuffled ones twice, against the scalar serial reference (itself run twice); two 600-step scenes run under four of them. A probe on every scheduler counts the calls and the threads that ran a chunk, so a configuration that quietly stays serial fails the test by name. The scheduler contract of `jobs` is run on every scheduler of the matrix, and five deliberately faulty schedulers (skip the last chunk, run the first twice, run nothing, skip or repeat a task) must fail both the contract and the replay comparison. Not covered: a perturbed floating-point control state (it cannot be set without `unsafe` or `std::arch`, both refused outside `base`), the golden hash (4-20), Clippy bans (4-19), TSan (4-21). Fault injection, the table of configurations and scenes, and the bounds that moved: [reviews/4-18](../../reviews/4-18.md).
+
+```mermaid
+classDiagram
+  class Scene { name steps build events }
+  class Recorder { record(scene, execution) Trace }
+  class Trace { samples hash asleep stats bodies first_difference }
+  class Config { name SolverExecution Probe uses_scheduler }
+  class Probe { calls threads }
+  class Scheduler { <<IScheduler>> inline reversed shuffled pool OneRange Refusing }
+  class Faulty { <<test only>> skips repeats runs nothing }
+  class Contract { <<jobs::contract>> scheduler_contract }
+  Recorder ..> Scene
+  Recorder ..> Config
+  Recorder --> Trace
+  Config --> Scheduler : wraps with Probe
+  Faulty ..|> Scheduler
+  Contract ..> Scheduler
+  Contract ..> Faulty : must fail
+```
+
+```mermaid
+flowchart LR
+  S[scene] --> R[serial reference x2]
+  S --> C[39 configs, 2 runs where threaded]
+  R --> T1[Trace]
+  C --> T2[Trace]
+  T1 --> D{equal?}
+  T2 --> D
+  D -->|no| F[step, body, field]
+  D -->|yes| U{scheduler asked?}
+  U -->|no| X[silent serial: red]
+  U -->|yes| OK[D0 and D1 hold]
+```
+
 ## 6. TSan and Miri expectations
 
-- **TSan.** Required by the roadmap ("TSan clean") and by [quality-metrics](../workflow/quality-metrics.md) ("clean nightly; required on changes to concurrency code"). TSan is not available on the MSVC target, so it runs on Linux with the nightly toolchain **[K: it needs `-Zsanitizer=thread` and, to be sound, a rebuilt standard library, `-Zbuild-std`]**. No TSan job exists in `.github/workflows/ci.yml` today. The job is a governance card (workflow); the toolchain it needs is pinned like the others; it runs by hand and on `main` like the rest of `ci`, not nightly, because of the Actions minutes budget (R-24). What it covers: the `jobs` contract suite at several worker counts, and the physics replay scenes with the pool.
+- **TSan.** Required by the roadmap ("TSan clean") and by [quality-metrics](../workflow/quality-metrics.md) ("clean nightly; required on changes to concurrency code"). TSan is not available on the MSVC target, so it runs on Linux with the nightly toolchain **[K: it needs `-Zsanitizer=thread` and, to be sound, a rebuilt standard library, `-Zbuild-std`]**. No TSan job existed in `.github/workflows/ci.yml` when this note was written (card 4-21 added it, see below). The job is a governance card (workflow); the toolchain it needs is pinned like the others; it runs by hand and on `main` like the rest of `ci`, not nightly, because of the Actions minutes budget (R-24). What it covers: the `jobs` contract suite at several worker counts, and the physics replay scenes with the pool.
 
   **As built in card 4-21:** job `tsan` of `ci.yml`, Ubuntu only, on `main` and by hand. Toolchain `nightly-2026-10-15` (rustc 1.101.0-nightly), pinned as `RUSTUP_TOOLCHAIN` in the job env: it overrides `rust-toolchain.toml` for this job only, and a bump is a diff of a protected file, hence a governance change. Flags: `RUSTFLAGS=-Zsanitizer=thread`, `cargo test ... -Zbuild-std --target x86_64-unknown-linux-gnu --locked`, separate target directory `target-tsan`, `TSAN_OPTIONS=halt_on_error=1`. Two deviations from the plan, both forced by the first hosted runs: `CARGO_PROFILE_DEV_PANIC=unwind` and `CARGO_PROFILE_RELEASE_PANIC=unwind` (the workspace profiles set `panic = abort`, and the rebuilt `panic_abort` crate then fails with "does not have the panic strategy abort"; the race detector does not depend on the strategy, but the code under test is built with unwinding, not as shipped), and no `-D warnings` (the dated toolchain deprecates `fetch_update`, which stable 1.94.1 accepts; warnings stay gated by Clippy in `g1`). Covered: `cargo test -p jobs --features contract-tests --lib --tests` (the pool tests, the scheduler contract at worker counts 1, 2 and more, the order-independence tests, the three integration targets: 102 tests) and, when the physics crate exists in the checkout, `cargo test -p physics` for the five targets that build a `WorkStealingPool` (`determinism`, `joints`, `parallel`, `parallel_allocation`, `stability`: 136 tests). Not covered, by choice: the serial unit tests of `physics` and the other integration targets (they never start a worker thread), doc tests (rustdoc is not sanitized), and everything outside `jobs` and `physics`. Nothing is excluded by name inside the covered targets; `base::fpenv` (inline assembly) is linked into them and ran. The physics step is skipped, with the line `not run: physics crate absent` in the job summary, only when `engine/physics/Cargo.toml` is on neither `main` nor the pushed commit (the presence check of the D2 job). A step proves that the test binary links the sanitizer runtime (`__tsan_init`), so a build that dropped the flag cannot pass in silence. Hosted results are in [reviews/4-21](../../reviews/4-21.md): no data race reported; the physics step takes about 29 minutes because the sanitizer slows the replay scenes, which is the cost to weigh against the minutes budget (R-24).
 - **Miri.** `ci.yml` has no Miri job either (search of the file); the phase 1 and 2 cards ran it by hand on the arena and SIMD code **[K, from the card reviews, not re-opened for this note]**. **Card 4-7 ran Miri by hand on the pool tests (result in `reviews/4-7.md`); a Miri job in CI is still not configured.** The expectation for phase 4 is the same: Miri on the `unsafe` of `jobs` (the lifetime-erasure code) and on any new `unsafe` of `base` that does not cross FFI or intrinsics; the floating-point control helper uses intrinsics Miri may not run **[K]**, so it is covered by tests and review, and the card says so. **As built in card 4-9:** `MXCSR` is read and written with inline assembly (the stable `_mm_getcsr` and `_mm_setcsr` are deprecated), which Miri cannot run, so `base::fpenv` is covered by tests on Windows and Linux, mutation testing and review.
@@ -268,6 +805,9 @@ flowchart TB
   **As built in card 4-23 (governance task):** the gate is registered. Job `physics_icount` of `ci.yml` (Ubuntu, on `main` and by hand) builds `tools_physics_bench` from a base tree and from the pushed commit **in the same job** (so a drift of the runner image moves both counts, the recommendation of card 4-22) and counts the serial W1 workload (20 rows, 30 steps, `gates/benchmarks.toml`) twice each under `valgrind --tool=callgrind`. Base is the `main` tip on a manual run and the commit before the push on a push to `main`. The comparator `tools/icount-gate/icount_gate.py`, the bands (`gates/gates.toml [benchmark]`, warn 5%, fail 10%, unchanged) and the workload come from a checkout of `main`; the count is read from valgrind's own log file. Above the warn band: an annotation; above the fail band, no count, or two runs that differ by more than the noise limit of `gates/benchmarks.toml` (at most a tenth of the warn band): red. The tool absent in both trees: the stated line `not run: physics benchmark tool absent`; only in the pushed commit (the first release): `no baseline, recorded only`; deleted by the push: red. What it does not gate: the parallel path (F-SCALE), the full 990-box pyramid (F-W1), Windows. Review: `reviews/4-23.md`.
 - A deterministic proxy exists for a physics scene and needs no tool: counters of work done (pairs tested, manifolds built, constraints solved, colours used, sub-steps), which do not vary with the machine. They are reported and can be pinned in tests; they do not replace instruction counts.
 - Evidence from one developer machine (R-25): the scaling benchmark is first measured on the reference machine only; Linux and the hosted runners are reported as not measured until someone runs them.
+- **As built in card 4-22.** The crate `engine/tools_physics_bench` (layer 4 by the `tools_*` row of `gates/architecture.toml`; no gate file changed) holds the W1 scene, the scaling scene, the scheduler-overhead measure, the work counters and the parsing of instruction counts; its binary prints the report (`cargo run --release -p tools_physics_bench`). The report, with the conditions and every figure, is [docs/budgets/physics-benchmark-4-22.md](../../docs/budgets/physics-benchmark-4-22.md); evidence and review: [reviews/4-22](../../reviews/4-22.md). Measured on the development laptop only (Balanced power plan, not pinned, so not the reference protocol; R-25 stands: no Linux wall time, no hosted wall time). (1) **W1 scale is not stable**: the nearest pyramid to 1,000 boxes (44 rows, 990) ends 0.247 m from its start and is still moving at 0.037 m/s after 300 steps (bound 0.05 m); 20 rows 0.052 m, 30 rows 0.107 m; the solver was not touched and the question is the owner's (extends finding F1 of card 4-17). The median step is 2.2 ms against the provisional 2.0 ms, which is reported and not judged. (2) **The parallel solver is slower than the serial one** at this size: 4 workers 2.97 ms (lanes) against 2.22 ms serial scalar, efficiency 0.31 to 0.34 at 4 workers, the pool at one worker costs twice the serial solver; the results stay bit-identical (D1 checked on every row). One fork-join call costs 0.06 to 0.1 microseconds when empty and 0.6 to 1.5 microseconds when it spreads 8 chunks. The cause inside the staged path was not profiled **[K]**. (3) **Work counters** (pairs, manifolds, constraints solved and frozen, colours, sub-steps, awake bodies) are pinned for a 10-row pyramid in `tests/w1.rs`. (4) **Instruction counts: feasible on a hosted Ubuntu runner with `valgrind --tool=callgrind` (and cachegrind), not with `perf`** (`instructions:u` is not supported in the hosted VM, nor in WSL2): 18 readings of two serial workloads in two jobs were identical (spread 0.0%); not measured: other runner image versions, multi-threaded workloads, Windows. A throw-away probe branch measured this and was deleted. Helpers: `icount-workload`, `icount-parse`, `icount-spread` and `tools/icount/icount.sh`. Card 4-23 (governance, O11 (a)) now has a measure to register; the gate should compare base and head counted in the same job rather than a stored baseline, because an image update moves the absolute count. The O9 text edit of W1 (solver parameters) is still open: the tool uses the defaults, 4 sub-steps and 1 relax pass.
+- **As built in card 4-24.** The optional sample of O8(a) exists: crate `engine/app_physics_sample` (layer 4 by the `app_*` row; no gate file changed, the workspace member list gained one entry). `physics::d2` gains the port the sketch of section 2 promised, which did not exist before: the trait `IPhysicsDebugDraw` (`line(a, b, colour)`, `point(p, colour)`), the colour roles `DebugColour` (`Awake`, `Asleep`, `Static`, `ContactPoint`, `ContactNormal`; the application chooses the colours, physics knows no renderer), the constants `CIRCLE_SEGMENTS` (16) and `NORMAL_LENGTH` (0.25 m) and the function `draw_debug(&World, &mut dyn IPhysicsDebugDraw)`, which describes each body (a box as four edges, a circle as a ring and a spoke that shows the spin, then its centre point) in slot order and then each manifold point with its normal; it allocates nothing and uses only `Rot2` (the deterministic facade) for the ring. The sample implements the port as thin sprites and draws a stream of boxes and discs at a fixed step; the step runs on the calling thread (serial execution, no pool). Description, class and sequence views, keys and tests: [examples](examples.md) section 5; evidence and review: [reviews/4-24](../../reviews/4-24.md). Not seen: the picture in a window (no GLFW library on the machine that built it; the program reports `not run` there).
+- **As built in card 4-25.** The exit record is [spikes/phase4-milestone-review](../spikes/phase4-milestone-review.md) and its evidence file is [reviews/4-25](../../reviews/4-25.md); documentation only, no engine or governance file changed. Against the exit criteria of the roadmap row it finds: deliverables met; D0, D1 and D2 met; TSan clean where it ran (the physics part runs on `main` only after the release PR); stacking and chain scenes met for small stacks and chains up to about 30 links only (the full 990-box W1 pyramid does not stand, F-W1); the scaling benchmark built and the 70% efficiency target not met (F-SCALE); the W1 time budget not judged on the reference protocol. The recommendation (done with named exceptions) and the decisions it needs are the owner's; option O9 of section 10 (the W1 solver wording) is still unanswered in the repository.
 - **Not in phase 4:** the CI installation of the shader tools and `DUCK_REQUIRE_SHADER_TOOLS=1` (adjustments A2 to A4, A10 and the combined-sampler correction), PNG input, robust buffer access, the failing `adapter_window_glfw` test (A8). Those are phase 3 follow-ups chosen by the owner separately and no card of this note depends on them.
 
 ## 8. Allocation rules and unsafe budget
@@ -290,9 +830,9 @@ Proposed; no card exists yet. The main session creates them in Backlog after the
 | 4-5 | **scheduler spike** (ADR-0004): candidates (a) to (d) of section 4, a `wiki/spikes/` page | spike | no |
 | 4-6 | record the result in ADR-0004 | 3 | **yes** (ADRs) |
 | 4-7 | `jobs` work-stealing pool (the chosen candidate), contract suite at several worker counts, per-thread allocation assertion, Miri on its `unsafe` | 2 (concurrency, `unsafe`) | step: `gates/unsafe-budget.toml` row |
-| 4-8 | `base` deterministic math facade (own `sin/cos/tan/atan2/exp/log/pow`, `madd`), feature `cross-platform-determinism`, `compile_error!` guard, `Quat`/`Mat3` routed through it | 2 (determinism math, public API of layer 0) | no |
+| 4-8 | `base` deterministic math facade (own `sin/cos/tan/atan2/exp/log/pow`, `madd`), feature `cross-platform-determinism`, `compile_error!` guard, `Quat`/`Mat3` routed through it (done: module `base::dmath`, see section 5) | 2 (determinism math, public API of layer 0) | no |
 | 4-9 | floating-point control state helper (set and assert, both targets) | 2 (`unsafe`) | step: `gates/unsafe-budget.toml` |
-| 4-10 | `physics` crate: world, handles, bodies, shapes, integration, fixed capacities, state hash, the first free-fall and momentum tests | 2 (new module) | no, unless arch-check needs a row |
+| 4-10 | `physics` crate: world, handles, bodies, shapes, integration, fixed capacities, state hash, the first free-fall and momentum tests (done, see section 2; arch-check needed no row) | 2 (new module) | no, unless arch-check needs a row |
 | 4-11 | broadphase tree and pair list | 2 | no |
 | 4-12 | 2D narrowphase and manifolds, brute-force oracle | 2 | no |
 | 4-13 | solver: soft contacts, sub-stepping, friction, restitution, scalar reference, pyramid settles | 2 | no |
@@ -306,8 +846,8 @@ Proposed; no card exists yet. The main session creates them in Backlog after the
 | 4-21 | TSan job on Linux (nightly toolchain, pinned) | 3 | **yes** (workflow) |
 | 4-22 | `tools_physics_bench`: W1 scene, scaling scene, work counters, scheduler overhead; instruction-count measure investigated and, if feasible, built | 2 | no |
 | 4-23 | register the physics benchmarks in `gates/gates.toml [benchmark]` and CI once 4-22 has an instruction-count measure | 3 | **yes** (gate configuration); conditional (O11) |
-| 4-24 | first physics sample `app_physics_sample`: falling boxes drawn through the sprite batcher, `IPhysicsDebugDraw` implemented there | 2 | no; conditional (O8) |
-| 4-25 | phase 4 exit record and milestone review, as cards 2-18 and 3-14 | 1 (docs) | no |
+| 4-24 | first physics sample `app_physics_sample`: falling boxes drawn through the sprite batcher, `IPhysicsDebugDraw` implemented there (done, see the as-built paragraph of card 4-24 in section 7) | 2 (new public port in `physics`) | no; conditional (O8), taken by the owner |
+| 4-25 | phase 4 exit record and milestone review, as cards 2-18 and 3-14 (done, see the as-built paragraph of card 4-25 in section 7) | 1 (docs) | no |
 
 ```mermaid
 flowchart LR

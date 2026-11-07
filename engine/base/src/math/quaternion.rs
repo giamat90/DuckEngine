@@ -10,6 +10,7 @@
 //! which are the platform libm (the same on one machine and build, not across platforms).
 
 use super::{Mat3, Mat4, Scalar, Vec3};
+use crate::dmath;
 use std::ops::{Mul, Neg};
 
 /// Two unit quaternions whose dot product is above this are less than about `3.6` degrees of
@@ -64,7 +65,7 @@ impl Quat {
     #[must_use]
     pub fn from_axis_angle(axis: Vec3, angle: Scalar) -> Option<Self> {
         let axis = axis.normalized()?;
-        let (sin, cos) = (angle * 0.5).sin_cos();
+        let (sin, cos) = dmath::sin_cos(angle * 0.5);
         Some(Self::new(axis.x * sin, axis.y * sin, axis.z * sin, cos)).filter(|q| q.is_finite())
     }
 
@@ -187,10 +188,10 @@ impl Quat {
         if cos_angle > NEARLY_PARALLEL {
             return self.nlerp(other, t);
         }
-        let angle = cos_angle.acos();
-        let sin_angle = angle.sin();
-        let from = ((1.0 - t) * angle).sin() / sin_angle;
-        let to = (t * angle).sin() / sin_angle;
+        let angle = dmath::acos(cos_angle);
+        let sin_angle = dmath::sin(angle);
+        let from = dmath::sin((1.0 - t) * angle) / sin_angle;
+        let to = dmath::sin(t * angle) / sin_angle;
         self.scaled(from).added(other.scaled(to)).normalized()
     }
 
