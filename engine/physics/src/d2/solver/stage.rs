@@ -1,19 +1,25 @@
-//! The staged colour solve (card 4-15): the constraints of one colour are cut into fixed chunks,
-//! the chunks run through a scheduler (or on the calling thread), and the bodies are written back
-//! serially afterwards.
+//! The staged colour solve (card 4-15, reworked in card 4-30): the constraints of one colour are cut
+//! into fixed chunks, the chunks run through a scheduler (or on the calling thread), and the
+//! results are written back serially afterwards.
 //!
 //! Why it is data-race free in safe Rust and equal to the serial reference:
 //!
 //! * the constraints of a colour touch pairwise different moving bodies (`core::colouring`), so
 //!   what one constraint computes does not depend on what another computes in the same pass;
-//! * a chunk only **reads** the shared body array (`&[SolverBody]`) and works on copies; the one
-//!   thing it writes is the slot of each of its own constraints, behind a `Mutex` that no other
-//!   chunk locks (a member appears in exactly one chunk), so the lock is never contended;
+//! * a chunk only **reads** the shared constraint and body arrays and works on copies it builds in
+//!   its own output buffer; the one thing it writes is that buffer, behind a `Mutex` that no
+//!   other chunk locks (a chunk has its own buffer) and that it locks once per chunk, so the lock
+//!   is never contended and costs nothing per constraint;
 //! * the scheduler's join is the barrier between colours: the next colour starts after all chunks
-//!   returned, and sees the bodies written back by the serial scatter;
-//! * the scatter stores the copies of the dynamic bodies in the canonical member order, which is
-//!   the order the reference stores them in, and a static body is never stored (as in the
-//!   reference).
+//!   returned, and sees the constraints and bodies written back by the serial scatter;
+//! * the scatter stores the buffers in chunk order, which is the canonical member order, and it
+//!   stores the copies of the dynamic bodies in the order the reference stores them in, a static
+//!   body never (as in the reference).
+//!
+//! Card 4-30 replaced a lock and several copies of the whole record per constraint and pass (a
+//! `Mutex<Staged>` per constraint) by one lock per chunk and two copies (into the buffer, back in
+//! the scatter): the staged solve loop took 2.9 times the time of the serial one on one
+//! thread (`reviews/4-30.md`).
 //!
 //! The path assumes what the world guarantees before a solve: a constraint end that the colouring
 //! does not protect (a body that is not awake and dynamic) is never written back, because
@@ -25,7 +31,7 @@
 use super::constraint::{LANES, Pass, SolverBody, Staged, run_lanes};
 use base::fpenv::FpGuard;
 use jobs::scheduler::IScheduler;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 #[cfg(test)]
 thread_local! {
@@ -34,41 +40,41 @@ thread_local! {
     pub(super) static LANE_GROUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// A constraint of the step with its working copies, behind the lock a chunk takes to load and to
-/// store it (each member of a group is locked twice per pass, by one chunk only).
-pub(super) struct Slot(Mutex<Staged>);
+/// What one chunk of a pass produced: the constraints it ran with the copies of their bodies, and
+/// the index of each (a constraint with a missing body is skipped, as the reference skips it).
+pub(super) struct ChunkOut {
+    members: Vec<u32>,
+    staged: Vec<Staged>,
+}
 
-impl Slot {
-    pub(super) fn new(staged: &Staged) -> Self {
-        Self(Mutex::new(*staged))
+impl ChunkOut {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            members: Vec::with_capacity(capacity),
+            staged: Vec::with_capacity(capacity),
+        }
     }
+}
 
-    /// The contents (a copy). A poisoned lock is read as it is: a panic aborts the process, so no
-    /// reader can see the state of an unwound writer.
-    pub(super) fn load(&self) -> Staged {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner)
-    }
+/// The output buffers for a solver of at most `max_constraints` constraints cut into chunks of
+/// `chunk` (at least 1): one per chunk of the largest possible colour, each with room for a whole
+/// chunk, so a pass allocates nothing.
+pub(super) fn make_outputs(max_constraints: usize, chunk: usize) -> Vec<Mutex<ChunkOut>> {
+    let chunk = chunk.max(1);
+    (0..max_constraints.div_ceil(chunk))
+        .map(|_| Mutex::new(ChunkOut::with_capacity(chunk)))
+        .collect()
+}
 
-    pub(super) fn store(&self, staged: &Staged) {
-        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = *staged;
-    }
-
-    /// The slot indices of the two bodies of the constraint (for the tests).
-    #[cfg(test)]
-    pub(super) fn ends(&self) -> [usize; 2] {
-        let constraint = self.load().constraint;
-        [constraint.a, constraint.b]
-    }
-
-    /// Direct access when the slot is not shared (no lock is taken).
-    pub(super) fn get_mut(&mut self) -> &mut Staged {
-        self.0.get_mut().unwrap_or_else(PoisonError::into_inner)
-    }
+/// Locks a buffer; a poisoned lock is read as it is: a panic aborts the process, so no reader can
+/// see the state of an unwound writer.
+fn lock(out: &Mutex<ChunkOut>) -> MutexGuard<'_, ChunkOut> {
+    out.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// What every chunk of one pass over one colour shares.
 pub(super) struct ColourJob<'a> {
-    pub slots: &'a [Slot],
+    pub constraints: &'a [Staged],
     pub bodies: &'a [SolverBody],
     /// The constraints of the colour, in canonical order.
     pub members: &'a [u32],
@@ -76,6 +82,8 @@ pub(super) struct ColourJob<'a> {
     pub simd: bool,
     /// Constraints per chunk, at least 1.
     pub chunk: usize,
+    /// One buffer per chunk (at least [`Self::chunk_count`] of them).
+    pub outputs: &'a [Mutex<ChunkOut>],
 }
 
 impl ColourJob<'_> {
@@ -84,68 +92,85 @@ impl ColourJob<'_> {
         self.members.len().div_ceil(self.chunk.max(1))
     }
 
+    /// True when the buffers are enough for the chunks (always, for a solver that sized them with
+    /// [`make_outputs`] for its chunk size; if not, the caller runs the reference).
+    pub(super) fn has_room(&self) -> bool {
+        self.outputs.len() >= self.chunk_count()
+    }
+
     /// Runs chunk `index`: the members `index * chunk ..` up to the chunk size. The thread's
     /// floating-point control state is put to the deterministic default for the chunk and restored
     /// after it (`base::fpenv`; a target without the helper reports a value, which is ignored: it
     /// has nothing to set). The function is the opaque boundary the helper asks for: the guard is
-    /// taken here and the arithmetic runs in [`Self::run_group`], which is never inlined.
+    /// taken here and the arithmetic runs in [`Self::compute`], which is never inlined.
     pub(super) fn run_chunk(&self, index: usize) {
         let _guard = FpGuard::deterministic();
         let size = self.chunk.max(1);
         let from = index.saturating_mul(size);
         let to = from.saturating_add(size).min(self.members.len());
-        let Some(part) = self.members.get(from..to) else {
+        let (Some(part), Some(out)) = (self.members.get(from..to), self.outputs.get(index)) else {
             return;
         };
-        for group in part.chunks(LANES) {
-            self.run_group(group);
+        let mut out = lock(out);
+        out.members.clear();
+        out.staged.clear();
+        for &member in part {
+            self.load(member, &mut out);
         }
+        self.compute(&mut out.staged);
     }
 
-    /// Loads, runs and stores up to [`LANES`] members.
-    #[inline(never)]
-    fn run_group(&self, group: &[u32]) {
-        let loaded: [Option<Staged>; LANES] =
-            std::array::from_fn(|lane| group.get(lane).and_then(|&member| self.load(member)));
-        let done = self.compute(&loaded);
-        for (&member, staged) in group.iter().zip(&done) {
-            self.put(member, staged.as_ref());
+    /// Appends `member` with the current copies of its two bodies; nothing when a body is missing.
+    fn load(&self, member: u32, out: &mut ChunkOut) {
+        let Some(source) = self.constraints.get(member as usize) else {
+            return;
+        };
+        let ends = (
+            self.bodies.get(source.constraint.a),
+            self.bodies.get(source.constraint.b),
+        );
+        if let (Some(&a), Some(&b)) = ends {
+            out.members.push(member);
+            out.staged.push(Staged {
+                constraint: source.constraint,
+                a,
+                b,
+            });
         }
     }
 
     /// Runs the pass on the loaded constraints: four at once with lanes when the lane path is on
     /// and all four are there, one by one otherwise (the scalar reference).
-    fn compute(&self, loaded: &[Option<Staged>; LANES]) -> [Option<Staged>; LANES] {
-        if let ([Some(a), Some(b), Some(c), Some(d)], true) = (loaded, self.simd) {
-            let mut four = [*a, *b, *c, *d];
-            #[cfg(test)]
-            LANE_GROUPS.with(|count| count.set(count.get() + 1));
-            run_lanes(&mut four, self.pass);
-            return four.map(Some);
+    #[inline(never)]
+    fn compute(&self, staged: &mut [Staged]) {
+        if self.simd {
+            staged
+                .chunks_mut(LANES)
+                .for_each(|group| self.run_group(group));
+        } else {
+            self.run_each(staged);
         }
-        loaded.map(|staged| staged.map(|staged| self.run_scalar(staged)))
     }
 
-    fn run_scalar(&self, mut staged: Staged) -> Staged {
-        staged.run(self.pass);
-        staged
+    /// One group of the lane path: lanes when it holds four, the scalar reference otherwise.
+    fn run_group(&self, group: &mut [Staged]) {
+        match <&mut [Staged; LANES]>::try_from(&mut *group) {
+            Ok(four) => self.run_four(four),
+            Err(_) => self.run_each(group),
+        }
     }
 
-    /// Stores the result of `member` into its slot.
-    fn put(&self, member: u32, staged: Option<&Staged>) {
-        let slot = self.slots.get(member as usize);
-        slot.zip(staged)
-            .into_iter()
-            .for_each(|(slot, staged)| slot.store(staged));
+    fn run_four(&self, four: &mut [Staged; LANES]) {
+        #[cfg(test)]
+        LANE_GROUPS.with(|count| count.set(count.get() + 1));
+        run_lanes(four, self.pass);
     }
 
-    /// The slot of `member` with the current copies of its two bodies; `None` when a body is
-    /// missing (the reference skips such a constraint too).
-    fn load(&self, member: u32) -> Option<Staged> {
-        let mut staged = self.slots.get(member as usize)?.load();
-        staged.a = *self.bodies.get(staged.constraint.a)?;
-        staged.b = *self.bodies.get(staged.constraint.b)?;
-        Some(staged)
+    /// The scalar reference, one constraint after the other.
+    fn run_each(&self, staged: &mut [Staged]) {
+        for one in staged {
+            one.run(self.pass);
+        }
     }
 
     /// Runs every chunk on the calling thread, in order.
@@ -168,24 +193,43 @@ impl ColourJob<'_> {
             range.for_each(|index| self.run_chunk(index as usize));
         });
         // `IScheduler` runs no chunk when it returns an error, so running them all here once is
-        // right (a chunk is not idempotent: the impulses accumulate).
+        // right (a chunk clears its own buffer first, so running it again is harmless anyway).
         if ran.is_err() {
             self.run_inline();
         }
     }
 }
 
-/// Stores the copies of the dynamic bodies of `members` into `bodies`, in canonical order. Every
-/// member was loaded from valid body slots by the job, so the copies are never placeholders.
-pub(super) fn scatter(slots: &mut [Slot], bodies: &mut [SolverBody], members: &[u32]) {
-    for &member in members {
-        let Some(slot) = slots.get_mut(member as usize) else {
-            continue;
-        };
-        let staged = *slot.get_mut();
-        store_body(bodies, staged.constraint.a, staged.a);
-        store_body(bodies, staged.constraint.b, staged.b);
+/// Stores the results of the first `chunks` buffers into `constraints` and `bodies`, in canonical
+/// order. Every constraint in a buffer was loaded from valid body slots, so the copies are never
+/// placeholders.
+pub(super) fn scatter(
+    outputs: &mut [Mutex<ChunkOut>],
+    chunks: usize,
+    constraints: &mut [Staged],
+    bodies: &mut [SolverBody],
+) {
+    for out in outputs.iter_mut().take(chunks) {
+        let out = out.get_mut().unwrap_or_else(PoisonError::into_inner);
+        for (&member, staged) in out.members.iter().zip(&out.staged) {
+            store_result(constraints, bodies, member, staged);
+        }
     }
+}
+
+/// Stores one result: the constraint with its new impulses and the dynamic bodies it moved.
+fn store_result(
+    constraints: &mut [Staged],
+    bodies: &mut [SolverBody],
+    member: u32,
+    staged: &Staged,
+) {
+    store_body(bodies, staged.constraint.a, staged.a);
+    store_body(bodies, staged.constraint.b, staged.b);
+    constraints
+        .get_mut(member as usize)
+        .into_iter()
+        .for_each(|target| *target = *staged);
 }
 
 /// Stores `body` at `index` unless it is a static body (which no constraint changes).
