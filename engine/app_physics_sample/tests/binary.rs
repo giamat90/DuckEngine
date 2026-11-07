@@ -71,3 +71,39 @@ fn three_frames_are_drawn_in_a_window_where_a_device_exists() {
         other => panic!("exit code {other:?}: {stdout} {stderr}"),
     }
 }
+
+#[test]
+fn the_pyramid_scene_and_its_sub_steps_run_headless_with_their_own_stable_hashes() {
+    let hash = |args: &[&str]| {
+        let output = run(args);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        stdout(&output)
+    };
+    let stream = hash(&["--null", "--frames", "30"]);
+    let pyramid = hash(&["--null", "--frames", "30", "--scene", "pyramid"]);
+    let fine = hash(&[
+        "--null",
+        "--frames",
+        "30",
+        "--scene",
+        "pyramid",
+        "--sub-steps",
+        "8",
+    ]);
+    assert_eq!(
+        pyramid,
+        hash(&["--null", "--frames", "30", "--scene", "pyramid"])
+    );
+    assert_ne!(pyramid, stream);
+    assert_ne!(pyramid, fine);
+    assert_eq!(
+        stream,
+        hash(&["--null", "--frames", "30", "--scene", "stream"])
+    );
+}
+
+#[test]
+fn a_bad_scene_or_sub_step_count_exits_two() {
+    assert_eq!(run(&["--scene", "castle"]).status.code(), Some(EXIT_USAGE));
+    assert_eq!(run(&["--sub-steps", "0"]).status.code(), Some(EXIT_USAGE));
+}

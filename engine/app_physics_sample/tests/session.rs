@@ -215,3 +215,52 @@ fn a_crowded_arena_still_fits_the_frame() {
     assert_eq!(session.simulation().world().len(), MAX_BODIES as usize);
     assert_eq!(session.dropped(), 0);
 }
+
+#[test]
+fn the_scene_key_shows_the_pyramid_without_debug_lines_and_the_sub_steps_key_refines_it() {
+    let mut device = NullDevice::new();
+    let mut session = session_with(&mut device, 3);
+    assert_eq!(session.describe(), "stream, 4 sub-steps");
+    press(&mut session, keys::SCENE);
+    frames(&mut session, &mut device, 3);
+    assert_eq!(session.describe(), "pyramid, 4 sub-steps");
+    // 990 boxes and the floor and two walls: one sprite each, no debug sprites.
+    assert_eq!(session.sprites().len(), 993);
+    press(&mut session, keys::SUB_STEPS);
+    frames(&mut session, &mut device, 3);
+    assert_eq!(session.describe(), "pyramid, 8 sub-steps");
+    assert_eq!(session.simulation().steps(), 3);
+    // With the debug drawing on, the frame still fits (sprites past the capacity are counted).
+    press(&mut session, keys::DEBUG);
+    frames(&mut session, &mut device, 30);
+    assert!(session.sprites().len() > 993);
+    press(&mut session, keys::SCENE);
+    frames(&mut session, &mut device, 1);
+    assert_eq!(session.describe(), "stream, 8 sub-steps");
+}
+
+#[test]
+fn a_session_can_start_in_the_pyramid_scene() {
+    use app_physics_sample::session::Start;
+    use app_physics_sample::simulation::Setup;
+    let mut device = NullDevice::new();
+    let surface = device
+        .create_surface(render::desc::SurfaceDesc {
+            native_token: 1,
+            width: SIZE.0,
+            height: SIZE.1,
+        })
+        .unwrap_or_else(|_| unreachable!());
+    let program = Program::parse(GOLDEN_SHADER).unwrap_or_else(|_| unreachable!());
+    let start = Start {
+        surface,
+        size: SIZE,
+        seed: 3,
+        setup: Setup::pyramid(),
+    };
+    let started = Session::with_setup(&mut device, &program, start);
+    let mut session = started.unwrap_or_else(|_| unreachable!());
+    assert_eq!(session.describe(), "pyramid, 4 sub-steps");
+    frames(&mut session, &mut device, 2);
+    assert_eq!(session.sprites().len(), 993);
+}

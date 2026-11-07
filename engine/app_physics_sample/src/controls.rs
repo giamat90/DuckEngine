@@ -22,6 +22,12 @@ pub mod keys {
     /// D: toggle the debug drawing.
     #[cfg(windows)]
     pub const DEBUG: u32 = 0x20;
+    /// P: switch between the stream and the pyramid scene.
+    #[cfg(windows)]
+    pub const SCENE: u32 = 0x19;
+    /// S: switch between the default and the finer sub-steps of the solver.
+    #[cfg(windows)]
+    pub const SUB_STEPS: u32 = 0x1F;
 
     /// Escape.
     #[cfg(not(windows))]
@@ -32,10 +38,19 @@ pub mod keys {
     /// D: toggle the debug drawing.
     #[cfg(not(windows))]
     pub const DEBUG: u32 = 40;
+    #[cfg(not(windows))]
+    pub const SCENE: u32 = 33;
+    #[cfg(not(windows))]
+    pub const SUB_STEPS: u32 = 39;
 }
 
 /// Mouse button 0 is the primary one.
 const PRIMARY: u8 = 0;
+
+/// The requests a key press makes, as bits of [`Controls`]'s `asked`.
+const ASK_RESET: u8 = 1;
+const ASK_SCENE: u8 = 2;
+const ASK_SUB_STEPS: u8 = 4;
 
 /// A pixel count as `f32`; window sizes beyond 65535 are not expected and are capped there.
 fn pixels(count: u32) -> f32 {
@@ -49,7 +64,9 @@ pub struct Controls {
     cursor: Vec2,
     debug: bool,
     spawn: Option<Vec2>,
-    reset: bool,
+    /// Requests made by a key press and not yet taken: a set of [`ASK_RESET`] and friends.
+    asked: u8,
+    zoom_out: u32,
     quit: bool,
 }
 
@@ -62,7 +79,8 @@ impl Controls {
             cursor: Vec2::ZERO,
             debug: true,
             spawn: None,
-            reset: false,
+            asked: 0,
+            zoom_out: 1,
             quit: false,
         }
     }
@@ -97,8 +115,10 @@ impl Controls {
         }
         match scancode {
             keys::ESCAPE => self.quit = true,
-            keys::RESET => self.reset = true,
+            keys::RESET => self.asked |= ASK_RESET,
             keys::DEBUG => self.debug = !self.debug,
+            keys::SCENE => self.asked |= ASK_SCENE,
+            keys::SUB_STEPS => self.asked |= ASK_SUB_STEPS,
             _ => {}
         }
     }
@@ -127,11 +147,40 @@ impl Controls {
 
     /// True once per press of the reset key.
     pub fn take_reset(&mut self) -> bool {
-        std::mem::take(&mut self.reset)
+        self.take(ASK_RESET)
+    }
+
+    /// True once per press of the scene key.
+    pub fn take_scene(&mut self) -> bool {
+        self.take(ASK_SCENE)
+    }
+
+    /// True once per press of the sub-steps key.
+    pub fn take_sub_steps(&mut self) -> bool {
+        self.take(ASK_SUB_STEPS)
+    }
+
+    /// True once after the request `ask` was made.
+    fn take(&mut self, ask: u8) -> bool {
+        let made = self.asked & ask != 0;
+        self.asked &= !ask;
+        made
+    }
+
+    /// Sets how many times more of the world a pixel covers (1 is 20 pixels to the metre); a
+    /// click is placed with it.
+    pub fn set_zoom_out(&mut self, zoom_out: u32) {
+        self.zoom_out = zoom_out.max(1);
+    }
+
+    /// Switches the debug drawing on or off.
+    pub fn set_debug(&mut self, debug: bool) {
+        self.debug = debug;
     }
 
     fn cursor_in_world(&self) -> Vec2 {
-        to_world(self.cursor)
+        let zoom = f32::from(u16::try_from(self.zoom_out).unwrap_or(u16::MAX));
+        to_world(self.cursor * zoom)
     }
 }
 
@@ -265,5 +314,43 @@ mod tests {
         assert!(controls.debug());
         assert!(!controls.quit());
         assert!(!controls.take_reset());
+    }
+
+    #[test]
+    fn the_scene_and_sub_steps_keys_ask_once_per_press() {
+        let mut controls = Controls::new(VIEW);
+        assert!(!controls.take_scene() && !controls.take_sub_steps());
+        controls.apply(&key(keys::SCENE, Action::Press));
+        assert!(controls.take_scene());
+        assert!(!controls.take_scene());
+        assert!(!controls.take_sub_steps());
+        controls.apply(&key(keys::SUB_STEPS, Action::Press));
+        controls.apply(&key(keys::SUB_STEPS, Action::Repeat));
+        assert!(controls.take_sub_steps());
+        assert!(!controls.take_sub_steps());
+        controls.apply(&key(keys::SCENE, Action::Release));
+        assert!(!controls.take_scene());
+    }
+
+    #[test]
+    fn a_zoomed_out_view_places_a_click_further_out_in_the_world() {
+        let mut controls = Controls::new(VIEW);
+        controls.set_zoom_out(2);
+        // 20 pixels right of the middle is 2 m at 10 pixels to the metre.
+        controls.apply(&mouse(400.0 + 20.0, 225.0));
+        controls.apply(&click(PRIMARY, Action::Press));
+        assert_eq!(controls.take_spawn(), Some(Vec2::new(2.0, 0.0)));
+        controls.set_zoom_out(0);
+        controls.apply(&click(PRIMARY, Action::Press));
+        assert_eq!(controls.take_spawn(), Some(Vec2::new(1.0, 0.0)));
+    }
+
+    #[test]
+    fn the_debug_drawing_can_be_set_directly() {
+        let mut controls = Controls::new(VIEW);
+        controls.set_debug(false);
+        assert!(!controls.debug());
+        controls.set_debug(true);
+        assert!(controls.debug());
     }
 }
