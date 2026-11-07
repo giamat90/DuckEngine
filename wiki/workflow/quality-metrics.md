@@ -99,7 +99,7 @@ Exception for instruction counts (card 4-23): a count under `valgrind --tool=cal
 | Graphics/OS validation errors (Vulkan validation layers, D3D debug layer, GL debug output) in contract and sample runs | 0 |
 | Red-first compliance (`test:` commit failing before `feat:`) in L0-L2 | 100% of sampled commits |
 | Design note present for each new module / port | required |
-| **Review report** `reviews/<task-id>.md` present for the reviewed SHA, **0 open blocker/major findings**, reviewer session differs from author session, loop count <= 3 | required (traceable, not unforgeable) |
+| **Review report** `reviews/<task-id>.md` present for the reviewed SHA, **0 open blocker/major findings**, reviewer is a separate agent from the author (roles are named; no session links or identifiers, card 4-26), loop count <= 3 | required (traceable, not unforgeable) |
 | Revert / rework rate | trend only |
 
 ### 2.6 Process

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 license-file.workspace = true
 description = "Throw-away harness of the ADR-0004 spike (card 4-5): four std-only work distribution candidates behind the jobs IScheduler, synthetic workloads, report only."
 

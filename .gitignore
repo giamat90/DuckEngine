@@ -4,6 +4,10 @@ GiaMat90_ssh*
 *.pem
 *.key
 *.pfx
+*.p12
+id_rsa*
+id_ed25519*
+.netrc
 .env
 .env.*
 secrets/
@@ -13,6 +17,8 @@ secrets/
 
 # Rust build output
 /target/
+**/target/
+*.pdb
 
 # Coverage, profiling and mutation output
 *.profraw

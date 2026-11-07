@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 license-file.workspace = true
 description = "Layer 1 jobs crate: the IScheduler port, the inline scheduler, the order-changing test schedulers, the work-stealing pool and the scheduler contract suite."
 

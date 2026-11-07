@@ -20,7 +20,7 @@ settings, Personal access tokens, Fine-grained tokens).
 | Repository permission **Pull requests** | Read and write (open PRs, merge them) |
 | Repository permission **Actions** | Read (read CI runs and logs) |
 | Repository permission **Metadata** | Read (GitHub adds it automatically) |
-| Repository permission **Workflows** | Read and write (decision of 2026-10-25, card 0c-8: the owner keeps it on permanently so governance tasks can push `.github/workflows/*`; the owner reads every workflow diff, see section 4) |
+| Repository permission **Workflows** | Read and write was the decision of 2026-10-25 (card 0c-8). On the public repository (card 4-26) the owner drops it: for a governance task that changes `.github/workflows/*` the owner enables it for that push only; the owner reads every workflow diff, see section 4 |
 | Everything else | **No access**: in particular not Commit statuses (tried, it does not help, see below), Administration, Secrets, Environments, Variables, Webhooks, Issues |
 
 Finding (2026-10-25): `gh pr checks` and `gh pr view --json statusCheckRollup`
@@ -60,7 +60,7 @@ python tools/token-probe/probe.py
 
 The probe uses whatever token `gh` has. Creating its branch triggers a CI run
 on that branch (`ci.yml` runs on every push), a few Actions minutes each time
-(2,000 per month on Free), so run it when the token changes, not casually.
+(free for standard runners on a public repository; 2,000 per month on a private Free one), so run it when the token changes, not casually.
 It creates one throwaway branch `agent/token-probe`, always deletes it, never
 touches `main`, and prints probe names and HTTP statuses only.
 
@@ -85,7 +85,7 @@ first two.
 
 ## 4. Limits to know
 
-- GitHub Free has no branch protection or rulesets ([github-plan-findings](../../wiki/workflow/github-plan-findings.md)).
+- No branch protection or ruleset is configured: it was a plan limit while the repository was private and is the owner's choice now ([github-plan-findings](../../wiki/workflow/github-plan-findings.md)).
   A token with Contents write can push to `main`; "never push to `main`" is a
   written rule, not enforced by this token.
 - With the Workflows permission the agent can push changes under

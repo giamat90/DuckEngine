@@ -20,13 +20,22 @@ Governance task (owner-declared). Files: `.github/workflows/release.yml`,
    metric report, `baselines.json` (outside git, a Release asset) and `SHA256SUMS`;
    the workflow adds `THIRD_PARTY.md` and a changelog.
 5. A **draft** Release is created with the assets (the tag is created at the merge commit),
-   then published. The repository is private, so the Release is private.
+   then published. The repository is public, so the Release is public: anyone can read the assets listed below, and GitHub adds the source archives of the tag.
 6. Before anything is built, `check_squash_subject.py` compares the commit subject with the PR title
    (number from the trailing `(#N)`, title read with `gh api`, so the token also has `pull-requests: read`).
    A mismatch, a missing `(#N)` or a direct push fails the run and publishes nothing; the next merge
-   releases both, as for any failed run. This is how a wrong squash subject is caught on the Free plan.
+   releases both, as for any failed run. This is how a wrong squash subject is caught without branch protection.
 7. The workflow never commits or pushes to a branch. It uses only `GITHUB_TOKEN`
    with `contents: write`; no extra secrets.
+
+## What a release contains (public since the repository became public, card 4-26)
+
+Seven assets, pinned by `test_make_assets.py` (`test_writes_exactly_the_expected_files`, with the two extras):
+`duckengine-vX.Y.Z-source.tar.gz` (`git archive` of the tree at the merge commit: source, wiki, reviews,
+tools), `THIRD_PARTY.md`, `CHANGELOG.md` (commit subjects since the previous tag), `metric-report.md`
+and `dummy-artifact.txt` (both placeholders), `baselines.json` (version, commit, no metrics) and
+`SHA256SUMS`. Nothing else is published: no binaries, no credentials, nothing that is not already in the
+repository. The workflow was not changed by card 4-26; only its wording.
 
 ## Why two merges cannot get the same version
 
@@ -55,7 +64,7 @@ Drafts are found through the API (a draft has no tag, so `gh release view TAG` c
 `pr-title.yml` (event `pull_request`, read-only token) runs `check_pr_title.py` from the **base**
 commit, with the title passed through an environment variable. On the PR that introduces the checker
 it prints a notice and passes (no checker in the base yet); this is deliberate.
-Merging is policy on the Free plan, so the check is not enforced by branch protection.
+Merging is policy (no branch protection is configured, by the owner's choice), so the check is not enforced by branch protection.
 
 ## Governance guard and CI on `main` (card 0b-8)
 

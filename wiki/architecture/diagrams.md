@@ -362,10 +362,10 @@ sequenceDiagram
   CC->>CI: open PR
   CI->>CI: classifier, tests, coverage, mutation, lint, perf, determinism
   alt all green
-    CC->>CC: squash-merge after green CI (Free plan: no auto-merge)
+    CC->>CC: squash-merge after green CI (auto-merge is not used)
     CI->>Rel: merge event
     Rel->>Rel: version from Conventional Commits (every merge bumps)
-    Rel-->>PO: private GitHub Release (source workspace, tools, samples, metrics)
+    Rel-->>PO: public GitHub Release (source workspace, tools, samples, metrics)
   else red
     CI-->>CC: failures
     CC->>CC: fix and re-run (pause for owner only if product behaviour or metrics move)

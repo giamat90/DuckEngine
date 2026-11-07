@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 license-file.workspace = true
 description = "Deliberately weakly tested control for gate G1 (mutation testing must score it low); not engine code."
 

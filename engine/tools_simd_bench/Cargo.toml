@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 license-file.workspace = true
 description = "Dev-time benchmark of the SIMD kernel against scalar loops (gate G4, card 1-33); report only."
 

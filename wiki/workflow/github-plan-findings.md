@@ -1,5 +1,7 @@
 # GitHub plan findings (V1) `[F]`
 
+> **Public repository update (2026-11-07, card 4-26).** Sections 1 to 4 are the findings of 2026-10-24 for a **private** repository and are kept as a dated record. The repository is public since at most 2026-11-07; what changed is in section 5. Where a sentence below says the plan "cannot" do something, read it as "could not while the repository was private".
+
 Checked 2026-10-24 for card 0a-1. Account `giamat90`, GitHub Free, private repository `giamat90/DuckEngine`. Owner decision: stay on the free plan, no upgrade ([tooling-and-ci](tooling-and-ci.md) section on branch protection).
 
 Method: `gh api` probes against the real repository, then GitHub docs for what a probe cannot show. "Probed" = observed on this repo; "docs" = from GitHub documentation, not observed.
@@ -41,4 +43,49 @@ Not checked: the exact plan name and billing page (the API needs the `user` scop
 
 1. **Stay on Free** (current). Policy-only merging, no auto-merge, minutes budgeted as above.
 2. **GitHub Pro** (paid, personal account): branch protection, 3,000 minutes, environments on private repos per the docs. Whether auto-merge and rulesets then work on a personal private repo, and whether merge queue is possible at all (it may need an organisation), is not verified here.
-3. **Public repository**: unlocks everything, rejected by the owner (private, proprietary).
+3. **Public repository**: unlocks branch protection, rulesets and environments; rejected by the owner on 2026-10-24 (private, proprietary), adopted in November 2026 by company policy (section 5).
+
+## 5. Public repository (update 2026-11-07, card 4-26)
+
+Probed on 2026-11-07 (`gh api`): the repository answers `private: false`; `branches/main/protection` answers `404 Branch not protected` (it answered 403 "Upgrade to GitHub Pro or make this repository public" while private); the rulesets, environments and secrets endpoints answer (0 rules, 0 environments, 0 secrets). Secret scanning and push protection read `disabled`. Fork pull-request approval reads `first_time_contributors`; the default token permission reads `read`; the workflow token cannot approve pull requests (`can_approve_pull_request_reviews: false`).
+
+| Feature | Public repo on Free | Evidence |
+|---|---|---|
+| Branch protection, rulesets, required checks | **Reachable**; not configured | probed (404 and a rulesets answer instead of 403) |
+| Environments and deployment protection | **Reachable**; none created | probed (empty list); behaviour of protection rules [K] |
+| Auto-merge, merge queue | Auto-merge setting reachable [K, not re-tested]; merge queue not for a personal-account repository [K] | docs, not verified |
+| Standard hosted runner minutes | **Free** for public repositories (Linux and Windows x64) | docs.github.com "About billing for GitHub Actions", read 2026-11-07 |
+| Linux arm64 standard runner (`ubuntu-24.04-arm`) | Free for public repositories [K]: the page read does not address it | not verified |
+| Secret scanning, push protection, Dependabot alerts, private vulnerability reporting | Free for public repositories [K] | docs, not verified here; the owner switches them on ([public-repository-settings](#public-repository-settings-the-owner-keeps) below) |
+| Artifact and cache quotas | Apply to private repositories only [K] | docs, not verified |
+
+What the owner chose (card 4-26, 2026-11-07): enforcement stays **policy, not enforcement**, and the develop-branch workflow with no CI on `develop` pull requests stays. These are now **choices**, no longer limits of the plan: a ruleset on `main` and `develop` could be switched on later without changing any tool. If one is, note that `ci` runs only on `main` and by hand, so a required check named `ci` would block every pull request for ever; only checks that report on pull requests (`title`, `guard`, `gates` of `pr-title`, `governance-guard`, `trusted-pr-gates`) could be required.
+
+Sections 2 and 3 above keep their reasoning as history. The minutes budget (section 3) no longer binds for hosted standard runners; the remaining reasons to keep `ci` off `develop` are the wall clock of the long jobs (`tsan` about 29 minutes in the card 4-21 hosted run; `physics_icount` has a 40-minute limit, its run time [K]) and concurrency limits.
+
+Workflow-file changes and the agent token: the owner is dropping the Workflows scope from the agent's fine-grained token (owner decision of card 4-26; that it is done is the owner's to-do and not verified here [K]; a leaked token on a public repository could rewrite workflows). A pull request that changes a file under `.github/workflows/` therefore cannot be pushed by the agent until the owner enables the scope for that push; the agent says so in the report and stops, the owner enables the scope, the agent pushes, the owner drops the scope again.
+
+## Public repository: settings the owner keeps
+
+Settings are the owner's, in the GitHub UI; the agent cannot set them (the token has no Administration scope). The repository is a trust boundary now:
+
+```mermaid
+flowchart LR
+  F["Fork pull request (anyone)"] -->|"into develop: approval for first-time contributors"| W["pull_request workflows: pr-title, governance-guard<br/>read-only token, no secrets"]
+  F -->|"into main only: pull_request_target, base version"| T["trusted-pr-gates<br/>base tools, PR tree is data"]
+  O["Owner and agent push"] -->|"pull request, owner approval of the diff hash"| D["develop"]
+  O -->|"governance task or release batch"| M["main"]
+  M --> C["ci and release<br/>release uses contents: write"]
+  C --> R["public GitHub Release and tag"]
+```
+
+| Setting | Value | Why |
+|---|---|---|
+| Fork pull-request workflows | keep "Require approval for first-time contributors" | owner decision; "all outside collaborators" is stricter and can be chosen later |
+| Secret scanning and push protection | on | free for public repositories; second line next to the history scan |
+| Private vulnerability reporting | on | the channel named in `SECURITY.md` |
+| Default workflow token | read | already so; workflows that write declare it |
+| Allow Actions to approve pull requests | off | already so |
+| Branch protection and rulesets | not configured (policy, owner choice) | section 5 above |
+| Collaborators | the owner only | outside contributions come as fork pull requests |
+| Issues | the owner's choice | `CONTRIBUTING.md` points bugs to issues and vulnerabilities to private reporting |

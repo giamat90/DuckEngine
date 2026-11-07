@@ -1,6 +1,6 @@
 # START HERE (handoff note for the first development session)
 
-Written 2026-10-24 at the end of the design session. Delete or replace this file once phase 0a is under way.
+Written 2026-10-24 at the end of the design session. Delete or replace this file once phase 0a is under way. Historic note: the repository was private when this was written; it is public under Apache-2.0 since card 4-26, so read "private repository" and "proprietary notice" below as history.
 
 ## State
 
