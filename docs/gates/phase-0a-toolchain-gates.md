@@ -50,7 +50,7 @@ configuration and the pass are evidenced, not a rejection.
 | Criterion | Result |
 |---|---|
 | PR pipeline without mutation <= 15 min wall | 58 s for the whole pipeline including the `metrics` job (mutation 3-9 s); all three jobs run in parallel |
-| Projected monthly Actions minutes at 20 PRs/month fit the plan | about 540 of 2,000 included minutes (27%) |
+| Projected monthly Actions minutes at 20 PRs/month fit the plan | about 540 of 2,000 included minutes (27%), as projected for a private repository; standard hosted runners are free on a public one |
 
 Projection: GitHub rounds each job up to a whole minute and bills Windows at 2x.
 One CI run is 3 Windows jobs x 1 min x 2 + 3 Linux jobs x 1 min = 9 billed
@@ -73,7 +73,7 @@ enforced by any tool yet, so a PR can break them while CI stays green:
 | `unsafe` allowlist and per-module budget | No mechanism. `skeleton-unsafe` is a per-crate `deny` plus one module-level `allow`; `undocumented_unsafe_blocks` is set only in that crate, and nothing stops another crate from defining its own `[lints]`. |
 | Miri, zero-allocation counting allocator, `disallowed-methods`, banned imports, 0 skipped tests | Not configured. |
 | Gate tools run from a trusted checkout of `main` | Partly (card 0b-8): `pr-title` and `governance-guard` do. CI still runs `check_digest.py` and `gates.toml` from the PR tree, so one PR can change digest, config and script together. |
-| `governance-guard` check | Built in card 0b-8 (`tools/gate-check/governance_guard.py`, workflow `governance-guard`); not a required check on the Free plan. |
+| `governance-guard` check | Built in card 0b-8 (`tools/gate-check/governance_guard.py`, workflow `governance-guard`); not a required check (merging is policy). |
 | Test code may use `unwrap`/`expect` | Clippy denies them in tests too; add `allow-unwrap-in-tests` to `clippy.toml` when the first test needs it. |
 
 ## Accepted by the owner (not changed here)

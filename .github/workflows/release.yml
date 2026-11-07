@@ -36,7 +36,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # The subject decides the version; the Free plan cannot force the squash message.
+          # The subject decides the version; branch protection does not force the squash message here.
           subject=$(git log -1 --format=%s)
           number=$(python tools/release/check_squash_subject.py number --subject="$subject")
           title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number" --jq .title)

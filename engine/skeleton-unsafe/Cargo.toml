@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 license-file.workspace = true
 description = "Walking-skeleton crate with one small unsafe function, to validate mutation testing on unsafe code; not engine code."
 

@@ -132,7 +132,7 @@ Only measurable rules are governed (owner decision, Q24). These are enforced as 
 | duplication | duplication detector |
 | magic numbers, dead code | Clippy lints, `dead_code` |
 | red-first compliance, no weakened/skipped tests, mutation score | CI scripts, mutation tool |
-| review report present, **0 open blocker/major**, reviewer session differs from author session | CI check on `reviews/<task-id>.md` (traceable, not unforgeable) |
+| review report present, **0 open blocker/major**, the reviewer is a separate read-only agent from the author (the report names roles; session links and session identifiers are not used, card 4-26) | CI check on `reviews/<task-id>.md` (traceable, not unforgeable) |
 | `PERF:` waiver count and justification | scan + benchmark link check |
 
 **Limits:** every proxy can be gamed (Goodhart, risk R-19). The review phase and the PO's product review are the counterweight.

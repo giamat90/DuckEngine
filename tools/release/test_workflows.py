@@ -330,7 +330,7 @@ class Ci(unittest.TestCase):
         self.assertEqual(job.count("if: steps.adapter.outputs.present == 'true'"), 3)
 
     def test_the_arm64_job_runs_on_a_hosted_arm_runner_and_proves_the_cpu(self):
-        # Card 2-10: a hosted ARM64 runner exists for this private repo (probe of 2026-11-01), so the NEON
+        # Card 2-10: a hosted ARM64 runner exists for this repository (probed while it was private, 2026-11-01), so the NEON
         # backend runs on real AArch64 hardware, not under an emulator.
         job = CI[CI.index("\n  arm64:") + 1:]
         following = re.search(r"\n  \w+:\n", job)
@@ -582,6 +582,91 @@ class Ci(unittest.TestCase):
                        "test_make_assets", "test_workflows", "test_check_squash_subject"):
             with self.subTest(module=module):
                 self.assertIn(module, CI)
+
+
+HOSTED_LABELS = ("ubuntu-latest", "windows-latest", "ubuntu-24.04-arm", "${{ matrix.os }}")
+UNTRUSTED_FIELDS = re.compile(r"\$\{\{\s*github\.(event\.(pull_request|issue|comment|review|head_commit|commits)\b|head_ref)")
+
+
+def public_repo_violations(text):
+    """Why a workflow is unsafe on a public repository (card 4-26); an empty list means it is fine.
+
+    Known limits: a runner label inside a matrix is not read (only the `${{ matrix.os }}` text is accepted; the
+    matrices in ci.yml list hosted labels), and the text `secrets.` is refused even in a comment.
+    """
+    problems = []
+    if "secrets." in text:
+        problems.append("uses a secret")
+    if re.search(r"(?m)^\s*runs-on:.*self-hosted", text):
+        problems.append("runs on a self-hosted runner")
+    for label in re.findall(r"(?m)^\s*runs-on:\s*(\S.*?)\s*$", text):
+        if label not in HOSTED_LABELS and "self-hosted" not in label:
+            problems.append("unknown runner " + label)
+    if not re.search(r"(?m)^permissions:\n  (contents|pull-requests): (read|write)\n", text):
+        problems.append("no top-level permissions block")
+    if re.search(r"(?m)^\s*(permissions:\s*)?write-all\s*$", text):
+        problems.append("write-all permissions")
+    if len(PINNED.findall(text)) != len(USES.findall(text)):
+        problems.append("an action is not pinned by commit")
+    if any(UNTRUSTED_FIELDS.search(block) for block in run_blocks(text)):
+        problems.append("an untrusted event field is expanded inside a shell script")
+    return problems
+
+
+class PublicRepositorySafety(unittest.TestCase):
+    """Invariants that must hold on every workflow while the repository is public (card 4-26)."""
+
+    GOOD = (
+        "permissions:\n  contents: read\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n"
+        "      - uses: actions/checkout@" + "a" * 40 + "\n      - run: echo hi\n"
+    )
+
+    def test_a_clean_workflow_has_no_violation(self):
+        self.assertEqual(public_repo_violations(self.GOOD), [])
+
+    def test_a_secret_is_refused(self):
+        bad = self.GOOD + "        env:\n          T: ${{ secrets.T }}\n"
+        self.assertIn("uses a secret", public_repo_violations(bad))
+
+    def test_a_self_hosted_runner_is_refused(self):
+        bad = self.GOOD.replace("ubuntu-latest", "[self-hosted, linux]")
+        self.assertIn("runs on a self-hosted runner", public_repo_violations(bad))
+
+    def test_an_unknown_runner_is_refused(self):
+        bad = self.GOOD.replace("ubuntu-latest", "my-box")
+        self.assertIn("unknown runner my-box", public_repo_violations(bad))
+
+    def test_a_missing_permissions_block_is_refused(self):
+        bad = self.GOOD.replace("permissions:\n  contents: read\n", "")
+        self.assertIn("no top-level permissions block", public_repo_violations(bad))
+
+    def test_write_all_is_refused(self):
+        bad = self.GOOD + "    permissions: write-all\n"
+        self.assertIn("write-all permissions", public_repo_violations(bad))
+
+    def test_an_unpinned_action_is_refused(self):
+        bad = self.GOOD.replace("a" * 40, "v4")
+        self.assertIn("an action is not pinned by commit", public_repo_violations(bad))
+
+    def test_a_pr_title_or_branch_name_inside_a_script_is_refused(self):
+        for field in ("github.event.pull_request.title", "github.head_ref"):
+            bad = self.GOOD.replace("echo hi", "echo ${{ " + field + " }}")
+            self.assertIn("an untrusted event field is expanded inside a shell script", public_repo_violations(bad))
+
+    def test_a_pr_title_passed_through_env_is_fine(self):
+        ok = self.GOOD + "      - name: t\n        env:\n          T: ${{ github.event.pull_request.title }}\n        run: echo \"$T\"\n"
+        self.assertEqual(public_repo_violations(ok), [])
+
+    def test_every_workflow_of_the_repository_is_safe_on_a_public_repository(self):
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            with self.subTest(workflow=path.name):
+                self.assertEqual(public_repo_violations(path.read_text(encoding="utf-8")), [])
+
+    def test_only_the_trusted_gates_use_pull_request_target(self):
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            if path.name != "trusted-pr-gates.yml":
+                with self.subTest(workflow=path.name):
+                    self.assertNotIn("pull_request_target", path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

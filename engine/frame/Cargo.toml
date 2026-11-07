@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 license-file.workspace = true
 description = "Layer 2 glue crate: the fixed-step accumulator of the frame loop (integer ticks, no clock)."
 

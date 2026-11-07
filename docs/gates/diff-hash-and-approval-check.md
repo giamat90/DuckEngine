@@ -69,8 +69,8 @@ The agent runs this tool by hand from its own checkout; it is not a workflow
 ## Status and limits
 
 - CI runs the tool's own tests (a seeded mismatch fails, a match passes, a
-  rebase keeps the hash). Nothing runs `check` automatically on a PR yet: on the
-  GitHub Free plan a required check cannot be enforced, and a PR-triggered
+  rebase keeps the hash). Nothing runs `check` automatically on a PR yet: no
+  required check is configured (merging is policy), and a PR-triggered
   workflow that reads the description needs the trusted-checkout design of
   0b-6/0b-7. Until then the agent runs `check` before every merge, as policy.
 - The `tools/templates/task-card.md` and the PR flow are unchanged; the record

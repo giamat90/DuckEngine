@@ -4,6 +4,8 @@ Decided by the owner (2026-10-24): the board is where the work is managed and wh
 
 Board: DuckEngine in workspace "Progetti SW" — https://trello.com/b/ZYrtuCUw/duckengine
 
+The board is private: the link above does not open for people outside the owner's workspace, and this repository is public. Everything a reader needs is in the repository (the card id names the branch and the review file); the board is only the owner's work queue.
+
 ## 1. Source of truth
 
 Git and the wiki are canonical (roadmap, ADRs, reviews, metric reports). The board is a **view and work queue**. If a card and the repo disagree, the repo wins and the card is fixed. Cards link to the evidence; they do not replace it.

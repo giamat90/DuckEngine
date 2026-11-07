@@ -7,8 +7,8 @@ SHA reviewed: <sha>
 Class: 1 | 2 | 3
 Classifier verdict: <class and reason, or "classifier not available yet" and who judged>
 Loops: <n> (maximum 3; after 3 stop and report)
-Author session: <identifier>
-Reviewer session: <identifier, must differ from the author session>
+Author: <role, for example implementer; no link or identifier of the run>
+Reviewer: <role, a separate read-only reviewer from the author; no link or identifier of the run>
 
 ## Summary verdict
 

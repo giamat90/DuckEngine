@@ -3,7 +3,7 @@ name: ci
 # Runs on pushes to main and on demand, not on every branch push (card 1-38, CI budget). Work happens
 # in `develop` and is validated locally; before an approval of a governance card the agent starts one run on the exact
 # commit (`gh workflow run ci.yml --ref <branch>`); the develop-to-main PR runs the full CI (card 2-9).
-# Merging is policy on the GitHub Free plan (no branch protection): the agent waits for green. On main it
+# Merging is policy (no branch protection or ruleset is configured, an owner choice): the agent waits for green. On main it
 # shows a broken merge result. It does not gate the release.
 on:
   push:
@@ -427,7 +427,7 @@ jobs:
         run: xvfb-run --auto-servernum cargo test -p adapter_render_gl --locked -- --nocapture
 
   # Card 2-10: the engine on real AArch64 hardware. A test run on 2026-11-01 showed that GitHub Free gives a
-  # hosted ARM64 Linux runner (`ubuntu-24.04-arm`) for this private repository, so the NEON backend of `simd`
+  # hosted ARM64 Linux runner (`ubuntu-24.04-arm`) for this repository (probed while it was private), so the NEON backend of `simd`
   # (card 2-7) is tested natively, not under an emulator. The adapters are left out (no GLFW or display
   # there; that is the job `glfw_linux`). On a tree without the NEON backend the same job tests the scalar
   # reference on AArch64. One Linux job, on `main` and by hand; billed as Linux (budget it as 1x).

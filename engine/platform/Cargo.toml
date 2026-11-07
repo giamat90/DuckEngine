@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 license-file.workspace = true
 description = "Layer 1 platform crate: the clock and thread ports, their std and Null implementations, and the contract suites."
 

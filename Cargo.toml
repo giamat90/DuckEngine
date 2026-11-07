@@ -6,6 +6,7 @@ members = ["engine/skeleton", "engine/skeleton-unsafe", "engine/g1-control", "en
 edition = "2024"
 rust-version = "1.94"
 publish = false
+license = "Apache-2.0"
 license-file = "LICENSE"
 
 [workspace.lints.rust]

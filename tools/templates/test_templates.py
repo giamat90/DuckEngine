@@ -39,8 +39,8 @@ REVIEW_REPORT_HEADER_FIELDS = (
     "Class",
     "Classifier verdict",
     "Loops",
-    "Author session",
-    "Reviewer session",
+    "Author",
+    "Reviewer",
 )
 
 REVIEW_CHECKLIST_AREAS = (
@@ -117,6 +117,10 @@ class ReviewReportTemplate(unittest.TestCase):
         for field in REVIEW_REPORT_HEADER_FIELDS:
             with self.subTest(field=field):
                 self.assertRegex(self.text, rf"(?m)^{re.escape(field)}: \S")
+
+    def test_no_session_link_or_session_identifier_is_asked_for(self):
+        # Card 4-26 (owner): the repository is public, so reports record roles, never session ids or URLs.
+        self.assertNotRegex(self.text.lower(), r"session")
 
     def test_loops_field_asks_for_a_number(self):
         self.assertRegex(self.text, r"(?m)^Loops: <n>")

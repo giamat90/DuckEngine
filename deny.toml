@@ -26,7 +26,7 @@ confidence-threshold = 0.9
 unused-allowed-license = "allow"
 
 [licenses.private]
-# Workspace crates are proprietary (`license-file = "LICENSE"`).
+# Workspace crates are Apache-2.0 (`license = "Apache-2.0"`, ADR-0023) and unpublished (`publish = false`).
 ignore = true
 
 [bans]

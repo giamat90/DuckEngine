@@ -1,6 +1,6 @@
 # How CI works (UML) `[P]`
 
-All diagrams are Mermaid text, so they are versioned with the wiki and render on GitHub. They are views of the workflow files in `.github/workflows/` and of the pages named in each caption; if a diagram and a workflow disagree, the workflow wins and the diagram is fixed. Merging is policy, not enforcement, on the GitHub Free plan ([github-plan-findings](github-plan-findings.md)): no check below can be made "required", so a red check is a stop by policy.
+All diagrams are Mermaid text, so they are versioned with the wiki and render on GitHub. They are views of the workflow files in `.github/workflows/` and of the pages named in each caption; if a diagram and a workflow disagree, the workflow wins and the diagram is fixed. Merging is policy, not enforcement ([github-plan-findings](github-plan-findings.md)): no check below is configured as "required" (on the private Free repository it could not be; on the public one it could, and the owner keeps policy by choice, card 4-26), so a red check is a stop by policy.
 
 Index: 1 Workflows and triggers (component) · 2 Jobs of the `ci` workflow (activity) · 3 Trusted and untrusted inputs (component) · 4 One task from PR to release (sequence) · 5 The `trusted-pr-gates` checks (activity) · 6 Release (activity) · 7 Verdict of a pull request (state)
 
@@ -247,7 +247,7 @@ flowchart TB
 
 ## 7. Verdict of a pull request
 
-Source: sections 1 to 6. This is the policy view; GitHub itself does not enforce it on the Free plan.
+Source: sections 1 to 6. This is the policy view; GitHub itself does not enforce it, because no ruleset is configured (owner choice).
 
 ```mermaid
 stateDiagram-v2

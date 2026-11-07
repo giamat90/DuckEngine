@@ -1,6 +1,6 @@
 # Pipeline runbook (card 0b-7)
 
-The steps Claude Code follows for every task, on the GitHub Free plan. This page is the dummy task of
+The steps Claude Code follows for every task, under the policy-only merge rule. This page is the dummy task of
 card 0b-7: its merge is the end-to-end proof that the pipeline of phase 0b works. Canonical rules
 stay in `wiki/workflow/delivery-pipeline.md` and `board-management.md`.
 
@@ -15,7 +15,7 @@ stay in `wiki/workflow/delivery-pipeline.md` and `board-management.md`.
 6. **CI**: `gh run list --commit <sha>`, then `gh run watch <id> --exit-status`. No green run, no merge.
 7. **Merge** (policy, not enforcement): `gh pr merge N --squash --subject "<PR title> (#N)" --body "" --match-head-commit <sha>`; the sha is the head that was
    approved, checked and watched in CI, so a later push cannot slip in.
-8. **Release**: `release.yml` computes the version from the squash commit and publishes a private
+8. **Release**: `release.yml` computes the version from the squash commit and publishes a public
    Release. Check it with `gh release list` and move the card PR / CI, then Done.
 
 ## Controls: enforced and policy only (state after phase 0b, review in `reviews/0b-7.md`)
@@ -25,7 +25,7 @@ stay in `wiki/workflow/delivery-pipeline.md` and `board-management.md`.
 | `ci` on every push (fmt, clippy, build, test, digest check, all tool tests; the report-only metrics job skips `main`) | enforced by Actions, but not required for merging; on `main` it is a signal of a broken merge result and does not gate the release |
 | `pr-title` check | enforced by Actions, not required |
 | Squash subject equals the PR title | enforced in `release.yml` before anything is built (`check_squash_subject.py`); a mismatch blocks that release, the next merge releases both |
-| Never push to `main`; merge only after approval | policy only (the token could push; no branch protection on Free) |
+| Never push to `main`; merge only after approval | policy only (the token could push; no branch protection configured, an owner choice) |
 | Owner approval and its record in the PR description | policy only; `diff_hash.py check` is run by the agent |
 | Merged head equals the approved, checked head | policy, helped by `--match-head-commit` |
 | Gate tools run from a trusted `main` checkout | built for `pr-title` and `governance-guard`; `ci` still runs its tool tests from the PR tree (phase 0c) |
