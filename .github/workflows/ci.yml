@@ -264,6 +264,7 @@ jobs:
           retention-days: 30
 
   # Gate G2: dependency policy (licences, bans, sources, advisories).
+  # One Linux leg: deny.toml [graph].targets names the Windows and the Linux triple, so the graph checked is the same as on two legs (card 4-28).
   deny:
     name: cargo-deny (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -275,9 +276,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            asset: cargo-deny-0.20.2-x86_64-pc-windows-msvc
-            sha: 975a22143262fd27476d19ee00c7af67978426e40e1dee94eed6bbade1cf87dc
           - os: ubuntu-latest
             asset: cargo-deny-0.20.2-x86_64-unknown-linux-musl
             sha: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f

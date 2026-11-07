@@ -74,7 +74,7 @@ flowchart TB
     c4b --> c5["report artifact (report only)"]
   end
 
-  subgraph deny["deny (Windows and Ubuntu)"]
+  subgraph deny["deny (Ubuntu; the graph names both targets, card 4-28)"]
     direction TB
     d1["cargo-deny: licences, bans, sources, advisories"]
   end
