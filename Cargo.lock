@@ -22,6 +22,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "app_physics_sample"
+version = "0.1.0"
+dependencies = [
+ "adapter_render_gl",
+ "adapter_window_glfw",
+ "app_sprite_sample",
+ "assets",
+ "base",
+ "frame",
+ "physics",
+ "platform",
+ "render",
+]
+
+[[package]]
 name = "app_runtime"
 version = "0.1.0"
 dependencies = [

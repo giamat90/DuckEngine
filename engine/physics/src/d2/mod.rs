@@ -3,6 +3,7 @@
 //! shapes of [`Shape2`]. Applications use the aliases of this module.
 
 mod aabb;
+mod debug_draw;
 mod joint;
 mod manifold;
 mod narrowphase;
@@ -25,6 +26,7 @@ pub use crate::core::{
     SolverStats,
 };
 pub use aabb::Aabb2;
+pub use debug_draw::{CIRCLE_SEGMENTS, DebugColour, IPhysicsDebugDraw, NORMAL_LENGTH, draw_debug};
 pub use joint::{AngleLimits, DistanceJoint2, Joint2, LengthLimits, Motor, RevoluteJoint2, Spring};
 pub use manifold::{ContactPoint2, FeatureId, MAX_MANIFOLD_POINTS, Manifold2};
 pub use rot::Rot2;

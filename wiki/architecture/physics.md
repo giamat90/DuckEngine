@@ -23,7 +23,7 @@ The phase 4 shape of the crates, the job system, the determinism harness, the ca
 - `physics` is a **standalone L2 module**: depends only on `base` and `jobs`. It does **not** know about the ECS, scene, or renderer. This keeps its internal data layout free to be optimal and makes it testable in isolation.
 - API is **handle-based** (bodies, shapes, joints are ids), like Box2D v3 [S](https://box2d.org/posts/2024/08/releasing-box2d-3.0); a C ABI exists only at plug-in boundaries (N-11), so the dimension-generic core is not forced through it.
 - Integration with the ECS is a thin `physics_sync` system: write kinematic targets/forces in, read transforms out, using handles stored in components.
-- Debug visualisation through an optional `IPhysicsDebugDraw` port.
+- Debug visualisation through an optional `IPhysicsDebugDraw` port (as built in card 4-24: `physics::d2::IPhysicsDebugDraw` and `draw_debug`; the sample implements it, see [examples](examples.md) section 5).
 
 ## 2. Pipeline
 

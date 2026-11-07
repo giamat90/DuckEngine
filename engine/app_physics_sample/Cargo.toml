@@ -1,0 +1,22 @@
+[package]
+name = "app_physics_sample"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license-file.workspace = true
+description = "Layer 4 sample: falling boxes and discs stepped by the 2D physics world at a fixed step, drawn through the sprite batcher, with IPhysicsDebugDraw implemented as thin sprites (card 4-24)."
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+platform = { path = "../platform", version = "0.1.0" }
+render = { path = "../render", version = "0.1.0" }
+assets = { path = "../assets", version = "0.1.0" }
+physics = { path = "../physics", version = "0.1.0" }
+frame = { path = "../frame", version = "0.1.0" }
+app_sprite_sample = { path = "../app_sprite_sample", version = "0.1.0" }
+adapter_window_glfw = { path = "../adapter_window_glfw", version = "0.1.0" }
+adapter_render_gl = { path = "../adapter_render_gl", version = "0.1.0" }
+
+[lints]
+workspace = true
