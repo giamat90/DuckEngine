@@ -12,6 +12,7 @@ tools/arch-check/
 tools/wiki-lint/
 tools/lint-profile/
 tools/golden-check/
+tools/icount-gate/
 tools/release/
 tools/templates/
 tools/metrics/

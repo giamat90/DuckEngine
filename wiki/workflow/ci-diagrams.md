@@ -42,11 +42,11 @@ flowchart LR
 
 ## 2. Jobs of the `ci` workflow
 
-Source: `.github/workflows/ci.yml`. Ten independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
+Source: `.github/workflows/ci.yml`. Eleven independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
 
 ```mermaid
 flowchart TB
-  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism & tsan
+  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism & tsan & physics_icount
 
   subgraph g1["g1: build, test, fmt, clippy (Windows and Ubuntu)"]
     direction TB
@@ -124,7 +124,22 @@ flowchart TB
     t7 --> t8["cargo test -p physics: determinism, joints, parallel, parallel_allocation, stability (only if present)"]
   end
 
-  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism & tsan --> done(["all green = the commit may merge"])
+  subgraph physics_icount["physics_icount (Ubuntu x86-64, card 4-23): instruction count of the serial W1 workload, base against head"]
+    direction TB
+    p0["checkout main as trusted/, the base (main tip, or the commit before a push to main) as base/, the push as head/"] --> p0b{"tools/icount-gate and gates/benchmarks.toml on main?"}
+    p0b -- "no (before the card is merged)" --> p0c["summary: not run: icount-gate is not on main yet"]
+    p0b -- yes --> p1{"engine/tools_physics_bench/Cargo.toml: in base, in head"}
+    p1 -- "neither" --> p2["notice and summary: not run: physics benchmark tool absent (the only skip)"]
+    p1 -- "only in base" --> p3["RED: tool deleted"]
+    p1 -- "only in head (first release)" --> p4["install valgrind, build head, count it, summary: no baseline, recorded only"]
+    p1 -- "both" --> p5["install valgrind, build base and head, count each: 2 runs under callgrind, spread within the noise limit"]
+    p5 --> p6["icount_gate compare, bands from gates.toml of main"]
+    p6 -- "up to warn 5%" --> p7["green, table in the summary"]
+    p6 -- "above warn 5%" --> p8["warning annotation, still green"]
+    p6 -- "above fail 10%, or no count, or runs that disagree" --> p9["RED"]
+  end
+
+  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism & tsan & physics_icount --> done(["all green = the commit may merge"])
 ```
 
 ---
@@ -152,7 +167,7 @@ flowchart LR
   twf -- "judges; the PR cannot edit it, and it rejects a deleted or hollowed pwf" --> pwf
   ptools -. "unit tests in job g1, not a gate" .-> tools
 
-  note["Exceptions: arch-check runs cargo inside the PR tree and so honours its rust-toolchain.toml and .cargo/ (both protected paths). The PR can edit ci.yml, so the owner reads any workflow diff."]
+  note["Exceptions: arch-check runs cargo inside the PR tree and so honours its rust-toolchain.toml and .cargo/ (both protected paths). The PR can edit ci.yml, so the owner reads any workflow diff. Jobs that must run the pushed code (tsan, d2_determinism, physics_icount) execute it as the program under test; their verdict still comes from the trusted tools, and physics_icount reads the instruction count from valgrind's own log file, not from anything the program prints."]
   pwf --- note
 ```
 

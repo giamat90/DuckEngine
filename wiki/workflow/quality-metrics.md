@@ -78,6 +78,8 @@ Why mutation score: coverage says code *ran*; mutation testing says tests would 
 
 Benchmarks run on a **dedicated, stable machine** (shared CI runners are too noisy for 5% thresholds); PR runs use a "perf bot" comparing with main, nightly runs maintain the trend.
 
+Exception for instruction counts (card 4-23): a count under `valgrind --tool=callgrind` does not depend on the machine's load, so the physics gate runs on the hosted runner, base and head in one job (job `physics_icount` of `ci`; see [physics-and-jobs-v0](../architecture/physics-and-jobs-v0.md) section 7 and [ci-diagrams](ci-diagrams.md)). Wall-clock benchmarks keep the rule above.
+
 ### 2.5 Robustness
 
 | Check | Gate |
