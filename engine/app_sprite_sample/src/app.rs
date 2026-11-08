@@ -10,7 +10,7 @@ use crate::looping::{Step, count_frames, poll};
 use crate::sample::{GOLDEN_SHADER, Sample};
 use crate::scene::scene_for;
 use adapter_render_gl::GlDevice;
-use adapter_window_glfw::GlfwWindows;
+use adapter_window_glfw::{GlfwWindows, explain};
 use assets::dshd::Program;
 use platform::window::{Event, EventQueue, IWindowSystem, NativeToken, WindowDesc, WindowId};
 use render::desc::SurfaceDesc;
@@ -61,7 +61,8 @@ impl Opened {
     /// # Errors
     /// [`RunError::NoDevice`] when GLFW, the window or the device is not available.
     pub fn open(title: &'static str) -> Result<Self, RunError> {
-        let mut windows = GlfwWindows::load_default(1).map_err(|error| no_device("GLFW", error))?;
+        let mut windows =
+            GlfwWindows::load_default(1).map_err(|error| RunError::NoDevice(explain(error)))?;
         let desc = WindowDesc {
             title,
             width: WIDTH,

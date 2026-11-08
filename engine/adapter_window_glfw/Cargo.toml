@@ -12,7 +12,11 @@ description = "Layer 3 adapter: the window and event port on GLFW, loaded at run
 base = { path = "../base", version = "0.1.0" }
 platform = { path = "../platform", version = "0.1.0" }
 
+[build-dependencies]
+adapter_runtime_libs = { path = "../adapter_runtime_libs", version = "0.1.0" }
+
 [dev-dependencies]
+adapter_runtime_libs = { path = "../adapter_runtime_libs", version = "0.1.0" }
 platform = { path = "../platform", version = "0.1.0", features = ["contract-tests"] }
 
 # Not `workspace = true`: the workspace forbids unsafe code. This adapter denies it instead and

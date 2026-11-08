@@ -1,0 +1,12 @@
+[package]
+name = "adapter_runtime_libs"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+license-file.workspace = true
+description = "Layer 3 build helper: fetches a pinned runtime library, verifies its SHA-256 and places it next to the executables (card 4-35)."
+
+[lints]
+workspace = true

@@ -9,7 +9,7 @@
 //! ```
 
 use adapter_render_gl::GlContext;
-use adapter_window_glfw::GlfwWindows;
+use adapter_window_glfw::{GlfwWindows, explain};
 use platform::window::{Event, EventQueue, IWindowSystem, WindowDesc};
 use std::time::{Duration, Instant};
 
@@ -24,7 +24,7 @@ fn main() {
 
 /// Runs the demo; the error is the reason it could not start.
 fn run() -> Result<(), String> {
-    let mut windows = GlfwWindows::load_default(1).map_err(|e| format!("GLFW: {e}"))?;
+    let mut windows = GlfwWindows::load_default(1).map_err(explain)?;
     let desc = WindowDesc {
         title: "DuckEngine 3-9: clear colour",
         width: 640,

@@ -14,9 +14,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter_runtime_libs"
+version = "0.1.0"
+
+[[package]]
 name = "adapter_window_glfw"
 version = "0.1.0"
 dependencies = [
+ "adapter_runtime_libs",
  "base",
  "platform",
 ]
