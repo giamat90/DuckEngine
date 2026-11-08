@@ -19,3 +19,4 @@ pub mod offline;
 mod session;
 pub mod sound;
 mod voice;
+pub mod wav;

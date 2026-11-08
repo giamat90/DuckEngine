@@ -276,3 +276,26 @@ flowchart LR
 - **Real-time harness.** `tests/realtime_safety.rs` installs the counting allocator and runs 5 000 blocks of varying size with a 4-voice mixer that starts, retargets, stops and finishes voices and hits the capacity limit: zero allocations, reallocations and deallocations. A third test gives the mixer the only reference to a sound, renders until the voice ends and shows that `render` frees nothing; the free happens only when the caller drops the sound taken from `pop_finished`. A second test shows the harness does count the construction of a mixer.
 - **Fidelity tests.** `tests/mixer.rs` covers the closed forms of section 8: a sine voice equals the analytic sine, two voices sum, gain and pan match the law, a loop repeats at its point, pitch 2 doubles the speed, a rate conversion keeps the tone within the stated interpolation error (at most 1.7e-3 for 440 Hz at 24 kHz), ramps are linear and never jump.
 - **Not done here, on purpose.** The Clippy `disallowed-types` list (card 5-10, governance); buses, bus gain and mute (5-6); queues and the game-side handle API (5-5); the voice benchmark and its gate (5-8, governance for the gate).
+
+## 14. As built in card 5-4
+
+`audio::wav::WavDecoder` implements `IAudioDecoder` as section 7 describes; nothing in sections 1 to 13 changed. What the code settled:
+
+```mermaid
+flowchart TD
+  bytes["bytes (untrusted)"] --> riff["RIFF header: magic, WAVE"]
+  riff --> scan["scan chunks: id, size, body bounded by the input"]
+  scan -- "fmt " --> fmt["validate format: tag, channels, rate, bits, block align"]
+  scan -- "other" --> skip["skip (odd sizes padded)"]
+  scan -- "data" --> cap["frames whole? count within the cap?"]
+  fmt --> cap
+  cap --> convert["convert each sample to f32, refuse non-finite"]
+  convert --> sound["Sound (immutable)"]
+```
+
+- **Formats.** PCM 8 (unsigned), 16, 24 and 32 bits and float 32, 1 to 8 channels, the plain `fmt ` chunk and the extensible form (40 bytes; the sub-format GUID must be the standard one with a PCM or float tag; the valid bits may not exceed the container bits, and the container size decides the decoding). A tag or bit depth outside this list, a non-standard GUID or more than eight channels is `Unsupported`.
+- **Scaling.** 8-bit: `(b - 128) / 128`; 16, 24 and 32 bit: signed value divided by 2^15, 2^23 and 2^31, so the most negative value is exactly -1 and the most positive is just below 1. The 24-bit value is sign-extended by placing it in the top three bytes of an `i32` and shifting back.
+- **Errors by name.** Fewer than 12 bytes of a RIFF file, a chunk that announces more bytes than exist (a `data` size larger than the file included), and a file with a format but no `data`: `Truncated`. Wrong magic or not `WAVE`: `NotThisFormat`. Zero channels, zero rate, zero bits, a block align that does not match, a data size that is not a whole number of frames, a `fmt ` shorter than 16 bytes, two `fmt ` chunks, `data` before `fmt `, no `fmt `, a float sample that is NaN, infinite or above 1e6 in magnitude (`MAX_FLOAT_MAGNITUDE`; real headroom is far smaller, and a sum of such values could overflow in the mixer): `Invalid`. When a file has several faults the first check that fails names the error (the format tag is checked before the channel count, the channel count before the bit depth). A caller that tries several decoders in turn cannot tell a short non-WAV from a damaged WAV: both are `Truncated` below 12 bytes. More than `cap` samples: `TooLarge`.
+- **What is not trusted.** The RIFF size field is ignored (files with a wrong one load). Chunk sizes are trusted only up to the end of the input. Nothing is indexed without `get`, sizes and offsets use checked arithmetic, and the number of samples is compared with the cap before the output vector is reserved (with `try_reserve_exact`, so a failed reservation is `TooLarge`, not an abort; a test shows that an over-cap file allocates nothing); the cap defaults to 64 Mi samples (256 MiB) and `WavDecoder::with_max_samples` changes it. Each round of the chunk loop moves at least eight bytes forward. There is no `unsafe`.
+- **Tests.** `tests/wav.rs` (33 tests) and `tests/wav_allocation.rs` (2) build files from bytes: known samples at each depth, interleaving, the extensible form, unknown and odd-sized chunks, a wrong RIFF size, every truncation of a good file, the error list above, the cap, and a deterministic mutation loop (every byte of four seed files set to five extreme values, plus 12 000 random multi-byte mutations with truncation) that must never panic and never yield a non-finite sample. A last test plays a decoded sound in the mixer.
+- **Not done on purpose.** Streaming and other formats (Ogg Vorbis, Opus, FLAC) stay later plug-ins of the same port; a trailing partial frame is refused, not cut; `RIFF` size 0xFFFFFFFF streaming files (data size unknown) are refused as truncated; a `cargo fuzz` target is not added (a new tool and dependency; the in-test loop is the v0 substitute).
