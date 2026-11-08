@@ -113,6 +113,24 @@ impl GlfwWindows {
     }
 }
 
+/// A message for a person: what `error` of [`GlfwWindows::load_default`] means and what to do.
+/// A missing library names where it was looked for and how to fix it.
+#[must_use]
+pub fn explain(error: PlatformError) -> String {
+    if error != PlatformError::NotFound {
+        return format!("GLFW: {error}");
+    }
+    let names = DEFAULT_LIBRARIES.join(", ");
+    let fix = if cfg!(windows) {
+        "A normal `cargo build` copies glfw3.dll next to the program (it needs a network the first time; see the build warnings if it could not)"
+    } else {
+        "Install the distribution package of GLFW 3.3 or later"
+    };
+    format!(
+        "GLFW: library not found (looked for {names} next to the program and on the search path, and in {LIBRARY_VARIABLE} when set). {fix}, or set {LIBRARY_VARIABLE} to its full path."
+    )
+}
+
 /// A library that was found but failed says more than one that was not found.
 fn more_telling(old: PlatformError, new: PlatformError) -> PlatformError {
     if new == PlatformError::NotFound {
@@ -483,6 +501,18 @@ mod tests {
             drain(&mut queue);
         }
         assert_eq!(windows.destroy_window(id), Ok(()));
+    }
+
+    #[test]
+    fn a_missing_library_is_explained_with_where_it_was_looked_for_and_the_fix() {
+        let text = explain(PlatformError::NotFound);
+        assert!(text.contains(DEFAULT_LIBRARIES[0]), "{text}");
+        assert!(text.contains(LIBRARY_VARIABLE), "{text}");
+        assert!(text.contains("not found"), "{text}");
+        assert_eq!(
+            explain(PlatformError::Unsupported),
+            "GLFW: not supported on this platform"
+        );
     }
 
     #[test]

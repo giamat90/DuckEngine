@@ -1,0 +1,10 @@
+# The GLFW library this adapter loads at run time, and where the official copy comes from.
+# Read by build.rs through the helper crate adapter_runtime_libs. The same address and hashes are
+# in THIRD_PARTY.md (a test keeps the two in step). Linux uses the distribution's libglfw.so.3.
+file = glfw3.dll
+url = https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.bin.WIN64.zip
+archive_sha256 = 54efa829400f2a0537f742b2b3bdd74e437bb4f2f048e4b7d3c5557d11a611e6
+member = glfw-3.4.bin.WIN64/lib-vc2022/glfw3.dll
+file_sha256 = 4429adff46d4d1038bb5836cecc59661eef7126e4941de6fdfde8855e7c14bb1
+os = windows
+override = DUCK_GLFW_LIB
