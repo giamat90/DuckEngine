@@ -36,6 +36,22 @@ At the end of each phase: metrics report vs previous (see [quality-metrics §4](
 6. **Cut order when behind** (cheapest to drop first): second audio backend -> D3D12/Metal -> 3D phase scope (3D stays committed but is sequenced last, so it shrinks first) -> mutation testing on full runs -> ARM64 CI. Never cut: tests-first, arch checks, the null/headless adapters, benchmarks on hot paths.
 7. **Phase-end review** (not calendar-based): metrics trend, **product review** (run the sample, check the product view in the metric report), design notes accepted, one-line keep / cut / change per open item.
 
+## Outcomes since the end of phase 4 (cards 4-26 to 4-28, 4-32)
+
+- **4-26 / 4-27:** the repository is public under Apache-2.0 and was recreated with a clean history ([github-plan-findings](github-plan-findings.md) sections 5 and "Repository migration"). Hosted minutes stopped being the limit; the wall clock and one run per commit are.
+- **4-28:** `ci` runs once per commit on `main` and by hand (rule 2a of [delivery-pipeline](delivery-pipeline.md)); the Windows `cargo-deny` leg was dropped because the graph names both targets.
+- **Decision, not a change:** `tsan` and `physics_icount` stay mandatory jobs of `ci`. Making either opt-in would lower a gate, which is the owner's decision; the recommendation is not to (the cost is wall clock, not money). A flaky timing test in `tsan` is a test problem (card 4-37), not a reason to relax the job.
+- **4-32:** wording fixes only: the digest calls the benchmark gate by what it is (it runs on the release PR, not on card PRs into `develop`), Q20 of the risk register says the ADR-0018 spike is done, and `SECURITY.md` is explained against the tags that exist.
+
+```mermaid
+flowchart LR
+    A["4-26 public, Apache-2.0"] --> B["4-27 clean history"]
+    B --> C["4-28 one ci run per commit"]
+    C --> D{"make tsan / physics_icount opt-in?"}
+    D -- "no: that would lower a gate" --> E["jobs stay mandatory"]
+    C --> F["4-32 wording fixes: digest, Q20, tag note"]
+```
+
 ## Scope-control rules
 
 1. A new feature enters only if it serves the sample's exit criteria or a documented requirement.
