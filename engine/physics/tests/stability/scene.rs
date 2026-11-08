@@ -106,8 +106,21 @@ pub fn dynamic_ball(
 /// A pyramid of `rows` rows of boxes of half extent `half` standing on the floor, `rows` boxes in
 /// the bottom row: the shape of workload W1 (which has about 1,000 boxes of 0.5 m).
 pub fn pyramid(rows: u8, half: f32, sleep: SleepConfig) -> Result<Scene, PhysicsError> {
+    pyramid_with(rows, half, sleep, SolverConfig::DEFAULT)
+}
+
+/// [`pyramid`] with a chosen solver configuration.
+pub fn pyramid_with(
+    rows: u8,
+    half: f32,
+    sleep: SleepConfig,
+    solver: SolverConfig,
+) -> Result<Scene, PhysicsError> {
     let count = u32::from(rows) * (u32::from(rows) + 1) / 2;
-    let mut world = world_with_floor(count + 2, 0, sleep)?;
+    let mut cfg = config(count + 2, 0, sleep);
+    cfg.solver = solver;
+    let mut world = World::new(cfg)?;
+    static_box(&mut world, Vec2::new(0.0, -1.0), Vec2::new(50.0, 1.0))?;
     let mut tracked = Vec::new();
     place_pyramid(&mut world, &mut tracked, rows, half, 0.0)?;
     Ok(Scene {

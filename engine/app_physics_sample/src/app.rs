@@ -7,9 +7,9 @@
 
 use crate::args::Args;
 use crate::cli::{Report, RunError};
-use crate::headless::run_null;
-use crate::session::Session;
-use crate::simulation::DEFAULT_SEED;
+use crate::headless::run_null_with;
+use crate::session::{Session, Start};
+use crate::simulation::{DEFAULT_SEED, Setup};
 use app_sprite_sample::GOLDEN_SHADER;
 use app_sprite_sample::app::{EVENT_CAPACITY, FRAME, Opened, failed, first_size};
 use app_sprite_sample::looping::{Step, count_frames};
@@ -28,7 +28,7 @@ pub fn ticks_between(earlier: Instant, later: Instant) -> u64 {
 }
 
 /// The window and device opened, the shader asset loaded and the session built.
-fn start() -> Result<(Opened, Session), RunError> {
+fn start(setup: Setup) -> Result<(Opened, Session), RunError> {
     let mut opened = Opened::open(TITLE)?;
     let size = first_size(&mut opened)?;
     let surface = opened
@@ -40,8 +40,13 @@ fn start() -> Result<(Opened, Session), RunError> {
         })
         .map_err(failed)?;
     let program = Program::parse(GOLDEN_SHADER).map_err(failed)?;
-    let session =
-        Session::new(&mut opened.device, &program, surface, size, DEFAULT_SEED).map_err(failed)?;
+    let start = Start {
+        surface,
+        size,
+        seed: DEFAULT_SEED,
+        setup,
+    };
+    let session = Session::with_setup(&mut opened.device, &program, start).map_err(failed)?;
     Ok((opened, session))
 }
 
@@ -72,8 +77,13 @@ fn draw_frame(
 
 /// The loop: until `frames` frames are drawn (a minimised window draws none and does not count),
 /// the window is closed or Escape is pressed.
-fn run_window(frames: Option<u32>) -> Result<Report, RunError> {
-    let (mut opened, mut session) = start()?;
+fn run_window(frames: Option<u32>, setup: Setup) -> Result<Report, RunError> {
+    let (mut opened, mut session) = start(setup)?;
+    let mut shown = session.simulation().setup();
+    eprintln!(
+        "scene: {} (P switches scene, S switches sub-steps, R restarts)",
+        session.describe()
+    );
     let mut queue = EventQueue::with_capacity(EVENT_CAPACITY);
     let mut last = Instant::now();
     let drawn = count_frames(frames, |_| {
@@ -82,6 +92,10 @@ fn run_window(frames: Option<u32>) -> Result<Report, RunError> {
             return Ok(Step::Closing);
         }
         let step = draw_frame(&mut opened, &mut session, &mut last)?;
+        if session.simulation().setup() != shown {
+            shown = session.simulation().setup();
+            eprintln!("scene: {}", session.describe());
+        }
         std::thread::sleep(FRAME);
         Ok(step)
     })?;
@@ -98,12 +112,12 @@ fn run_window(frames: Option<u32>) -> Result<Report, RunError> {
 /// [`RunError::Failed`] when a later step fails.
 pub fn run(args: &Args) -> Result<Report, RunError> {
     if !args.null {
-        return run_window(args.frames);
+        return run_window(args.frames, args.setup());
     }
     let frames = args
         .frames
         .ok_or_else(|| RunError::Failed("`--null` needs `--frames N`".to_owned()))?;
-    run_null(frames)
+    run_null_with(frames, args.setup())
 }
 
 #[cfg(test)]
@@ -124,11 +138,13 @@ mod tests {
         let no_frames = Args {
             frames: None,
             null: true,
+            ..Args::default()
         };
         assert!(matches!(run(&no_frames), Err(RunError::Failed(_))));
         let args = Args {
             frames: Some(5),
             null: true,
+            ..Args::default()
         };
         assert_eq!(run(&args).map(|r| r.frames), Ok(5));
     }

@@ -9,7 +9,7 @@
 //!
 //! The colouring is greedy and serial, in the canonical constraint order (the order of the manifold
 //! list): a constraint takes the lowest colour that neither of its dynamic bodies uses yet. This is
-//! the constraint-graph colouring of `Box2D` v3 **[K]** without its preference for putting the
+//! the constraint-graph colouring of `Box2D` v3 **\[K\]** without its preference for putting the
 //! constraints against static bodies into the last colours. It depends on nothing but the input
 //! list, so it is the same on every run, thread count and platform.
 //!
@@ -22,7 +22,7 @@
 use super::cells::{change, index_u32, put, read};
 
 /// The most colours; a constraint past them goes to the overflow set. 24, the limit of `Box2D` v3
-/// **[K]**: the colour of a body is kept in one `u32` bit mask, and a body is rarely touched by
+/// **\[K\]**: the colour of a body is kept in one `u32` bit mask, and a body is rarely touched by
 /// more than a dozen dynamic bodies, so the overflow set is empty in ordinary scenes.
 pub const MAX_COLOURS: usize = 24;
 

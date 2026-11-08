@@ -516,32 +516,55 @@ fn workers_really_run_items_with_every_policy() {
     }
 }
 
-/// Arrives and waits (at most 20 s) until `expected` threads have arrived; whether they did.
+/// How long one round waits for all its tasks to arrive, in milliseconds.
+const ROUND_MILLIS: u64 = 500;
+
+/// Rounds a pool gets to run all its tasks at the same time (see the test below).
+const ROUNDS: u32 = 40;
+
+/// Arrives and waits (at most `ROUND_MILLIS`) until `expected` threads have arrived; whether they
+/// did.
 fn meet(arrived: &AtomicU32, expected: u32) -> bool {
     arrived.fetch_add(1, Ordering::SeqCst);
     let clock = StdClock::new();
-    let deadline = clock.now().saturating_add(Ticks::from_millis(20_000));
+    let deadline = clock.now().saturating_add(Ticks::from_millis(ROUND_MILLIS));
     while arrived.load(Ordering::SeqCst) < expected && clock.now() < deadline {
         std::thread::yield_now();
     }
     arrived.load(Ordering::SeqCst) >= expected
 }
 
+/// One call with `workers` tasks that wait for each other; whether all of them met, which they
+/// can only do when `workers` threads took one task each.
+fn all_tasks_meet(pool: &WorkStealingPool, workers: u32) -> bool {
+    let arrived = AtomicU32::new(0);
+    let met = AtomicU32::new(0);
+    let rendezvous = || {
+        met.fetch_add(u32::from(meet(&arrived, workers)), Ordering::SeqCst);
+    };
+    let tasks: Vec<&Task<'_>> = (0..workers).map(|_| &rendezvous as &Task<'_>).collect();
+    assert_eq!(pool.run_scope(&tasks), Ok(()));
+    met.load(Ordering::SeqCst) == workers
+}
+
+/// The pool CAN run as many tasks as it has threads at the same time. It does not promise to do
+/// so in every call: a call ends for the caller once its own scan finds no range (it may have
+/// been taken whole by a worker that has not yet split it), so tasks that wait for each other can
+/// be left one thread short. Card 4-29: the former single-call form of this test failed about one
+/// call in three on a reused pool under the `PARK` policy, and once in `tsan` of CI. The test
+/// therefore passes when some call among `ROUNDS` has all its tasks meet.
 #[test]
 #[cfg_attr(
     miri,
     ignore = "waits on a real-time deadline; under Miri's virtual clock it expires before the simulated worker runs"
 )]
-fn as_many_tasks_as_threads_run_at_the_same_time() {
+fn as_many_tasks_as_threads_can_run_at_the_same_time() {
     for workers in [2_u32, 3, 4] {
         let pool = pool_with(workers, WaitPolicy::PARK);
-        let arrived = AtomicU32::new(0);
-        let met = AtomicU32::new(0);
-        let rendezvous = || {
-            met.fetch_add(u32::from(meet(&arrived, workers)), Ordering::SeqCst);
-        };
-        let tasks: Vec<&Task<'_>> = (0..workers).map(|_| &rendezvous as &Task<'_>).collect();
-        assert_eq!(pool.run_scope(&tasks), Ok(()));
-        assert_eq!(met.load(Ordering::SeqCst), workers, "{workers} workers");
+        let reached = (0..ROUNDS).any(|_| all_tasks_meet(&pool, workers));
+        assert!(
+            reached,
+            "{workers} workers: no call in {ROUNDS} ran all tasks at once"
+        );
     }
 }

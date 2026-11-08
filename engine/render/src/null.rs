@@ -1,6 +1,6 @@
 //! The Null render device: no GPU, no window, no external code. It implements the whole port,
 //! keeps buffer and texture bytes so uploads read back, applies clears to textures, and validates
-//! every stream against the rules in [`validate`](self::validate). It is the reference for what any
+//! every stream against the rules in `validate`. It is the reference for what any
 //! other device must accept, and the device every test can use.
 
 mod resources;

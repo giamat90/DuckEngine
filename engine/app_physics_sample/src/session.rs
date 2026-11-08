@@ -4,7 +4,7 @@
 
 use crate::controls::Controls;
 use crate::error::Error;
-use crate::simulation::Simulation;
+use crate::simulation::{Setup, Simulation};
 use crate::view::View;
 use assets::dshd::Program;
 use platform::window::Event;
@@ -12,6 +12,15 @@ use render::desc::SubmitStats;
 use render::device::IRenderDevice;
 use render::ids::SurfaceId;
 use render::sprite::Sprite;
+
+/// What a session starts from, apart from the device and the shader program.
+#[derive(Clone, Copy, Debug)]
+pub struct Start {
+    pub surface: SurfaceId,
+    pub size: (u32, u32),
+    pub seed: u64,
+    pub setup: Setup,
+}
 
 /// The simulation, the view and the controls of the sample.
 pub struct Session {
@@ -34,11 +43,48 @@ impl Session {
         size: (u32, u32),
         seed: u64,
     ) -> Result<Self, Error> {
-        Ok(Self {
-            simulation: Simulation::new(seed)?,
-            view: View::new(device, program, surface, size)?,
-            controls: Controls::new(size),
-        })
+        let setup = Setup::default();
+        let start = Start {
+            surface,
+            size,
+            seed,
+            setup,
+        };
+        Self::with_setup(device, program, start)
+    }
+
+    /// As [`Session::new`], starting from `setup`.
+    ///
+    /// # Errors
+    /// The physics world's, the accumulator's or the render device's error.
+    pub fn with_setup(
+        device: &mut dyn IRenderDevice,
+        program: &Program<'_>,
+        start: Start,
+    ) -> Result<Self, Error> {
+        let mut session = Self {
+            simulation: Simulation::with_setup(start.seed, start.setup)?,
+            view: View::new(device, program, start.surface, start.size)?,
+            controls: Controls::new(start.size),
+        };
+        session.show_scene(device)?;
+        Ok(session)
+    }
+
+    /// Fits the camera, the click mapping and the debug drawing to the running scene.
+    fn show_scene(&mut self, device: &mut dyn IRenderDevice) -> Result<(), Error> {
+        let scene = self.simulation.setup().scene;
+        self.view.set_zoom_out(device, scene.zoom_out())?;
+        self.controls.set_zoom_out(scene.zoom_out());
+        self.controls.set_debug(scene.debug_by_default());
+        Ok(())
+    }
+
+    /// The scene and the sub-steps now running, for a status line.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let setup = self.simulation.setup();
+        format!("{}, {} sub-steps", setup.scene.name(), setup.sub_steps)
     }
 
     /// Follows a window event.
@@ -100,6 +146,13 @@ impl Session {
         device: &mut dyn IRenderDevice,
         frame_ticks: u64,
     ) -> Result<SubmitStats, Error> {
+        if self.controls.take_scene() {
+            self.simulation.toggle_scene()?;
+            self.show_scene(device)?;
+        }
+        if self.controls.take_sub_steps() {
+            self.simulation.toggle_sub_steps()?;
+        }
         if self.controls.take_reset() {
             self.simulation.reset()?;
         }

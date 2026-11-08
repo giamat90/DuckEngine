@@ -150,7 +150,7 @@ fn run_loop(args: Args, opened: &mut Opened, sample: &mut Sample) -> Result<u32,
 }
 
 /// The framebuffer size once it is not zero. A window can report zero for its first moments (or
-/// when it starts minimised): events are pumped for up to [`SIZE_WAIT`] before giving up.
+/// when it starts minimised): events are pumped for up to `SIZE_WAIT` before giving up.
 ///
 /// # Errors
 /// [`RunError::Failed`] when the window is closed or still has no size after the wait.

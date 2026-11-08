@@ -3,22 +3,22 @@
 //! An island is a set of dynamic bodies joined by touching manifolds (see `islands`). Every
 //! dynamic body that moves slower than both speed limits for `time_to_sleep` seconds in a row has
 //! "rested" that long; an island goes to sleep when every one of its bodies has. The values follow
-//! `Box2D` v3 **[K]** (0.5 s, 0.05 m/s) and v2 **[K]** (2 degrees per second); the reasons for the
+//! `Box2D` v3 **\[K\]** (0.5 s, 0.05 m/s) and v2 **\[K\]** (2 degrees per second); the reasons for the
 //! choice made here are in `reviews/4-14.md`.
 
 use super::error::PhysicsError;
 
 /// How long, in seconds, every body of an island must stay below the speed limits before the
-/// island sleeps: 0.5, the value of `Box2D` v3 **[K]**. Shorter makes slowly settling stacks sleep
+/// island sleeps: 0.5, the value of `Box2D` v3 **\[K\]**. Shorter makes slowly settling stacks sleep
 /// before they have settled; longer keeps resting scenes awake (and costly) for no gain.
 pub const DEFAULT_TIME_TO_SLEEP: f32 = 0.5;
 
 /// The linear speed, in metres per second, at or below which a body counts as resting: 0.05, the
-/// value of `Box2D` v3 **[K]**. A settled stack of the soft solver moves far less than this.
+/// value of `Box2D` v3 **\[K\]**. A settled stack of the soft solver moves far less than this.
 pub const DEFAULT_SLEEP_LINEAR_SPEED: f32 = 0.05;
 
 /// The angular speed, in radians per second, at or below which a body counts as resting: 2 degrees
-/// per second (0.0349), the value of `Box2D` v2 **[K]**. A box of half width 0.5 m turning at this
+/// per second (0.0349), the value of `Box2D` v2 **\[K\]**. A box of half width 0.5 m turning at this
 /// rate moves its corners by 1.7 cm/s, under the linear limit.
 pub const DEFAULT_SLEEP_ANGULAR_SPEED: f32 = 0.034_906_585;
 

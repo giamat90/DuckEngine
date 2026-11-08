@@ -53,18 +53,137 @@ const EXTRA_HALF: f32 = 0.3;
 const EXTRA_RADIUS: f32 = 0.25;
 /// The stream and the clicks use this stream number of the generator.
 const RNG_STREAM: u64 = 24;
+/// Rows of the pyramid scene: 44 rows are 990 boxes, the pyramid of workload W1.
+pub const PYRAMID_ROWS: u8 = 44;
+/// Half side of a box of the pyramid scene, in metres (0.5 m boxes, as in workload W1).
+pub const PYRAMID_HALF: f32 = 0.25;
+/// Bodies the pyramid world holds: the arena, the 990 boxes and room for clicks.
+pub const PYRAMID_MAX_BODIES: u32 = 1100;
+/// Pairs and manifolds the pyramid world holds.
+const PYRAMID_CONTACTS: u32 = 16_384;
+/// Sub-steps of the finer solver setting (the default solver has 4); with 8 the pyramid of
+/// workload W1 comes to rest within 300 steps (`reviews/4-31.md`).
+pub const FINE_SUB_STEPS: u32 = 8;
 
-fn config() -> WorldConfig {
+/// Which scene runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SceneKind {
+    /// Boxes and discs fall into the arena in a stream.
+    #[default]
+    Stream,
+    /// The 990-box pyramid of workload W1 stands on the floor.
+    Pyramid,
+}
+
+impl SceneKind {
+    /// The other scene.
+    #[must_use]
+    pub const fn other(self) -> Self {
+        match self {
+            Self::Stream => Self::Pyramid,
+            Self::Pyramid => Self::Stream,
+        }
+    }
+
+    /// How many times more of the world one screen pixel covers: 1 shows 20 pixels to the metre,
+    /// 2 shows 10, which fits the 22 m pyramid in the window.
+    #[must_use]
+    pub const fn zoom_out(self) -> u32 {
+        match self {
+            Self::Stream => 1,
+            Self::Pyramid => 2,
+        }
+    }
+
+    /// Whether the debug drawing starts on (990 boxes with outlines are too busy to read).
+    #[must_use]
+    pub const fn debug_by_default(self) -> bool {
+        matches!(self, Self::Stream)
+    }
+
+    /// The name the command line and the status line use.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Stream => "stream",
+            Self::Pyramid => "pyramid",
+        }
+    }
+
+    fn max_bodies(self) -> u32 {
+        match self {
+            Self::Stream => MAX_BODIES,
+            Self::Pyramid => PYRAMID_MAX_BODIES,
+        }
+    }
+
+    fn contacts(self) -> u32 {
+        match self {
+            Self::Stream => CONTACTS,
+            Self::Pyramid => PYRAMID_CONTACTS,
+        }
+    }
+
+    /// Sleeping stays on for the stream; the pyramid never sleeps, so that the solver alone is
+    /// seen holding it up (as in the stability tests).
+    fn sleep(self) -> SleepConfig {
+        match self {
+            Self::Stream => SleepConfig::DEFAULT,
+            Self::Pyramid => SleepConfig::DISABLED,
+        }
+    }
+
+    fn stream_limit(self) -> u32 {
+        match self {
+            Self::Stream => STREAM_LIMIT,
+            Self::Pyramid => 0,
+        }
+    }
+}
+
+/// The scene and the solver setting a run starts from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Setup {
+    pub scene: SceneKind,
+    /// Sub-steps of the solver, from 1 to `MAX_SUB_STEPS`.
+    pub sub_steps: u32,
+}
+
+impl Default for Setup {
+    fn default() -> Self {
+        Self {
+            scene: SceneKind::Stream,
+            sub_steps: SolverConfig::DEFAULT.sub_steps,
+        }
+    }
+}
+
+impl Setup {
+    /// The pyramid scene with the default solver.
+    #[must_use]
+    pub fn pyramid() -> Self {
+        Self {
+            scene: SceneKind::Pyramid,
+            ..Self::default()
+        }
+    }
+}
+
+fn config(setup: Setup) -> WorldConfig {
+    let scene = setup.scene;
     WorldConfig {
-        max_bodies: MAX_BODIES,
+        max_bodies: scene.max_bodies(),
         gravity: STANDARD_GRAVITY,
-        max_pairs: CONTACTS,
+        max_pairs: scene.contacts(),
         broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
-        max_manifolds: CONTACTS,
+        max_manifolds: scene.contacts(),
         max_joints: 0,
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
-        solver: SolverConfig::DEFAULT,
-        sleep: SleepConfig::DEFAULT,
+        solver: SolverConfig {
+            sub_steps: setup.sub_steps,
+            ..SolverConfig::DEFAULT
+        },
+        sleep: scene.sleep(),
     }
 }
 
@@ -77,7 +196,12 @@ fn wall(at: Vec2, half: Vec2) -> BodyDesc {
 /// # Errors
 /// The physics world's error.
 pub fn build_world() -> Result<World, Error> {
-    let mut world = World::new(config())?;
+    build_arena(Setup::default())
+}
+
+/// The arena of `setup` without anything in it.
+fn build_arena(setup: Setup) -> Result<World, Error> {
+    let mut world = World::new(config(setup))?;
     let side = HALF_WIDTH + WALL_HALF;
     world.create_body(&wall(
         Vec2::new(0.0, FLOOR_TOP - WALL_HALF),
@@ -90,6 +214,34 @@ pub fn build_world() -> Result<World, Error> {
         ))?;
     }
     Ok(world)
+}
+
+/// The world of `setup`: the arena, and the pyramid when that is the scene.
+///
+/// # Errors
+/// The physics world's error.
+pub fn build_world_for(setup: Setup) -> Result<World, Error> {
+    let mut world = build_arena(setup)?;
+    if setup.scene == SceneKind::Pyramid {
+        place_pyramid(&mut world)?;
+    }
+    Ok(world)
+}
+
+/// [`PYRAMID_ROWS`] rows of boxes on the floor, the widest row at the bottom, centred on x = 0.
+fn place_pyramid(world: &mut World) -> Result<(), Error> {
+    let size = Vec2::new(PYRAMID_HALF, PYRAMID_HALF);
+    for row in 0..PYRAMID_ROWS {
+        let count = PYRAMID_ROWS - row;
+        let y = FLOOR_TOP + PYRAMID_HALF + f32::from(row) * 2.0 * PYRAMID_HALF;
+        for i in 0..count {
+            let dx = f32::from(i) - f32::from(count - 1) / 2.0;
+            let at = Vec2::new(dx * 2.0 * PYRAMID_HALF, y);
+            let shape = Shape2::Box { half_extents: size };
+            world.create_body(&BodyDesc::new(BodyKind::Dynamic, at, shape))?;
+        }
+    }
+    Ok(())
 }
 
 /// What falls: a seeded generator that picks shape, size and tilt.
@@ -136,6 +288,7 @@ pub struct Simulation {
     spawner: Spawner,
     clock: FixedStep,
     seed: u64,
+    setup: Setup,
     steps: u64,
     streamed: u32,
 }
@@ -146,22 +299,68 @@ impl Simulation {
     /// # Errors
     /// The physics world's error, or the accumulator's.
     pub fn new(seed: u64) -> Result<Self, Error> {
+        Self::with_setup(seed, Setup::default())
+    }
+
+    /// A fresh run of `setup`; the same `seed` and `setup` give the same run.
+    ///
+    /// # Errors
+    /// The physics world's error, or the accumulator's.
+    pub fn with_setup(seed: u64, setup: Setup) -> Result<Self, Error> {
         Ok(Self {
-            world: build_world()?,
+            world: build_world_for(setup)?,
             spawner: Spawner::new(seed),
             clock: FixedStep::new(STEP_TICKS, MAX_STEPS)?,
             seed,
+            setup,
             steps: 0,
             streamed: 0,
         })
     }
 
-    /// Starts over with the seed the simulation was built with.
+    /// Starts over with the seed and the setup the simulation has.
     ///
     /// # Errors
     /// As [`Simulation::new`].
     pub fn reset(&mut self) -> Result<(), Error> {
-        *self = Self::new(self.seed)?;
+        *self = Self::with_setup(self.seed, self.setup)?;
+        Ok(())
+    }
+
+    /// The scene and the solver setting now running.
+    #[must_use]
+    pub fn setup(&self) -> Setup {
+        self.setup
+    }
+
+    /// Switches to the other scene and starts it from step zero.
+    ///
+    /// # Errors
+    /// As [`Simulation::new`].
+    pub fn toggle_scene(&mut self) -> Result<(), Error> {
+        let setup = Setup {
+            scene: self.setup.scene.other(),
+            ..self.setup
+        };
+        *self = Self::with_setup(self.seed, setup)?;
+        Ok(())
+    }
+
+    /// Switches between the default sub-steps and [`FINE_SUB_STEPS`] and starts over.
+    ///
+    /// # Errors
+    /// As [`Simulation::new`].
+    pub fn toggle_sub_steps(&mut self) -> Result<(), Error> {
+        let sub_steps = if self.setup.sub_steps == FINE_SUB_STEPS {
+            SolverConfig::DEFAULT.sub_steps
+        } else {
+            FINE_SUB_STEPS
+        };
+        let setup = Setup {
+            sub_steps,
+            ..self.setup
+        };
+        *self = Self::with_setup(self.seed, setup)?;
         Ok(())
     }
 
@@ -200,7 +399,8 @@ impl Simulation {
 
     /// Drops the next body of the stream when this step is a spawn step and the stream is not done.
     fn stream(&mut self) -> Result<(), Error> {
-        if self.steps.is_multiple_of(SPAWN_EVERY) && self.streamed < STREAM_LIMIT {
+        if self.steps.is_multiple_of(SPAWN_EVERY) && self.streamed < self.setup.scene.stream_limit()
+        {
             let at = Vec2::new(self.spawner.stream_x(), SPAWN_HEIGHT);
             self.streamed += u32::from(self.spawn_at(at)?);
         }
@@ -454,5 +654,88 @@ mod tests {
         );
         let mean = xs.iter().sum::<f32>() / f32::from(DRAWS);
         assert!(mean.abs() < 0.1 * SPAWN_SPREAD, "{mean}");
+    }
+
+    #[test]
+    fn the_pyramid_scene_holds_the_boxes_of_workload_w1_on_the_floor() {
+        let sim = Simulation::with_setup(7, Setup::pyramid()).unwrap_or_else(|_| unreachable!());
+        let boxes = dynamic(&sim);
+        assert_eq!(boxes.len(), 990);
+        let lowest = boxes.iter().map(|(_, at)| at.y).fold(f32::MAX, f32::min);
+        assert!(
+            (lowest - (FLOOR_TOP + PYRAMID_HALF)).abs() < 1.0e-4,
+            "{lowest}"
+        );
+        assert!(boxes.iter().all(|(_, at)| at.x.abs() < HALF_WIDTH));
+    }
+
+    #[test]
+    fn the_pyramid_scene_drops_no_stream_and_has_no_sleeping() {
+        let mut sim =
+            Simulation::with_setup(7, Setup::pyramid()).unwrap_or_else(|_| unreachable!());
+        run(&mut sim, 30);
+        assert_eq!(dynamic(&sim).len(), 990);
+        assert!(sim.world().iter().all(|(_, b)| !b.is_asleep()));
+    }
+
+    #[test]
+    fn the_sub_steps_are_the_ones_asked_for_and_change_the_run() {
+        let hash = |sub_steps| {
+            let setup = Setup {
+                sub_steps,
+                ..Setup::pyramid()
+            };
+            let mut sim = Simulation::with_setup(7, setup).unwrap_or_else(|_| unreachable!());
+            run(&mut sim, 20);
+            sim.state_hash()
+        };
+        assert_eq!(hash(4), hash(4));
+        assert_ne!(hash(4), hash(8));
+    }
+
+    #[test]
+    fn the_default_setup_is_the_stream_with_the_default_solver() {
+        assert_eq!(Setup::default().scene, SceneKind::Stream);
+        assert_eq!(Setup::default().sub_steps, SolverConfig::DEFAULT.sub_steps);
+        let mut a = sim();
+        let mut b = Simulation::with_setup(7, Setup::default()).unwrap_or_else(|_| unreachable!());
+        run(&mut a, 100);
+        run(&mut b, 100);
+        assert_eq!(a.state_hash(), b.state_hash());
+    }
+
+    #[test]
+    fn toggling_the_scene_or_the_sub_steps_starts_that_setup_from_step_zero() {
+        let mut sim = sim();
+        run(&mut sim, 10);
+        assert_eq!(sim.toggle_scene(), Ok(()));
+        assert_eq!(sim.setup().scene, SceneKind::Pyramid);
+        assert_eq!(sim.steps(), 0);
+        assert_eq!(dynamic(&sim).len(), 990);
+        run(&mut sim, 5);
+        assert_eq!(sim.toggle_sub_steps(), Ok(()));
+        assert_eq!(sim.setup().sub_steps, FINE_SUB_STEPS);
+        assert_eq!(sim.steps(), 0);
+        assert_eq!(sim.reset(), Ok(()));
+        assert_eq!(
+            sim.setup(),
+            Setup {
+                scene: SceneKind::Pyramid,
+                sub_steps: FINE_SUB_STEPS
+            }
+        );
+        assert_eq!(sim.toggle_sub_steps(), Ok(()));
+        assert_eq!(sim.setup().sub_steps, SolverConfig::DEFAULT.sub_steps);
+        assert_eq!(sim.toggle_scene(), Ok(()));
+        assert_eq!(sim.setup().scene, SceneKind::Stream);
+        assert_eq!(dynamic(&sim).len(), 0);
+    }
+
+    #[test]
+    fn the_pyramid_scene_is_drawn_zoomed_out_and_without_debug_lines() {
+        assert_eq!(SceneKind::Stream.zoom_out(), 1);
+        assert!(SceneKind::Pyramid.zoom_out() > 1);
+        assert!(SceneKind::Stream.debug_by_default());
+        assert!(!SceneKind::Pyramid.debug_by_default());
     }
 }
