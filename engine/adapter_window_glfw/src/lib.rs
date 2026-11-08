@@ -55,7 +55,7 @@ impl GlfwWindows {
     /// Loads GLFW from the library at `path` and starts it; at most `max_windows` windows.
     ///
     /// # Errors
-    /// See [`Api::load`](glfw::Api::load): [`PlatformError::NotFound`] without the library,
+    /// See `Api::load`: [`PlatformError::NotFound`] without the library,
     /// [`PlatformError::Unsupported`] for a library older than 3.3, [`PlatformError::Io`] when
     /// GLFW cannot start (for example without a display).
     pub fn load(path: &str, max_windows: u32) -> Result<Self, PlatformError> {

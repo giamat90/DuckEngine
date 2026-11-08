@@ -466,7 +466,7 @@ impl<D: Dim> World<D> {
         self.broadphase.bounds(slot.body.kind(), slot.proxy)
     }
 
-    /// A hash of the structure of both trees (see [`Tree::structure_hash`]); two worlds built and
+    /// A hash of the structure of both trees (see `Tree::structure_hash`); two worlds built and
     /// stepped by the same calls have the same one. It is not part of [`World::state_hash`].
     #[must_use]
     pub fn broadphase_hash(&self) -> u64 {
