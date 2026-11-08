@@ -94,16 +94,20 @@ pub fn pan_gains(pan: f32) -> (f32, f32) {
     (angle.cos().max(0.0), angle.sin().max(0.0))
 }
 
-fn valid_gain(gain: f32) -> bool {
+pub(crate) fn valid_gain(gain: f32) -> bool {
     gain.is_finite() && gain >= 0.0
 }
 
-fn valid_pan(pan: f32) -> bool {
+pub(crate) fn valid_pan(pan: f32) -> bool {
     (-1.0..=1.0).contains(&pan)
 }
 
-fn valid_pitch(pitch: f32) -> bool {
+pub(crate) fn valid_pitch(pitch: f32) -> bool {
     pitch > 0.0 && pitch <= MAX_PITCH
+}
+
+pub(crate) fn valid_params(params: &PlayParams) -> bool {
+    valid_gain(params.gain) && valid_pan(params.pan) && valid_pitch(params.pitch)
 }
 
 struct Slot {
@@ -163,7 +167,7 @@ impl Mixer {
         if sound.frame_count() == 0 || sound.channels() > 2 {
             return Err(MixerError::UnsupportedSound);
         }
-        if !(valid_gain(params.gain) && valid_pan(params.pan) && valid_pitch(params.pitch)) {
+        if !valid_params(&params) {
             return Err(MixerError::InvalidParameter);
         }
         if self.active + self.retired.len() >= self.slots.len() {
