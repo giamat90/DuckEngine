@@ -13,7 +13,9 @@ pub mod error;
 #[cfg(test)]
 mod faulty;
 pub mod format;
+pub mod mixer;
 pub mod null;
 pub mod offline;
 mod session;
 pub mod sound;
+mod voice;
