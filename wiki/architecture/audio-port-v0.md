@@ -240,3 +240,15 @@ flowchart LR
 - **Latency is not measured.** No claim is made about round-trip latency; the port exposes the block size and the benchmark reports CPU time only.
 - **A runtime sound format and offline converter (D-6)** are not part of phase 5: WAV is the source format. Whether a runtime format is needed is decided when the asset pipeline phase starts.
 - **Not settled here:** reverb, EQ and compressor on buses, spatialisation beyond pan, 5.1 down-mix rules, HRTF, Ogg and Opus, recording input, the native WASAPI adapter. Each is a later card.
+
+## 12. As built in card 5-2
+
+The crate `engine/audio` exists with the two ports as traits and the two devices; nothing in sections 1 to 11 changed. Details the note left open:
+
+- **State machine.** closed, open, started. `open` is allowed whenever the device is not started (so the format can be negotiated again), `start` only when open, `stop` only when started and it returns the device to open. Every other call is `WrongState`; a refused `start` drops the renderer it was given.
+- **Limits of the port**, as constants in `format`: sample rate 8 000 to 384 000 (0 means the device's own), block hint up to 16 384 frames (0 means the device's own), sounds with 1 to 8 channels. The defaults for a device with no preference are 48 000 Hz and 512 frames. `StreamRequest::validate` is public so every adapter refuses the same requests.
+- **Caps and status.** `DeviceCaps` holds the channel maximum and the native rate (0 when unknown before opening); `DeviceStatus` holds callbacks, frames, underruns and a lost flag, and survives `stop`.
+- **Offline device.** `render_into` and `render_in_chunks` pull the renderer on the calling thread; before every callback the slice is filled with NaN, so a renderer that does not write the whole slice is visible in the output.
+- **Contract suite.** `audio::contract::device_contract(device, expect_callbacks, pump)` (feature `contract-tests`) checks start before open, an out-of-range request, a second start, open while started, the slice length and the block limit in each callback, no callback after `stop`, status counts, and a restart. It also checks that `stop` gives back the very renderer that was started, that a refused start drops its renderer, that the status counts equal what the renderer saw, an open table (mono, 44 100 Hz, stereo with a block hint, 5.1 against the device's channel maximum), and `open` after `stop`. The suite has tests of its own: ten devices with one deliberate fault each (and a silent device) must fail it.
+- **Decoder port.** `IAudioDecoder`, `DecodeError` (truncated, not this format, unsupported, invalid, too large) and the immutable `Sound` exist; the WAV decoder is card 5-4.
+- **Not done here, on purpose.** The Clippy `disallowed-types` list for the crate (a `clippy.toml` is a protected path, so it is a governance step, card 5-10); the mixer and the real-time harness (5-3).

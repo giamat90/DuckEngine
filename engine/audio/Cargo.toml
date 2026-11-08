@@ -1,0 +1,19 @@
+[package]
+name = "audio"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+license-file.workspace = true
+description = "Layer 2 audio crate: the IAudioDevice and IAudioDecoder ports v0, the Null and Offline devices and the contract suite."
+
+[features]
+# The generic contract suite in `audio::contract`, for the tests of other crates' adapters.
+contract-tests = []
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+
+[lints]
+workspace = true
