@@ -27,33 +27,33 @@ pub const DEFAULT_SUB_STEPS: u32 = 4;
 /// Relax passes per sub-step: 1.
 pub const DEFAULT_RELAX_ITERATIONS: u32 = 1;
 
-/// Stiffness of a contact in hertz: 30, the value of `Box2D` v3 **[K]**. A contact against a static
+/// Stiffness of a contact in hertz: 30, the value of `Box2D` v3 **\[K\]**. A contact against a static
 /// body uses twice this.
 pub const DEFAULT_CONTACT_HERTZ: f32 = 30.0;
 
 /// Damping ratio of a contact: 10 (heavily over-damped, no bounce from the soft constraint), the
-/// value of `Box2D` v3 **[K]**.
+/// value of `Box2D` v3 **\[K\]**.
 pub const DEFAULT_CONTACT_DAMPING_RATIO: f32 = 10.0;
 
 /// Stiffness of a rigid joint (the point of a revolute joint, a distance joint without a spring)
-/// in hertz: 60, the value of `Box2D` v3 **[K]**. It is capped at a quarter of the sub-step rate,
+/// in hertz: 60, the value of `Box2D` v3 **\[K\]**. It is capped at a quarter of the sub-step rate,
 /// which is 60 Hz at the default four sub-steps of 60 Hz steps, so the default sits on the cap.
 pub const DEFAULT_JOINT_HERTZ: f32 = 60.0;
 
-/// Damping ratio of a rigid joint: 2, the value of `Box2D` v3.0 **[K]** (later versions use 5).
+/// Damping ratio of a rigid joint: 2, the value of `Box2D` v3.0 **\[K\]** (later versions use 5).
 /// Chosen again against the chain scene in `reviews/4-16.md`.
 pub const DEFAULT_JOINT_DAMPING_RATIO: f32 = 2.0;
 
 /// The fastest a contact pushes two overlapping shapes apart, in metres per second: 3, the value of
-/// `Box2D` v3 **[K]**. It keeps a deep overlap from throwing the bodies away.
+/// `Box2D` v3 **\[K\]**. It keeps a deep overlap from throwing the bodies away.
 pub const DEFAULT_CONTACT_PUSH_SPEED: f32 = 3.0;
 
 /// A body must approach faster than this, in metres per second, to bounce: 1, the value of `Box2D`
-/// v3 **[K]**. Slower approaches are inelastic, so a resting body does not jitter.
+/// v3 **\[K\]**. Slower approaches are inelastic, so a resting body does not jitter.
 pub const DEFAULT_RESTITUTION_THRESHOLD: f32 = 1.0;
 
 /// The overlap, in metres, a contact tolerates without pushing: 1 millimetre. `Box2D` v3 uses 5
-/// millimetres **[K]**, but every level of a stack rests about 1.5 slops into the one below, and
+/// millimetres **\[K\]**, but every level of a stack rests about 1.5 slops into the one below, and
 /// the checkpoint measurement of card 4-13 (`reviews/4-13.md`) shows that with 5 millimetres a
 /// pyramid ten boxes high sinks by 0.059 m at the top, over the 0.05 m a settled stack may move,
 /// against 0.017 m with 1 millimetre. The slop only has to be above the floating-point noise of the

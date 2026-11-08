@@ -4,13 +4,13 @@
 //! joint ties two bodies and carries a shape.
 //!
 //! Joints are generation-checked like bodies. Destroying a body destroys the joints that touch it
-//! (their handles go stale), as `Box2D` v3 does **[K]**. A joint is part of the island of its two
+//! (their handles go stale), as `Box2D` v3 does **\[K\]**. A joint is part of the island of its two
 //! bodies, and by default the two bodies do not collide with each other (`Box2D`'s
-//! `collideConnected = false` **[K]**; [`JointDesc::collide_connected`]).
+//! `collideConnected = false` **\[K\]**; [`JointDesc::collide_connected`]).
 //!
 //! The table keeps a sorted list of the body pairs that must not make a manifold, so the
 //! narrowphase asks "do these two bodies share a joint that forbids contact" with one binary search.
-//! Nothing here allocates after [`JointTable::new`].
+//! Nothing here allocates after `JointTable::new`.
 
 use super::body::BodyHandle;
 use super::dim::Dim;
