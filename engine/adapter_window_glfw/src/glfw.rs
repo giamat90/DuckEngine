@@ -66,7 +66,6 @@ pub struct Api {
     poll_events: unsafe extern "C" fn(),
     get_window_size: GetPair,
     get_framebuffer_size: GetPair,
-    get_content_scale: unsafe extern "C" fn(*mut c_void, *mut f32, *mut f32),
     should_close: unsafe extern "C" fn(*mut c_void) -> c_int,
     get_attrib: unsafe extern "C" fn(*mut c_void, c_int) -> c_int,
     set_close: SetClose,
@@ -151,7 +150,6 @@ impl Api {
             poll_events: function!(library, c"glfwPollEvents")?,
             get_window_size: function!(library, c"glfwGetWindowSize")?,
             get_framebuffer_size: function!(library, c"glfwGetFramebufferSize")?,
-            get_content_scale: function!(library, c"glfwGetWindowContentScale")?,
             should_close: function!(library, c"glfwWindowShouldClose")?,
             get_attrib: function!(library, c"glfwGetWindowAttrib")?,
             set_close: function!(library, c"glfwSetWindowCloseCallback")?,
@@ -228,15 +226,6 @@ impl Api {
     #[must_use]
     pub fn framebuffer_size(&self, window: &Window) -> (u32, u32) {
         pair(self.get_framebuffer_size, window)
-    }
-
-    /// Pixels per screen unit (the horizontal content scale).
-    #[must_use]
-    pub fn scale(&self, window: &Window) -> f32 {
-        let (mut x, mut y) = (1.0_f32, 1.0_f32);
-        // SAFETY: the window is live and both out pointers are valid for the call.
-        unsafe { (self.get_content_scale)(window.0.as_ptr(), &raw mut x, &raw mut y) };
-        x
     }
 
     /// The user asked to close the window.
@@ -353,7 +342,7 @@ fn version_ok(library: &Library) -> bool {
     version_supported(major, minor)
 }
 
-/// GLFW 3.3 or later: the content scale and the callbacks used here exist from 3.3 on, and a
+/// GLFW 3.3 or later: the callbacks used here exist from 3.3 on, and a
 /// 4.x library is not known to keep the same C API.
 fn version_supported(major: c_int, minor: c_int) -> bool {
     major == 3 && minor >= 3

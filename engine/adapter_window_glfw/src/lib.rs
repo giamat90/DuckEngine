@@ -131,6 +131,22 @@ pub fn explain(error: PlatformError) -> String {
     )
 }
 
+/// Framebuffer pixels per screen unit, as [`WindowInfo::scale`] documents it. It is the ratio of the
+/// two sizes GLFW reports, not the display's content scale: on Windows with display scaling the
+/// process is DPI aware, screen units are pixels and the ratio is 1 while the content scale is, for
+/// example, 1.25. A window without width has no ratio and gets 1.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "window sizes are far below 2^24"
+)]
+fn pixels_per_unit(width: u32, framebuffer_width: u32) -> f32 {
+    if width == 0 {
+        1.0
+    } else {
+        framebuffer_width as f32 / width as f32
+    }
+}
+
 /// A library that was found but failed says more than one that was not found.
 fn more_telling(old: PlatformError, new: PlatformError) -> PlatformError {
     if new == PlatformError::NotFound {
@@ -197,7 +213,7 @@ impl IWindowSystem for GlfwWindows {
             height,
             framebuffer_width,
             framebuffer_height,
-            scale: self.api.scale(window),
+            scale: pixels_per_unit(width, framebuffer_width),
             focused: self.api.focused(window),
             close_requested: self.api.close_requested(window),
         })
@@ -513,6 +529,17 @@ mod tests {
             explain(PlatformError::Unsupported),
             "GLFW: not supported on this platform"
         );
+    }
+
+    #[test]
+    fn the_scale_is_pixels_per_screen_unit_not_the_display_content_scale() {
+        // Windows with display scaling: screen units are pixels, the framebuffer equals the window.
+        assert!((pixels_per_unit(200, 200) - 1.0).abs() < 1e-6);
+        // A retina-style display: two pixels per screen unit.
+        assert!((pixels_per_unit(200, 400) - 2.0).abs() < 1e-6);
+        // A window of width zero (minimised) has no ratio: 1.
+        assert!((pixels_per_unit(0, 0) - 1.0).abs() < 1e-6);
+        assert!((pixels_per_unit(0, 300) - 1.0).abs() < 1e-6);
     }
 
     #[test]
