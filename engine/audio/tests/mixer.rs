@@ -551,6 +551,7 @@ fn the_output_does_not_depend_on_how_the_frames_are_split() -> TestResult {
             pan: 0.3,
             pitch: 1.37,
             looping: true,
+            ..PlayParams::default()
         };
         let handle = mixer.play(sine(330.0, 44_100, 1000)?, looping)?;
         mixer.set_gain(handle, 0.2)?;
@@ -656,6 +657,7 @@ fn bad_play_parameters_are_refused_and_start_no_voice() -> TestResult {
         pan,
         pitch,
         looping: false,
+        ..PlayParams::default()
     };
     let bad = [
         with(f32::NAN, 0.0, 1.0),

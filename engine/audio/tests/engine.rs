@@ -1,8 +1,11 @@
 //! The game-side handle API and the audio-side processor (card 5-5): commands cross a queue,
 //! events come back, handles are made on the game side.
 
+use audio::bus::BusId;
 use audio::device::AudioRenderer;
-use audio::engine::{AudioEngine, AudioProcessor, EngineConfig, EngineError, engine};
+use audio::engine::{
+    AudioEngine, AudioProcessor, EngineConfig, EngineError, engine, engine_with_buses,
+};
 use audio::format::{ChannelLayout, StreamFormat};
 use audio::mixer::{Mixer, PlayParams};
 use audio::sound::Sound;
@@ -431,4 +434,112 @@ fn a_stereo_sound_can_be_registered_and_played() -> TestResult {
     engine.play(handle, PlayParams::default())?;
     assert!(render(&mut processor, 8).iter().any(|s| *s != 0.0));
     Ok(())
+}
+
+fn bus(index: u8) -> BusId {
+    BusId::from_index(index)
+}
+
+fn bus_pair() -> Result<(AudioEngine, AudioProcessor), EngineError> {
+    engine_with_buses(format(), config(), &[BusId::MASTER, BusId::MASTER])
+}
+
+#[test]
+fn a_bad_bus_tree_is_an_invalid_configuration() {
+    let forward = engine_with_buses(format(), config(), &[bus(1)]);
+    assert_eq!(forward.err(), Some(EngineError::InvalidConfig));
+    let too_many = vec![BusId::MASTER; 16];
+    let many = engine_with_buses(format(), config(), &too_many);
+    assert_eq!(many.err(), Some(EngineError::InvalidConfig));
+}
+
+#[test]
+fn a_voice_plays_into_its_bus_and_the_bus_gain_and_mute_reach_it() -> TestResult {
+    let (mut engine, mut processor) = bus_pair()?;
+    let sound = engine.register_sound(tone(100_000, 1.0)?)?;
+    let on_one = PlayParams {
+        bus: bus(1),
+        ..PlayParams::default()
+    };
+    engine.play(sound, on_one)?;
+    let out = render(&mut processor, 1024);
+    assert!(out.iter().rev().take(2).all(|s| *s > 0.5));
+    engine.set_bus_gain(bus(1), 0.5)?;
+    let half = render(&mut processor, 1024);
+    assert!(
+        half.iter()
+            .rev()
+            .take(2)
+            .all(|s| (s - 0.353_553).abs() < 1.0e-4)
+    );
+    engine.set_bus_muted(bus(1), true)?;
+    let muted = render(&mut processor, 1024);
+    assert!(muted.iter().rev().take(2).all(|s| s.abs() < 1.0e-9));
+    engine.set_bus_muted(bus(1), false)?;
+    let back = render(&mut processor, 1024);
+    assert!(
+        back.iter()
+            .rev()
+            .take(2)
+            .all(|s| (s - 0.353_553).abs() < 1.0e-4)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bus_the_engine_does_not_have_is_refused_on_the_game_side() -> TestResult {
+    let (mut engine, _processor) = bus_pair()?;
+    let sound = engine.register_sound(tone(1000, 0.5)?)?;
+    let missing = PlayParams {
+        bus: bus(3),
+        ..PlayParams::default()
+    };
+    assert_eq!(
+        engine.play(sound, missing).err(),
+        Some(EngineError::InvalidParameter)
+    );
+    assert_eq!(
+        engine.set_bus_gain(bus(3), 1.0).err(),
+        Some(EngineError::InvalidParameter)
+    );
+    assert_eq!(
+        engine.set_bus_muted(bus(3), true).err(),
+        Some(EngineError::InvalidParameter)
+    );
+    assert_eq!(
+        engine.set_bus_gain(bus(1), f32::NAN).err(),
+        Some(EngineError::InvalidParameter)
+    );
+    assert_eq!(
+        engine.set_bus_gain(bus(1), -1.0).err(),
+        Some(EngineError::InvalidParameter)
+    );
+    Ok(())
+}
+
+#[test]
+fn bus_commands_report_a_full_queue() -> TestResult {
+    let small = EngineConfig {
+        command_capacity: 1,
+        ..config()
+    };
+    let (mut engine, mut processor) = engine_with_buses(format(), small, &[BusId::MASTER])?;
+    engine.set_bus_gain(bus(1), 0.5)?;
+    assert_eq!(
+        engine.set_bus_gain(bus(1), 0.25).err(),
+        Some(EngineError::QueueFull)
+    );
+    assert_eq!(
+        engine.set_bus_muted(bus(1), true).err(),
+        Some(EngineError::QueueFull)
+    );
+    render(&mut processor, 8);
+    engine.set_bus_muted(bus(1), true)?;
+    Ok(())
+}
+
+#[test]
+fn the_master_only_engine_has_one_bus() {
+    let master_only = engine(format(), config());
+    assert!(master_only.is_ok());
 }

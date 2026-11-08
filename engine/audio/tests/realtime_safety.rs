@@ -60,6 +60,7 @@ impl Scene {
             pan: 0.25,
             pitch: 1.0 + f32::from(u8::try_from(block % 7).unwrap_or(0)) * 0.1,
             looping,
+            ..PlayParams::default()
         };
         match mixer.play(Arc::clone(sound), params) {
             Ok(handle) => self.replace_watched(mixer, block, handle),

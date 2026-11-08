@@ -13,6 +13,7 @@
 //! reference to a sound. The game side keeps one until `unregister_sound`, and every voice hands its
 //! reference back inside an event, to be dropped on the game thread.
 
+use crate::bus::BusId;
 use crate::device::AudioRenderer;
 use crate::format::StreamFormat;
 use crate::mixer::{
@@ -95,6 +96,8 @@ enum Command {
     SetGain(VoiceId, f32),
     SetPan(VoiceId, f32),
     SetPitch(VoiceId, f32),
+    SetBusGain(BusId, f32),
+    SetBusMuted(BusId, bool),
 }
 
 /// Audio thread to game thread.
@@ -113,19 +116,34 @@ pub fn engine(
     format: StreamFormat,
     config: EngineConfig,
 ) -> Result<(AudioEngine, AudioProcessor), EngineError> {
+    engine_with_buses(format, config, &[])
+}
+
+/// Like [`engine`], with buses under the master: bus `i + 1` has the parent `buses[i]`, which
+/// must be the master or a bus that comes before it (see [`Mixer::with_buses`]).
+///
+/// # Errors
+/// The errors of [`engine`], and [`EngineError::InvalidConfig`] for a bad bus table.
+pub fn engine_with_buses(
+    format: StreamFormat,
+    config: EngineConfig,
+    buses: &[BusId],
+) -> Result<(AudioEngine, AudioProcessor), EngineError> {
     if config.max_sounds == 0 || config.command_capacity == 0 {
         return Err(EngineError::InvalidConfig);
     }
-    let mixer = Mixer::new(format, config.max_voices).map_err(|error| match error {
-        MixerError::UnsupportedFormat => EngineError::UnsupportedFormat,
-        _ => EngineError::InvalidConfig,
-    })?;
+    let mixer =
+        Mixer::with_buses(format, config.max_voices, buses).map_err(|error| match error {
+            MixerError::UnsupportedFormat => EngineError::UnsupportedFormat,
+            _ => EngineError::InvalidConfig,
+        })?;
     let (command_tx, command_rx) =
         channel(config.command_capacity).ok_or(EngineError::InvalidConfig)?;
     let (event_tx, event_rx) = channel(config.max_voices).ok_or(EngineError::InvalidConfig)?;
     let voices = usize::try_from(config.max_voices).map_err(|_| EngineError::InvalidConfig)?;
     let command_limit = command_tx.capacity();
     let engine = AudioEngine {
+        bus_count: mixer.bus_count(),
         sounds: Pool::with_capacity(config.max_sounds),
         voices: Pool::with_capacity(config.max_voices),
         commands: command_tx,
@@ -144,6 +162,7 @@ pub fn engine(
 
 /// The game-thread side; see the module documentation.
 pub struct AudioEngine {
+    bus_count: usize,
     sounds: Pool<Arc<Sound>>,
     voices: Pool<Playing>,
     commands: Producer<Command>,
@@ -187,7 +206,7 @@ impl AudioEngine {
             .get(sound)
             .map(Arc::clone)
             .ok_or(EngineError::StaleHandle)?;
-        if !valid_params(&params) {
+        if !valid_params(&params) || !self.has_bus(params.bus) {
             return Err(EngineError::InvalidParameter);
         }
         if self.commands.is_full() {
@@ -249,6 +268,39 @@ impl AudioEngine {
         self.send(voice, Command::SetPitch(voice, pitch))
     }
 
+    /// Ramps the gain of a bus.
+    ///
+    /// # Errors
+    /// `InvalidParameter` for a bus the engine does not have or a gain that is negative or not
+    /// finite, `QueueFull`.
+    pub fn set_bus_gain(&mut self, bus: BusId, gain: f32) -> Result<(), EngineError> {
+        if !self.has_bus(bus) || !valid_gain(gain) {
+            return Err(EngineError::InvalidParameter);
+        }
+        self.push(Command::SetBusGain(bus, gain))
+    }
+
+    /// Fades a bus out, or back in to its own gain.
+    ///
+    /// # Errors
+    /// `InvalidParameter` for a bus the engine does not have, `QueueFull`.
+    pub fn set_bus_muted(&mut self, bus: BusId, muted: bool) -> Result<(), EngineError> {
+        if !self.has_bus(bus) {
+            return Err(EngineError::InvalidParameter);
+        }
+        self.push(Command::SetBusMuted(bus, muted))
+    }
+
+    fn has_bus(&self, bus: BusId) -> bool {
+        usize::from(bus.index()) < self.bus_count
+    }
+
+    fn push(&mut self, command: Command) -> Result<(), EngineError> {
+        self.commands
+            .push(command)
+            .map_err(|_| EngineError::QueueFull)
+    }
+
     /// Takes the next voice that has ended, frees its handle (which is stale from now on) and
     /// drops the sound reference that came back with it. Call it until it returns `None`; a
     /// voice counts against `max_voices` until it has been reported here.
@@ -263,9 +315,7 @@ impl AudioEngine {
         if !self.voices.contains(voice) {
             return Err(EngineError::StaleHandle);
         }
-        self.commands
-            .push(command)
-            .map_err(|_| EngineError::QueueFull)
+        self.push(command)
     }
 }
 
@@ -332,6 +382,12 @@ impl AudioProcessor {
             }
             Command::SetPitch(id, pitch) => {
                 self.with_voice(id, |mixer, voice| mixer.set_pitch(voice, pitch));
+            }
+            Command::SetBusGain(bus, gain) => {
+                let _ = self.mixer.set_bus_gain(bus, gain);
+            }
+            Command::SetBusMuted(bus, muted) => {
+                let _ = self.mixer.set_bus_muted(bus, muted);
             }
         }
     }

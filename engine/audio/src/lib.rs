@@ -5,6 +5,7 @@
 //! Layer 2: depends on `base` only. No audio API appears here; adapters (layer 3) implement the
 //! port. Design: `wiki/architecture/audio-port-v0.md`.
 
+pub mod bus;
 #[cfg(any(test, feature = "contract-tests"))]
 pub mod contract;
 pub mod decoder;

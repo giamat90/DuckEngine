@@ -8,6 +8,7 @@
 //!
 //! Design: `wiki/architecture/audio-port-v0.md` sections 3 and 6.
 
+use crate::bus::{Bus, BusId, CHUNK_SAMPLES, MAX_BUSES};
 use crate::device::AudioRenderer;
 use crate::format::{ChannelLayout, StreamFormat};
 use crate::sound::Sound;
@@ -72,6 +73,8 @@ pub struct PlayParams {
     pub pitch: f32,
     /// Repeat the sound until stopped.
     pub looping: bool,
+    /// The bus the voice plays into.
+    pub bus: BusId,
 }
 
 impl Default for PlayParams {
@@ -81,6 +84,7 @@ impl Default for PlayParams {
             pan: 0.0,
             pitch: 1.0,
             looping: false,
+            bus: BusId::MASTER,
         }
     }
 }
@@ -110,42 +114,79 @@ pub(crate) fn valid_params(params: &PlayParams) -> bool {
     valid_gain(params.gain) && valid_pan(params.pan) && valid_pitch(params.pitch)
 }
 
+/// The table index of a bus's parent: it must come before the bus, which will be at `next`.
+fn checked_parent(parent: BusId, next: usize) -> Result<usize, MixerError> {
+    let parent = usize::from(parent.index());
+    if parent < next {
+        Ok(parent)
+    } else {
+        Err(MixerError::InvalidParameter)
+    }
+}
+
 struct Slot {
     generation: u32,
     voice: Option<Voice>,
+    bus: usize,
 }
 
 /// The mixer: owns the voices and renders them into an interleaved stereo buffer.
 pub struct Mixer {
     format: StreamFormat,
     slots: Vec<Slot>,
+    buses: Vec<Bus>,
     retired: Vec<(VoiceHandle, Arc<Sound>)>,
     active: usize,
 }
 
 impl Mixer {
-    /// Builds a mixer with room for `max_voices` voices, all allocation done here.
+    /// Builds a mixer with room for `max_voices` voices and only the master bus, all allocation
+    /// done here.
     ///
     /// # Errors
     /// `UnsupportedFormat` unless the layout is stereo; `InvalidParameter` when `max_voices` is 0
     /// or above [`MAX_VOICES`], or the sample rate is 0.
     pub fn new(format: StreamFormat, max_voices: u32) -> Result<Self, MixerError> {
+        Self::with_buses(format, max_voices, &[])
+    }
+
+    /// Like [`Mixer::new`], with buses under the master: bus `i + 1` has the parent
+    /// `parents[i]`, which must be the master or a bus that comes before it.
+    ///
+    /// # Errors
+    /// The errors of [`Mixer::new`], and `InvalidParameter` for more than [`MAX_BUSES`] buses
+    /// (the master included) or a parent that does not come before its child.
+    pub fn with_buses(
+        format: StreamFormat,
+        max_voices: u32,
+        parents: &[BusId],
+    ) -> Result<Self, MixerError> {
         if format.layout != ChannelLayout::Stereo {
             return Err(MixerError::UnsupportedFormat);
         }
         if max_voices == 0 || max_voices > MAX_VOICES || format.sample_rate == 0 {
             return Err(MixerError::InvalidParameter);
         }
+        if parents.len() >= usize::from(MAX_BUSES) {
+            return Err(MixerError::InvalidParameter);
+        }
+        let mut buses = vec![Bus::new(0)];
+        for parent in parents {
+            let parent = checked_parent(*parent, buses.len())?;
+            buses.push(Bus::new(parent));
+        }
         let capacity = usize::try_from(max_voices).map_err(|_| MixerError::InvalidParameter)?;
         let slots = (0..capacity)
             .map(|_| Slot {
                 generation: 0,
                 voice: None,
+                bus: 0,
             })
             .collect();
         Ok(Self {
             format,
             slots,
+            buses,
             retired: Vec::with_capacity(capacity),
             active: 0,
         })
@@ -167,7 +208,7 @@ impl Mixer {
         if sound.frame_count() == 0 || sound.channels() > 2 {
             return Err(MixerError::UnsupportedSound);
         }
-        if !valid_params(&params) {
+        if !valid_params(&params) || usize::from(params.bus.index()) >= self.buses.len() {
             return Err(MixerError::InvalidParameter);
         }
         if self.active + self.retired.len() >= self.slots.len() {
@@ -188,6 +229,7 @@ impl Mixer {
             .get_mut(index)
             .ok_or(MixerError::VoicesExhausted)?;
         slot.voice = Some(Voice::new(sound, setup));
+        slot.bus = usize::from(params.bus.index());
         self.active += 1;
         let index = u32::try_from(index).map_err(|_| MixerError::VoicesExhausted)?;
         Ok(Handle::from_raw(index, slot.generation))
@@ -257,13 +299,49 @@ impl Mixer {
         self.retired.pop()
     }
 
+    /// The number of buses, the master included.
+    #[must_use]
+    pub fn bus_count(&self) -> usize {
+        self.buses.len()
+    }
+
+    fn bus_mut(&mut self, bus: BusId) -> Result<&mut Bus, MixerError> {
+        self.buses
+            .get_mut(usize::from(bus.index()))
+            .ok_or(MixerError::InvalidParameter)
+    }
+
+    /// Ramps the bus gain to `gain` over [`RAMP_FRAMES`] frames. A gain set while the bus is
+    /// muted is kept for the unmute.
+    ///
+    /// # Errors
+    /// `InvalidParameter` for a bus the mixer does not have, or a gain that is negative or not
+    /// finite.
+    pub fn set_bus_gain(&mut self, bus: BusId, gain: f32) -> Result<(), MixerError> {
+        let bus = self.bus_mut(bus)?;
+        if !valid_gain(gain) {
+            return Err(MixerError::InvalidParameter);
+        }
+        bus.set_gain(gain);
+        Ok(())
+    }
+
+    /// Fades the bus out (or back in, to its own gain) over [`RAMP_FRAMES`] frames.
+    ///
+    /// # Errors
+    /// `InvalidParameter` for a bus the mixer does not have.
+    pub fn set_bus_muted(&mut self, bus: BusId, muted: bool) -> Result<(), MixerError> {
+        self.bus_mut(bus)?.set_muted(muted);
+        Ok(())
+    }
+
     /// The number of voices playing.
     #[must_use]
     pub fn active_voices(&self) -> usize {
         self.active
     }
 
-    fn mix_slot(&mut self, index: usize, out: &mut [f32]) {
+    fn mix_slot(&mut self, index: usize, len: usize) {
         let Ok(raw_index) = u32::try_from(index) else {
             return;
         };
@@ -271,6 +349,9 @@ impl Mixer {
             return;
         };
         let Some(voice) = slot.voice.as_mut() else {
+            return;
+        };
+        let Some(out) = self.buses.get_mut(slot.bus).and_then(|bus| bus.chunk(len)) else {
             return;
         };
         if !voice.mix(out) {
@@ -282,6 +363,39 @@ impl Mixer {
             // Room is reserved: `play` counts retired voices against the capacity.
             self.retired.push((handle, voice.into_sound()));
             self.active = self.active.saturating_sub(1);
+        }
+    }
+
+    /// Adds every bus into its parent, the last bus first, so that a child is complete before
+    /// its parent takes it.
+    fn sum_buses(&mut self, len: usize) {
+        for child in (1..self.buses.len()).rev() {
+            self.sum_into_parent(child, len);
+        }
+    }
+
+    fn sum_into_parent(&mut self, child: usize, len: usize) {
+        let (parents, children) = self.buses.split_at_mut(child);
+        let Some(child) = children.first_mut() else {
+            return;
+        };
+        let parent = parents.get_mut(child.parent());
+        if let Some(target) = parent.and_then(|parent| parent.chunk(len)) {
+            child.add_into(target);
+        }
+    }
+
+    fn render_chunk(&mut self, out: &mut [f32]) {
+        let len = out.len();
+        for bus in &mut self.buses {
+            bus.clear(len);
+        }
+        for index in 0..self.slots.len() {
+            self.mix_slot(index, len);
+        }
+        self.sum_buses(len);
+        if let Some(master) = self.buses.first_mut() {
+            master.write_to(out);
         }
     }
 }
@@ -300,8 +414,8 @@ impl AudioRenderer for Mixer {
         let Some(out) = out.get_mut(..zeroed & !1) else {
             return;
         };
-        for index in 0..self.slots.len() {
-            self.mix_slot(index, out);
+        for chunk in out.chunks_mut(CHUNK_SAMPLES) {
+            self.render_chunk(chunk);
         }
     }
 }
