@@ -27,3 +27,12 @@ max_unsafe_lines = 16
 [[modules]]
 path = "engine/jobs/src/pool/erased.rs"
 max_unsafe_lines = 1
+
+# Card 5-5 adds the lock-free single-producer single-consumer queue between the game thread and
+# the audio thread (design: wiki/architecture/audio-port-v0.md section 3). `pending` until the
+# file lands; the budget is an upper bound set before the code exists, to be lowered to the
+# count when it is listed (card 5-5 reports it).
+[[modules]]
+path = "engine/base/src/spsc.rs"
+max_unsafe_lines = 30
+pending = true
