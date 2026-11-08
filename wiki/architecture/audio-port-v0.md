@@ -329,3 +329,32 @@ sequenceDiagram
 - **Unreachable branches, on purpose.** If an event could not be pushed, or a mixer voice had no game handle, the sound is leaked (`mem::forget`) rather than freed on the audio thread. Both are impossible by the invariants above; they are the only lines of `engine.rs` that tests do not reach.
 - **Tests.** `base/tests/spsc.rs` (13, plus a `compile_fail` doctest that a non-`Send` value is refused): rounding, limits, the largest capacity, order, full and empty, wrap-around, values that need dropping, drops of left-over values, either end dropped first, `Send`, ten million messages across two threads, 100 000 `Arc` messages across two threads. `audio/tests/engine.rs` (18), one test inside `engine.rs` (a refusing mixer, the only way to reach the refusal path) and `audio/tests/engine_threads.rs` (3): configuration, equality with the mixer played directly, validation, table limits, finish and stale handles, stop and set commands, full queue, voice limit, late commands, unregister while playing, chunk independence, error messages, the real-time rule, a two-thread run that starts 20 000 voices and checks that each is reported exactly once, and voices free again after rounds of use.
 - **Not done here, on purpose.** The ThreadSanitizer job (`ci.yml`, `tsan`) covers the `jobs` crate; adding `base` and `audio` tests to it is a workflow change and so a governance card (proposed as 5-12). Buses and a bus-level API (5-6), the device adapter (5-7), the voice benchmark gate (5-8), and the Clippy `disallowed-types` list (5-10) are unchanged.
+
+## 16. As built in card 5-6
+
+Buses are in the mixer (`audio::bus`, `Mixer::with_buses`) and reachable from the game side (`engine_with_buses`, `AudioEngine::set_bus_gain` and `set_bus_muted`). Sections 1 to 15 did not change except where noted. The resampler already existed (card 5-3); this card adds its stated quality bound as tests.
+
+```mermaid
+flowchart TD
+  subgraph chunk["one internal chunk of at most 256 frames"]
+    v1["voices, in slot order"] --> b3["bus 3"]
+    v2["voices"] --> b2["bus 2"]
+    v3["voices"] --> m["master (bus 0)"]
+    b3 -- "gain ramp" --> b1["bus 1"]
+    b1 -- "gain ramp" --> m
+    b2 -- "gain ramp" --> m
+  end
+  m -- "gain ramp, copy" --> out["output slice"]
+```
+
+- **A fixed tree.** `Mixer::new` still builds the master only. `Mixer::with_buses(format, voices, parents)` adds buses: bus `i + 1` has the parent `parents[i]`, and a parent must have a lower index than its child (so a forward reference, a cycle and an unknown parent are all `InvalidParameter`). At most 16 buses (`MAX_BUSES`), the master included. Each bus owns one stereo chunk buffer of 256 frames, allocated at construction. `BusId` is a small index (`MASTER`, `from_index`, `index`).
+- **Mixing order.** The mixer works through the output in chunks of at most 256 frames (`CHUNK_FRAMES`, the chunk size the note planned). Per chunk: clear every bus buffer; add each voice to the buffer of its bus, in slot order; then from the last bus to the first add every bus into its parent scaled by its gain ramp; the master is written over the output scaled by its own ramp. Because children always have higher indices than their parents, one backward pass completes every child before its parent takes it. The order is fixed, so the same commands give the same bits, and the voice state that crosses chunks is unchanged, so the output still does not depend on how the frames are split between calls (tested with bus changes in the middle).
+- **Gain and mute.** `set_bus_gain` and `set_bus_muted` move a bus by a linear ramp of 256 frames, like the voice gains. A mute is a ramp to 0; an unmute is a ramp back to the bus's own gain, and a gain set while muted is remembered. The master has the same two controls, which is how an application mutes everything.
+- **Repeated changes.** Like the voice gains, every `set_bus_gain` or `set_bus_muted` restarts the ramp from the current value with a full 256 frames left, so a command repeated at least once per 256 frames keeps a fade from ever finishing. An application sets a bus when its value changes, not every frame.
+- **Routing.** `PlayParams` has a new field `bus` (default `BusId::MASTER`). A bus the mixer does not have is `InvalidParameter` and starts no voice. A voice cannot change its bus; routing is chosen at `play`.
+- **Game side.** `engine_with_buses` takes the same table; `play`, `set_bus_gain` and `set_bus_muted` check the bus and the gain on the game side (`InvalidParameter`) and send commands (`QueueFull` when the queue is full). `engine` is the master-only case.
+- **No change for existing users.** With the master only and gain 1 the output is bit for bit what it was before this card: the 43 mixer tests, the chunk-independence tests and the real-time test of card 5-3 ran unchanged (the three places that built `PlayParams` field by field use `..PlayParams::default()` now).
+- **The resampler bound, stated.** The resampler is linear interpolation (section 13); its error is about (omega h)^2 / 8 of the amplitude, with h the source sample period. `tests/buses.rs` fits a sine of the known output frequency to the output and measures the signal-to-error ratio: a 1 kHz tone at 48 kHz played at pitch 1.1 gives 55.6 dB (bound 55 dB); an 8 kHz tone, which has about six samples per period, gives 26.3 dB (bounds 25 to 30 dB: the upper bound makes the test fail when a better resampler arrives, so the number is updated on purpose). Downward pitch changes of high tones alias without a filter; a band-limited resampler is a later card.
+- **Real-time.** `tests/bus_allocation.rs`: 3 000 blocks that start voices on four buses and change bus gain and mute make zero allocations, reallocations and frees.
+- **Tests.** `tests/buses.rs` (18): table checks, master and child routing, gains multiplying down a chain, siblings adding, linear ramp without jumps, mute and unmute with a remembered gain, mute of a parent, master controls, bad arguments, chunk independence with changes, a long call over several internal chunks, a short slice, and the two resampler bounds; five more engine tests; one allocation test.
+- **Not done here, on purpose.** Effects on buses (EQ, reverb, compression), sends, ducking, creating buses at run time, and a per-bus meter. A bus-to-bus move of a playing voice is not planned.
