@@ -122,12 +122,12 @@ pub fn explain(error: PlatformError) -> String {
     }
     let names = DEFAULT_LIBRARIES.join(", ");
     let fix = if cfg!(windows) {
-        "A normal `cargo build` copies glfw3.dll next to the program (it needs a network the first          time; see the build warnings if it could not)"
+        "A normal `cargo build` copies glfw3.dll next to the program (it needs a network the first time; see the build warnings if it could not)"
     } else {
         "Install the distribution package of GLFW 3.3 or later"
     };
     format!(
-        "GLFW: library not found (looked for {names} next to the program and on the search path,          and in {LIBRARY_VARIABLE} when set). {fix}, or set {LIBRARY_VARIABLE} to its full path."
+        "GLFW: library not found (looked for {names} next to the program and on the search path, and in {LIBRARY_VARIABLE} when set). {fix}, or set {LIBRARY_VARIABLE} to its full path."
     )
 }
 

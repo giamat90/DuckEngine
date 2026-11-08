@@ -134,6 +134,15 @@ fn a_manifest_that_could_be_abused_is_refused() {
         bad("member = pack/x64/lib.dll", "member = ../x/lib.dll"),
         Err(ManifestError::BadPath("member".to_owned()))
     );
+    // a name that a command line would read as an option
+    assert_eq!(
+        bad("member = pack/x64/lib.dll", "member = --to-command=x"),
+        Err(ManifestError::BadPath("member".to_owned()))
+    );
+    assert_eq!(
+        bad("file = lib.dll", "file = -lib.dll"),
+        Err(ManifestError::BadPath("file".to_owned()))
+    );
     assert_eq!(
         bad("member = pack/x64/lib.dll", "member = /abs/lib.dll"),
         Err(ManifestError::BadPath("member".to_owned()))
@@ -548,6 +557,8 @@ fn a_problem_is_a_warning_that_says_what_to_do_and_never_a_failure() {
     let outcome = run(&text_for_fake(), "windows", &out, &lookup, &down);
     assert_eq!(outcome.warnings.len(), 1, "{:?}", outcome.warnings);
     assert!(outcome.warnings[0].contains("lib.dll") && outcome.warnings[0].contains("MY_LIB"));
+    // a file that is not there must not be watched: cargo would run the script on every build
+    assert!(outcome.watch.is_empty(), "{:?}", outcome.watch);
     // offline asked for, nothing cached
     let offline = env(&[
         ("DUCK_RUNTIME_LIBS_CACHE", &cache_text),

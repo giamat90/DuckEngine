@@ -132,7 +132,8 @@ pub fn run(
     let Some(dirs) = output_dirs(out_dir) else {
         return warn(&lib, "the build folder is not where it was expected");
     };
-    let cache = cache_root(lookup, out_dir, target_os);
+    // The cache lives on the machine that builds, not on the target.
+    let cache = cache_root(lookup, out_dir, std::env::consts::OS);
     let watch = dirs
         .first()
         .map(|profile| profile.join(&lib.file))
@@ -142,10 +143,9 @@ pub fn run(
         .map_err(|e| format!("the cache folder cannot be made: {e}"))
         .and_then(|()| obtain(&lib, &cache, tools, offline(lookup)).map_err(|e| e.to_string()));
     match source {
-        Err(problem) => Outcome {
-            watch,
-            ..warn(&lib, &problem)
-        },
+        // Nothing is watched: a missing file would make cargo run the script (and the download)
+        // again on every build. The manifest and the variables are still watched by build.rs.
+        Err(problem) => warn(&lib, &problem),
         Ok(file) => match place(&file, &lib.file, &dirs) {
             Ok(placed) => Outcome {
                 placed,

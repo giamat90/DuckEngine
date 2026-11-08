@@ -75,9 +75,11 @@ fn is_hash(text: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// True for a path that stays inside its folder: not empty, not absolute, no `..`, no `\`.
+/// True for a path that stays inside its folder: not empty, not absolute, no `..`, no `\`, not
+/// starting with `-` (a command line would read it as an option).
 fn is_inside(path: &str) -> bool {
     !path.is_empty()
+        && !path.starts_with('-')
         && !path.starts_with('/')
         && !path.contains('\\')
         && !path.contains(':')

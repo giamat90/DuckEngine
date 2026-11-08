@@ -12,7 +12,14 @@ const MANIFEST: &str = include_str!("runtime-lib.txt");
 fn main() {
     println!("cargo:rerun-if-changed=runtime-lib.txt");
     println!("cargo:rerun-if-changed=build.rs");
-    for name in [CACHE_VARIABLE, OFFLINE_VARIABLE, "DUCK_GLFW_LIB"] {
+    for name in [
+        CACHE_VARIABLE,
+        OFFLINE_VARIABLE,
+        "DUCK_GLFW_LIB",
+        "LOCALAPPDATA",
+        "XDG_CACHE_HOME",
+        "HOME",
+    ] {
         println!("cargo:rerun-if-env-changed={name}");
     }
     let (Some(out_dir), Ok(target_os)) = (

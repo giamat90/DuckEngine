@@ -143,9 +143,7 @@ fn keep(file: &Path, target: &Path) -> Result<(), ObtainError> {
     if let Some(folder) = target.parent() {
         fs::create_dir_all(folder).map_err(|e| tool_error("the cache cannot be written", &e))?;
     }
-    fs::rename(file, target)
-        .or_else(|_| fs::copy(file, target).map(|_| ()))
-        .map_err(|e| tool_error("the cache cannot be written", &e))
+    fs::rename(file, target).map_err(|e| tool_error("the cache cannot be written", &e))
 }
 
 /// Copies `source` as `file_name` into each of `dirs` that exists and does not already hold the
@@ -198,14 +196,19 @@ impl Tools for SystemTools {
         run(
             "curl",
             &[
+                "-q".as_ref(),
                 "--fail".as_ref(),
                 "--location".as_ref(),
                 "--silent".as_ref(),
                 "--show-error".as_ref(),
                 "--proto".as_ref(),
                 "=https".as_ref(),
+                "--proto-redir".as_ref(),
+                "=https".as_ref(),
+                "--connect-timeout".as_ref(),
+                "15".as_ref(),
                 "--max-time".as_ref(),
-                "300".as_ref(),
+                "120".as_ref(),
                 "--output".as_ref(),
                 dest.as_os_str(),
                 url.as_ref(),
@@ -221,6 +224,7 @@ impl Tools for SystemTools {
                 archive.as_os_str(),
                 "-C".as_ref(),
                 dir.as_os_str(),
+                "--".as_ref(),
                 member.as_ref(),
             ],
         )
