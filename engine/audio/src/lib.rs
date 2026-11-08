@@ -9,6 +9,7 @@
 pub mod contract;
 pub mod decoder;
 pub mod device;
+pub mod engine;
 pub mod error;
 #[cfg(test)]
 mod faulty;

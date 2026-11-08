@@ -15,3 +15,4 @@ pub mod ring;
 pub mod rng;
 pub mod simd;
 pub mod sparse;
+pub mod spsc;
