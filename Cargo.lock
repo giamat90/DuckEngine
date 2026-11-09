@@ -3,6 +3,16 @@
 version = 4
 
 [[package]]
+name = "adapter_audio_miniaudio"
+version = "0.1.0"
+dependencies = [
+ "adapter_runtime_libs",
+ "audio",
+ "base",
+ "cc",
+]
+
+[[package]]
 name = "adapter_render_gl"
 version = "0.1.0"
 dependencies = [

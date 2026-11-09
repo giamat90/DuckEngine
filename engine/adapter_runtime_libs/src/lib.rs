@@ -14,6 +14,9 @@ pub mod manifest;
 pub mod obtain;
 pub mod plan;
 pub mod sha256;
+pub mod source;
 
+#[cfg(test)]
+mod source_tests;
 #[cfg(test)]
 mod tests;
