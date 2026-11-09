@@ -5,6 +5,8 @@
 //! applied here; registering a gate is a governance step. Latency is not measured.
 //!
 //! `tools_audio_bench [--reps N] [--blocks N]`. Build with `--release`. Not part of the engine.
+//! `tools_audio_bench icount-workload [--voices N] [--blocks N]` renders without timing for an
+//! instruction counter and prints one line with a checksum (card 5-15).
 //! The exit code is non-zero when an argument is bad or a scene cannot be built.
 
 use base::alloc::{CountingAllocator, count_allocations};
@@ -12,7 +14,9 @@ use std::alloc::System;
 use std::hint::black_box;
 use std::process::Command;
 use std::time::Instant;
-use tools_audio_bench::{BLOCK_FRAMES, SAMPLE_RATE, Scene, Summary, block_percent, summarize};
+use tools_audio_bench::{
+    BLOCK_FRAMES, SAMPLE_RATE, Scene, Summary, block_percent, icount_workload, summarize,
+};
 
 #[global_allocator]
 static ALLOCATOR: CountingAllocator<System> = CountingAllocator::new(System);
@@ -163,9 +167,52 @@ fn report(options: &Options) -> Result<(), String> {
     Ok(())
 }
 
+/// Voices of the instruction-count workload: the largest scene of the report.
+const WORKLOAD_VOICES: u32 = 1024;
+/// Blocks of the instruction-count workload: enough to dominate the start-up cost.
+const WORKLOAD_BLOCKS: u32 = 200;
+
+/// `icount-workload [--voices N] [--blocks N]`: the sizes of the workload.
+fn parse_workload(args: &[String]) -> Result<(u32, u32), String> {
+    let (mut voices, mut blocks) = (WORKLOAD_VOICES, WORKLOAD_BLOCKS);
+    let mut rest = args.iter();
+    while let Some(flag) = rest.next() {
+        let value = rest.next().ok_or("a flag needs a value")?;
+        let number = positive(flag, value)?;
+        // Cannot fail (the cap of `positive` is far below `u32::MAX`); kept so no cast is needed.
+        let number = u32::try_from(number).map_err(|_| format!("{flag} is too large"))?;
+        match flag.as_str() {
+            "--voices" => voices = number,
+            "--blocks" => blocks = number,
+            _ => {
+                return Err(
+                    "usage: tools_audio_bench icount-workload [--voices N] [--blocks N]".to_owned(),
+                );
+            }
+        }
+    }
+    Ok((voices, blocks))
+}
+
+/// The one line `icount-workload` prints.
+fn workload_line(args: &[String]) -> Result<String, String> {
+    let (voices, blocks) = parse_workload(args)?;
+    icount_workload(voices, blocks).map_err(|e| e.to_string())
+}
+
+fn run(args: &[String]) -> Result<(), String> {
+    match args.split_first() {
+        Some((word, rest)) if word == "icount-workload" => {
+            println!("{}", workload_line(rest)?);
+            Ok(())
+        }
+        _ => parse(args).and_then(|options| report(&options)),
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if let Err(message) = parse(&args).and_then(|options| report(&options)) {
+    if let Err(message) = run(&args) {
         eprintln!("{message}");
         std::process::exit(2);
     }
@@ -207,6 +254,47 @@ mod tests {
             parse(&args(&["--blocks", &at])).map(|o| o.blocks),
             Ok(MAX_COUNT)
         );
+    }
+
+    #[test]
+    fn the_workload_has_defaults_and_takes_voices_and_blocks() {
+        assert_eq!(parse_workload(&[]), Ok((WORKLOAD_VOICES, WORKLOAD_BLOCKS)));
+        assert_eq!(
+            parse_workload(&args(&["--voices", "8", "--blocks", "3"])),
+            Ok((8, 3))
+        );
+    }
+
+    #[test]
+    fn the_workload_refuses_zero_unknown_flags_and_huge_counts() {
+        assert!(parse_workload(&args(&["--voices", "0"])).is_err());
+        assert!(parse_workload(&args(&["--blocks", "x"])).is_err());
+        assert!(parse_workload(&args(&["--reps", "3"])).is_err());
+        assert!(parse_workload(&args(&["--voices"])).is_err());
+        let over = (MAX_COUNT + 1).to_string();
+        assert!(parse_workload(&args(&["--voices", &over])).is_err());
+    }
+
+    #[test]
+    fn the_workload_accepts_the_cap_and_the_last_duplicate_flag_wins() {
+        let at = MAX_COUNT.to_string();
+        assert_eq!(
+            parse_workload(&args(&["--blocks", &at])).map(|sizes| sizes.1),
+            u32::try_from(MAX_COUNT).map_err(|e| e.to_string())
+        );
+        assert_eq!(
+            parse_workload(&args(&["--voices", "4", "--voices", "9"])),
+            Ok((9, WORKLOAD_BLOCKS))
+        );
+    }
+
+    #[test]
+    fn the_workload_line_is_the_library_line_for_the_parsed_sizes() {
+        assert_eq!(
+            workload_line(&args(&["--voices", "4", "--blocks", "2"])),
+            icount_workload(4, 2).map_err(|e| e.to_string())
+        );
+        assert!(workload_line(&args(&["--voices", "0"])).is_err());
     }
 
     #[test]
