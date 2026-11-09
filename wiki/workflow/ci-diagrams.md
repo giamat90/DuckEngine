@@ -121,7 +121,11 @@ flowchart TB
     t0 --> t5["rustup toolchain install the dated toolchain, component rust-src"]
     t5 --> t6["cargo test -p jobs --features contract-tests, -Zsanitizer=thread, -Zbuild-std, halt_on_error=1"]
     t6 --> t7["prove the test binary links __tsan_init"]
-    t7 --> t8["cargo test -p physics: determinism, joints, parallel, parallel_allocation, stability (only if present)"]
+    t7 --> t7a{"engine/audio/Cargo.toml: in head, in trusted (card 5-12)"}
+    t7a -- "neither" --> t7b["summary: not run: audio crate absent (the only skip)"]
+    t7a -- "only in trusted" --> t3
+    t7a -- "in head" --> t7c["cargo test -p base --test spsc, then -p audio --test engine --test engine_threads, then prove those binaries link __tsan_init"]
+    t7a --> t8["cargo test -p physics: determinism, joints, parallel, parallel_allocation, stability (only if present)"]
   end
 
   subgraph physics_icount["physics_icount (Ubuntu x86-64, card 4-23): instruction count of the serial W1 workload, base against head"]

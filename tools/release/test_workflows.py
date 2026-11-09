@@ -437,7 +437,8 @@ class Ci(unittest.TestCase):
         self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
         physics = job[job.index("- name: Thread-sanitize the physics tests"):]
         self.assertIn("if: steps.physics.outputs.present == 'true'", physics)
-        self.assertEqual(len(re.findall(r"(?m)^\s+if:", job)), 2)
+        # Two conditions for physics and four for the audio steps of card 5-12 (checked below).
+        self.assertEqual(len(re.findall(r"(?m)^\s+if:", job)), 6)
         # An absent crate is stated in the job summary, never green by silence.
         self.assertIn("not run: physics crate absent", job)
         # The run proves that the binaries are instrumented, before the physics step.
@@ -445,6 +446,32 @@ class Ci(unittest.TestCase):
         self.assertLess(job.index("grep -q __tsan_init"), job.index("- name: Thread-sanitize the physics tests"))
         self.assertNotIn("continue-on-error", job)
         self.assertNotIn("head/gates", job)
+
+    def test_the_tsan_job_covers_the_spsc_queue_and_the_audio_engine_tests_only_through_a_presence_check(self):
+        # Card 5-12: the queue (base, tests/spsc.rs) and the audio tests that start threads.
+        job = self.tsan_job()
+        queue = next(l for l in job.splitlines() if "cargo test -p base" in l)
+        engine = next(l for l in job.splitlines() if "cargo test -p audio" in l)
+        self.assertIn("--test spsc", queue)
+        self.assertIn("--test engine --test engine_threads", engine)
+        for line in (queue, engine):
+            self.assertIn("-Zbuild-std", line)
+            self.assertIn("--target x86_64-unknown-linux-gnu", line)
+            self.assertIn("--locked", line)
+        audio = job[job.index("- name: Find the audio crate"):job.index("- name: Thread-sanitize the physics tests")]
+        # The presence rule is the one of physics: absent from both trees is the only skip, main-only is red.
+        self.assertIn("head/engine/audio/Cargo.toml", audio)
+        self.assertIn("trusted/engine/audio/Cargo.toml", audio)
+        self.assertIn("exit 1", audio)
+        self.assertEqual(audio.count("if: steps.audio.outputs.present == 'true'"), 3)
+        self.assertEqual(audio.count("if: steps.audio.outputs.present != 'true'"), 1)
+        # Not green by silence: the summary says so, and each binary is proved instrumented.
+        self.assertIn("not run: audio crate absent", audio)
+        for name in ("spsc", "engine", "engine_threads"):
+            self.assertIn(name, audio[audio.index("for name in"):audio.index("do\n")])
+        self.assertIn("grep -q __tsan_init", audio)
+        self.assertLess(audio.index("cargo test -p base"), audio.index("grep -q __tsan_init"))
+        self.assertLess(audio.index("cargo test -p audio"), audio.index("grep -q __tsan_init"))
 
     def icount_job(self):
         job = CI[CI.index("\n  physics_icount:") + 1:]
