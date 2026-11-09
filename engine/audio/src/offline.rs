@@ -92,21 +92,49 @@ mod tests {
     use super::*;
     use crate::contract::{Probe, device_contract};
     use crate::format::{ChannelLayout, DEFAULT_BLOCK_FRAMES};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+
+    /// The frame counts a renderer was given, kept without a lock (the crate bans locks, card 5-10).
+    /// Room for `LOG_SLOTS` calls; later calls are counted but not stored.
+    const LOG_SLOTS: usize = 8;
+
+    #[derive(Default)]
+    struct FrameLog {
+        calls: AtomicUsize,
+        slots: [AtomicU32; LOG_SLOTS],
+    }
+
+    impl FrameLog {
+        fn push(&self, frames: u32) {
+            let index = self.calls.fetch_add(1, Ordering::SeqCst);
+            self.slots
+                .iter()
+                .skip(index)
+                .take(1)
+                .for_each(|slot| slot.store(frames, Ordering::SeqCst));
+        }
+
+        fn values(&self) -> Vec<u32> {
+            let stored = self.calls.load(Ordering::SeqCst).min(LOG_SLOTS);
+            self.slots
+                .iter()
+                .take(stored)
+                .map(|slot| slot.load(Ordering::SeqCst))
+                .collect()
+        }
+    }
 
     /// Writes its call counter into every sample and records the frame counts it was given.
     struct Recorder {
-        frames_seen: Arc<Mutex<Vec<u32>>>,
+        frames_seen: Arc<FrameLog>,
         value: f32,
     }
 
     impl AudioRenderer for Recorder {
         fn render(&mut self, out: &mut [f32], frames: u32) {
             out.fill(self.value);
-            self.frames_seen
-                .lock()
-                .map(|mut seen| seen.push(frames))
-                .ok();
+            self.frames_seen.push(frames);
         }
     }
 
@@ -124,8 +152,8 @@ mod tests {
         device
     }
 
-    fn recorder(value: f32) -> (Box<dyn AudioRenderer>, Arc<Mutex<Vec<u32>>>) {
-        let frames_seen = Arc::new(Mutex::new(Vec::new()));
+    fn recorder(value: f32) -> (Box<dyn AudioRenderer>, Arc<FrameLog>) {
+        let frames_seen = Arc::new(FrameLog::default());
         let renderer = Recorder {
             frames_seen: Arc::clone(&frames_seen),
             value,
@@ -133,8 +161,8 @@ mod tests {
         (Box::new(renderer), frames_seen)
     }
 
-    fn seen(frames_seen: &Arc<Mutex<Vec<u32>>>) -> Vec<u32> {
-        frames_seen.lock().map(|v| v.clone()).unwrap_or_default()
+    fn seen(frames_seen: &Arc<FrameLog>) -> Vec<u32> {
+        frames_seen.values()
     }
 
     #[test]
