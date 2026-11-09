@@ -411,3 +411,6 @@ flowchart LR
 - **The sample.** `engine/app_audio_sample` (layer 4) plays a generated 440 Hz tone and, with `--wav PATH`, a WAV file through the engine on the default device and returns when every voice has been reported finished. The session logic is a library function over any `IAudioDevice` with a `pump` callback, so the tests run it on the Offline device with no hardware (tone alone, tone and WAV, a bad WAV before anything is opened, a session that never ends stops the device and gives up after twice the longest sound plus ten seconds, argument parsing); everything that can fail is done before the device starts, and the binary refuses a WAV file above 64 MiB. The binary exits with 3 when the machine has no sound device and says so.
 - **Not done here, on purpose.** The gate for the benchmark (governance); a Linux measurement (no CI on `develop`); a benchmark of the full engine path with the queue; latency; playing sound in the existing graphical samples.
 
+## 19. Phase 5 exit (card 5-9)
+
+The exit record is [spikes/phase5-milestone-review](../spikes/phase5-milestone-review.md) and its evidence file is [reviews/5-9](../../reviews/5-9.md); documentation only. It recommends the phase as done with named exceptions (the Clippy bans and ThreadSanitizer cards, the budget gate, nothing run on Linux) and leaves the decision to the owner.

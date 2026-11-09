@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v1.22 (2026-11-09).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v1.23 (2026-11-09).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.23** - Phase 5 milestone review (card 5-9, Class 1, documentation only, ordinary card into `develop`): new page [spikes/phase5-milestone-review](spikes/phase5-milestone-review.md), the phase 5 exit criteria item by item, cards and pull requests, per-card against whole-phase metrics, open findings and the recommendation (done with named exceptions: the Clippy bans and ThreadSanitizer cards 5-10 and 5-12, the budget gate, nothing run on Linux). The decision is the owner's; no card is closed and phase 6 is not started. Index row 40.
 > - **v1.22** - The voice-count benchmark and the audio sample (card 5-8, Class 2, no governance file): `engine/tools_audio_bench` (64, 256, 1024 voices; first measurement 16.3 % of a core for 1,024 voices, 0 allocator calls per block; a budget of one quarter of a core is proposed, its gate is a governance step for the owner), `engine/app_audio_sample` (tone and WAV through the engine on the miniaudio device); `audio-port-v0` section 18, and section 17 no longer lists underrun counting as not done (5-7 added it).
 > - **v1.21** - The miniaudio device adapter (card 5-7, Class 2: new third-party dependency; the `architecture.toml` edge and the `THIRD_PARTY.md` row went to `main` first as a governance step, pull request 21): `engine/adapter_audio_miniaudio` (`MiniaudioDevice`, a thin C shim, `build.rs` with the `cc` crate and a hash-checked download of the pinned `miniaudio.h` 0.11.26), `adapter_runtime_libs::source` (single pinned file fetch), the first sound out of a real device on Windows; `audio-port-v0` section 17.
 > - **v1.20** - Buses and the resampler bound (card 5-6, Class 2: new public API; ordinary card into `develop`, no governance file): `audio::bus` (`BusId`, up to 16 buses in a fixed tree under the master), `Mixer::with_buses`, bus gain and mute with 256-frame ramps, `PlayParams::bus`, the engine API `engine_with_buses`, `set_bus_gain`, `set_bus_muted`; the mixer now works in chunks of 256 frames with one preallocated buffer per bus; the output of a master-only mixer is unchanged bit for bit; the linear resampler's quality is stated and tested (55.6 dB for 1 kHz, 26.3 dB for 8 kHz); zero allocations with buses. [audio-port-v0](architecture/audio-port-v0.md) gains section 16.
@@ -177,6 +178,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 37 | [decisions/adr-0018-physics-core](decisions/adr-0018-physics-core.md) | ADR-0018 (accepted upon owner approval): dimension-generic physics core with a narrow `Dim` trait, native 2D as fallback, locked-axis 3D not taken |
 | 38 | [architecture/examples](architecture/examples.md) | Runnable examples (card 3-16): the window examples and the benchmarks, how to run them, how the interactive example is built |
 | 39 | [spikes/phase4-milestone-review](spikes/phase4-milestone-review.md) | Phase 4 milestone review (card 4-25): exit criteria, cards and releases, metrics (per-card vs whole-phase), hosted CI evidence, open findings, process lessons and the recommendation for the owner |
+| 40 | [spikes/phase5-milestone-review](spikes/phase5-milestone-review.md) | Phase 5 milestone review (card 5-9): exit criteria, cards and pull requests, metrics (per-card vs whole-phase), open findings, process lessons and the recommendation for the owner |
 
 ## Confidence legend used in this wiki
 
