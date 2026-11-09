@@ -73,10 +73,7 @@ class ReadAudioConfig(unittest.TestCase):
     def test_the_workload_must_be_sane(self):
         for old, new in (("voices = 1024", "voices = 0"), ("voices = 1024", "voices = 1000001"),
                          ("blocks = 200", "blocks = 0"), ("blocks = 200", "blocks = 1000001"),
-                         ("runs = 2", "runs = 1"), ('package = "tools_audio_bench"', 'package = "a;b"'),
-                         ("noise_max_percent = 0.5\n\n[audio_icount]", "noise_max_percent = 0.5\n\n[audio_icount]")):
-            if old == new:
-                continue
+                         ("runs = 2", "runs = 1"), ('package = "tools_audio_bench"', 'package = "a;b"')):
             with self.subTest(old=old, new=new), self.assertRaises(ig.GateError):
                 audio_config(BENCH.replace(old, new))
 

@@ -42,7 +42,7 @@ flowchart LR
 
 ## 2. Jobs of the `ci` workflow
 
-Source: `.github/workflows/ci.yml`. Eleven independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
+Source: `.github/workflows/ci.yml`. Twelve independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
 
 ```mermaid
 flowchart TB

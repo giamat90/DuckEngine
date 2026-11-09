@@ -71,11 +71,11 @@ class Config:
     title: str = "Physics"
 
     @property
-    def rows(self):
+    def rows(self):  # physics profile only: an audio config has no --rows
         return dict(self.workload)["--rows"]
 
     @property
-    def steps(self):
+    def steps(self):  # physics profile only
         return dict(self.workload)["--steps"]
 
     def workload_args(self):
