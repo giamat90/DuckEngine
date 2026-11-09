@@ -84,7 +84,11 @@ flowchart TD
   LP["tools/lint-profile test"] -->|"every clippy.toml carries the four gates.toml numbers; physics file keeps required bans"| Crate
   LP --> Root
   Gates["gates/gates.toml [clean_code]"] --> LP
+  Audio["engine/audio/clippy.toml (card 5-10): thresholds + Mutex, RwLock, Condvar, mpsc, thread::sleep"]
+  LP -->|"same four numbers; audio file keeps exactly its real-time bans"| Audio
 ```
+
+**Clippy for the audio crate (card 5-10).** `engine/audio/clippy.toml` is the second line of the real-time rule of the audio callback ([audio](audio.md) section 2: no allocation, no locks, no blocking). It repeats the four thresholds and bans `std::sync::Mutex`, `RwLock`, `Condvar`, the `std::sync::mpsc` sender and receiver types, `mpsc::channel`, `mpsc::sync_channel` and `std::thread::sleep`; atomics and `Arc` stay allowed, so a lock-free queue built on them is not affected. The first line is the design and the counting-allocator tests. Same mechanism and the same `tools/lint-profile` checks as for physics.
 
 `THIRD_PARTY.md` (phase 0) lists every external thing the repository touches - including each OS API family and each external crate - with tier, license, version, port, replacement plan. CI fails if something external appears that is not listed.
 
