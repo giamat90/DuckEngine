@@ -50,6 +50,7 @@ allowed_edges = [
   ["scene", "ecs"],
   ["input", "platform"],
   ["adapter_window_glfw", "adapter_runtime_libs"],
+  ["adapter_audio_miniaudio", "adapter_runtime_libs"],
 ]
 
 # Dependencies that are refused although the layer rule would allow them, directly or
