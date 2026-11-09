@@ -387,4 +387,27 @@ flowchart LR
 - **The callback.** `Shared::render` takes the renderer from a mutex with `try_lock` (never blocks; the game thread takes the mutex only while the device is stopped, and `ma_device_stop` returns only after the last callback), calls it in pieces, counts callbacks and frames, and writes silence when there is no renderer or the buffer has the wrong length. No allocation (tested with the counting allocator). `stop` hands the renderer back to the game thread, so the engine's mixer is dropped there, never in the callback.
 - **Unsafe.** One module, `ffi.rs`: the six extern declarations, the callback that turns miniaudio's pointer into a slice, the owner of the handle (closed before the callback's data is released) and the `Send` impl; every block has a `SAFETY:` comment. The adapter is layer 3, outside the unsafe budget of layers 0 to 2.
 - **Tests.** 10 callback tests (cutting, counters, silence, wrong length, take, no allocation), 12 device tests with a fake backend (they run on any machine, the contract suite among them), 3 tests on the real device (the contract suite, counters, and the engine playing a 200 ms sound to its end; on a machine without a device they report "not run: device not set up" and pass, unless `DUCK_REQUIRE_AUDIO` is set), 1 manifest test, 11 tests of the new fetch module.
-- **Not done here, on purpose.** Choosing a device other than the default; enumerating devices; more than two channels; underrun counting (miniaudio does not report it); a native WASAPI adapter (the exit plan); a Linux run (no CI on `develop`; the release pull request runs the ubuntu jobs, where the contract test reports "not run" because a runner has no sound card).
+- **Not done here, on purpose.** Choosing a device other than the default; enumerating devices; more than two channels; a native WASAPI adapter (the exit plan); a Linux run (no CI on `develop`; the release pull request runs the ubuntu jobs, where the contract test reports "not run" because a runner has no sound card).
+
+## 18. The voice benchmark and the audio sample (card 5-8)
+
+```mermaid
+flowchart LR
+  subgraph bench["tools_audio_bench (report only)"]
+    scene["Scene: Mixer + N looping voices"] --> time["time 256-frame blocks: min, median, p90"]
+    scene --> alloc["counting allocator: calls per warm block"]
+    time --> pct["median ns / block duration = % of one core"]
+  end
+  subgraph sample["app_audio_sample"]
+    cli["--millis N, --wav PATH"] --> play["play(device, options, pump)"]
+    play --> eng["engine + processor"] --> dev["IAudioDevice (miniaudio in the binary, Offline in the tests)"]
+  end
+```
+
+- **The benchmark.** `engine/tools_audio_bench` builds a mixer with 64, 256 and 1024 looping voices (stereo, 48 kHz, 256-frame blocks, eight pan and pitch variants so the resampler path is the common one) and prints, per voice count, the minimum, median and 90th percentile of nanoseconds per block, the median as a share of one core (a block lasts 5.33 ms) and the allocator calls one warm block makes (0 is the requirement of section 8, real-time safety). It uses the mixer directly: the command queue and the retire path are not in the loop, and latency is not measured. Run `cargo run --release -p tools_audio_bench`; a debug build says so in the report.
+- **First measurement** (Windows x86-64, Intel Family 6 Model 154 CPU, rustc 1.94.1, release, one run, scalar code): 64 voices 54.8 us per block (1.03 % of a core), 256 voices 217.8 us (4.08 %), 1024 voices 870.6 us (16.32 %); allocator calls per block: 0 in all three. The cost is linear in the voice count (about 0.85 us per voice and block). All voices read one shared sound of 1.9 MB, so this is a best case for the cache; a scene of many different sounds will cost more.
+- **Proposed budget, for the owner to decide.** "1,000 voices take less than a quarter of one core" in this configuration (the measurement is about a sixth of a core; the budget leaves one and a half times headroom for slower machines). Registering the gate in `gates/benchmarks.toml` is a governance step (the instruction-count gate runs the tool under callgrind in CI), so it is not part of card 5-8; it needs a card the owner declares. Until then the number is a report.
+- **SIMD.** The measurement does not call for it: the rule of this note (section 6, scalar first) stands. A SIMD mixer is a later card if the budget is tightened or a slower target needs it.
+- **The sample.** `engine/app_audio_sample` (layer 4) plays a generated 440 Hz tone and, with `--wav PATH`, a WAV file through the engine on the default device and returns when every voice has been reported finished. The session logic is a library function over any `IAudioDevice` with a `pump` callback, so the tests run it on the Offline device with no hardware (tone alone, tone and WAV, a bad WAV before anything is opened, a session that never ends stops the device and gives up after twice the longest sound plus ten seconds, argument parsing); everything that can fail is done before the device starts, and the binary refuses a WAV file above 64 MiB. The binary exits with 3 when the machine has no sound device and says so.
+- **Not done here, on purpose.** The gate for the benchmark (governance); a Linux measurement (no CI on `develop`); a benchmark of the full engine path with the queue; latency; playing sound in the existing graphical samples.
+
