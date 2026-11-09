@@ -462,7 +462,11 @@ class Ci(unittest.TestCase):
         # The presence rule is the one of physics: absent from both trees is the only skip, main-only is red.
         self.assertIn("head/engine/audio/Cargo.toml", audio)
         self.assertIn("trusted/engine/audio/Cargo.toml", audio)
-        self.assertIn("exit 1", audio)
+        self.assertIn("elif [ -f trusted/engine/audio/Cargo.toml ]", audio)
+        self.assertEqual(audio.count("exit 1"), 2, "one red for a missing queue test, one for a crate only on main")
+        self.assertEqual(audio.count("set -euo pipefail"), 2, "the presence step and the proof step both stop on error")
+        self.assertIn('test -n "$binary"', audio)
+        self.assertIn("-perm -u+x", audio)
         self.assertEqual(audio.count("if: steps.audio.outputs.present == 'true'"), 3)
         self.assertEqual(audio.count("if: steps.audio.outputs.present != 'true'"), 1)
         # Not green by silence: the summary says so, and each binary is proved instrumented.
