@@ -1,0 +1,30 @@
+# Clippy configuration of the audio crate (card 5-10, governance).
+#
+# Clippy reads ONE clippy.toml per crate: the nearest one above the crate's manifest. This file
+# therefore REPLACES the root clippy.toml for this crate, it does not extend it. The four clean-code
+# thresholds are repeated here with the numbers of gates/gates.toml [clean_code]; tools/lint-profile
+# fails CI when this file differs from gates.toml (a crate file must never relax a limit).
+#
+# The bans are the second line of defence of the real-time rule of the audio callback
+# (wiki/architecture/audio-port-v0.md sections 3 and 8): the mixer and the code it calls take no lock,
+# wait on no other thread and do not sleep. The first line is the design (a lock-free queue, no lock by
+# construction) and the tests (counting allocator). Atomics, Arc and the SPSC queue of `base` stay allowed.
+too-many-lines-threshold = 60
+cognitive-complexity-threshold = 20
+too-many-arguments-threshold = 5
+excessive-nesting-threshold = 3
+
+disallowed-methods = [
+    { path = "std::thread::sleep", reason = "sleeping blocks the thread; the real-time rule of the audio callback (audio-port-v0 section 3 and 8): no lock, no blocking" },
+    { path = "std::sync::mpsc::channel", reason = "a blocking channel; the real-time rule of the audio callback (audio-port-v0 section 3 and 8): no lock, no blocking" },
+    { path = "std::sync::mpsc::sync_channel", reason = "a blocking channel; the real-time rule of the audio callback (audio-port-v0 section 3 and 8): no lock, no blocking" },
+]
+
+disallowed-types = [
+    { path = "std::sync::Mutex", reason = "a lock can block the audio thread; the real-time rule of the audio callback (audio-port-v0 section 3 and 8): no lock, no blocking" },
+    { path = "std::sync::RwLock", reason = "a lock can block the audio thread; the real-time rule of the audio callback (audio-port-v0 section 3 and 8): no lock, no blocking" },
+    { path = "std::sync::Condvar", reason = "a lock can block the audio thread; the real-time rule of the audio callback (audio-port-v0 section 3 and 8): no lock, no blocking" },
+    { path = "std::sync::mpsc::Sender", reason = "a blocking channel; the real-time rule of the audio callback (audio-port-v0 section 3 and 8): no lock, no blocking" },
+    { path = "std::sync::mpsc::SyncSender", reason = "a blocking channel; the real-time rule of the audio callback (audio-port-v0 section 3 and 8): no lock, no blocking" },
+    { path = "std::sync::mpsc::Receiver", reason = "a blocking channel; the real-time rule of the audio callback (audio-port-v0 section 3 and 8): no lock, no blocking" },
+]
