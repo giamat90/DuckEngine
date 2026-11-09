@@ -17,3 +17,11 @@ rows = 20
 steps = 30
 runs = 2
 noise_max_percent = 0.5
+
+[audio_icount]
+package = "tools_audio_bench"
+manifest = "engine/tools_audio_bench/Cargo.toml"
+voices = 1024
+blocks = 200
+runs = 2
+noise_max_percent = 0.5

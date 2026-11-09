@@ -46,7 +46,7 @@ Source: `.github/workflows/ci.yml`. Eleven independent jobs run in parallel. A n
 
 ```mermaid
 flowchart TB
-  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism & tsan & physics_icount
+  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism & tsan & physics_icount & audio_icount
 
   subgraph g1["g1: build, test, fmt, clippy (Windows and Ubuntu)"]
     direction TB
@@ -144,7 +144,19 @@ flowchart TB
     p6 -- "above fail 10%, or no count, or runs that disagree" --> p9["RED"]
   end
 
-  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism & tsan & physics_icount --> done(["all green = the commit may merge"])
+  subgraph audio_icount["audio_icount (Ubuntu x86-64, card 5-15): instruction count of the 1024-voice scene, base against head"]
+    direction TB
+    a0["same job as physics_icount: trusted/ = main, base/, head/; icount_gate --benchmark audio"] --> a0b{"audio profile and [audio_icount] on main?"}
+    a0b -- "no (before the card is merged)" --> a0c["summary: not run: icount-gate is not on main yet"]
+    a0b -- yes --> a1{"engine/tools_audio_bench/Cargo.toml: in base, in head"}
+    a1 -- "neither" --> a2["notice and summary: not run: audio benchmark tool absent (the only skip)"]
+    a1 -- "only in base" --> a3["RED: tool deleted"]
+    a1 -- "only in head" --> a4["count head only, summary: no baseline, recorded only"]
+    a1 -- "both" --> a5["count base and head: 2 runs each under callgrind, spread within the noise limit"]
+    a5 --> a6["compare, bands from gates.toml of main: warn 5%, fail 10%, same as physics"]
+  end
+
+  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism & tsan & physics_icount & audio_icount --> done(["all green = the commit may merge"])
 ```
 
 ---
@@ -172,7 +184,7 @@ flowchart LR
   twf -- "judges; the PR cannot edit it, and it rejects a deleted or hollowed pwf" --> pwf
   ptools -. "unit tests in job g1, not a gate" .-> tools
 
-  note["Exceptions: arch-check runs cargo inside the PR tree and so honours its rust-toolchain.toml and .cargo/ (both protected paths). The PR can edit ci.yml, so the owner reads any workflow diff. Jobs that must run the pushed code (tsan, d2_determinism, physics_icount) execute it as the program under test; their verdict still comes from the trusted tools, and physics_icount reads the instruction count from valgrind's own log file, not from anything the program prints."]
+  note["Exceptions: arch-check runs cargo inside the PR tree and so honours its rust-toolchain.toml and .cargo/ (both protected paths). The PR can edit ci.yml, so the owner reads any workflow diff. Jobs that must run the pushed code (tsan, d2_determinism, physics_icount, audio_icount) execute it as the program under test; their verdict still comes from the trusted tools, and physics_icount reads the instruction count from valgrind's own log file, not from anything the program prints."]
   pwf --- note
 ```
 

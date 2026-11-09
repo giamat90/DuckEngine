@@ -551,6 +551,37 @@ class Ci(unittest.TestCase):
         self.assertNotIn("if:", step)
         self.assertLess(job.index("id: gate"), job.index("id: bench"))
 
+    def audio_icount_job(self):
+        job = CI[CI.index("\n  audio_icount:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        return job[:following.start()] if following else job
+
+    def test_the_audio_icount_job_is_the_physics_job_with_the_audio_profile(self):
+        # Card 5-15: same trusted-main, locked-checkout, base-against-head structure; only the profile and the words differ.
+        physics, audio = self.icount_job(), self.audio_icount_job()
+        for command in ("presence", "measure", "compare"):
+            physics = physics.replace(f"icount_gate.py {command} ", f"icount_gate.py {command} --benchmark audio ")
+        physics = physics.replace("physics_icount:", "audio_icount:").replace("Physics instruction count", "Audio instruction count")
+        physics = physics.replace("[ -f trusted/gates/benchmarks.toml ]; then",
+                                  "[ -f trusted/gates/benchmarks.toml ] && grep -q '^\\[audio_icount\\]' trusted/gates/benchmarks.toml; then")
+        physics = physics.replace("(tools/icount-gate and gates/benchmarks.toml are absent",
+                                  "(the audio profile of tools/icount-gate or [audio_icount] in gates/benchmarks.toml is absent")
+        physics = physics.replace("until the card that adds the gate tool is merged", "until the card that adds the audio profile is merged")
+        self.assertEqual(audio.strip(), physics.strip())
+        self.assertEqual(len(re.findall(r"(?m)^\s+if:", audio)), 7)
+        self.assertEqual(audio.count("--benchmark audio"), 4)
+        self.assertNotIn("continue-on-error", audio)
+
+    def test_the_audio_icount_job_waits_for_the_audio_table_on_main(self):
+        step = next(s for s in self.audio_icount_job().split("\n      - ") if "id: gate" in s)
+        self.assertIn("audio_icount", step)
+        self.assertIn("ready=false", step)
+        self.assertNotIn("if:", step)
+
+    def test_the_icount_tool_states_its_audio_skip_line(self):
+        gate = (Path(__file__).resolve().parents[2] / "tools" / "icount-gate" / "icount_gate.py").read_text(encoding="utf-8")
+        self.assertIn("not run: audio benchmark tool absent", gate)
+
     def test_the_icount_tool_states_its_skip_line(self):
         gate = (Path(__file__).resolve().parents[2] / "tools" / "icount-gate" / "icount_gate.py").read_text(encoding="utf-8")
         self.assertIn("not run: physics benchmark tool absent", gate)
