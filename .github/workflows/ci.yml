@@ -532,7 +532,12 @@ jobs:
   #   2. the `physics` tests that use the pool (determinism, joints, parallel, parallel_allocation, stability),
   #      only when the crate exists. `main` can be behind `develop`, so the crate can be absent: the presence
   #      check of the D2 job decides it from the two trees (a crate in the push always runs; a crate on main that
-  #      the push lacks is red) and the absence is written to the job summary, never green by silence.
+  #      the push lacks is red) and the absence is written to the job summary, never green by silence;
+  #   3. card 5-12: the lock-free SPSC queue of `base` (`tests/spsc.rs`, one producer thread and one consumer
+  #      thread) and the audio engine tests that start threads (`engine`, `engine_threads` of the `audio` crate:
+  #      game thread against the audio thread), only when the audio crate exists, by the same rule as physics
+  #      (neither tree has it: written to the summary as not run; main has it and the push lacks it: red). The
+  #      binaries of this step are proved instrumented too.
   # The workspace profiles set panic = abort, which the test harness cannot use and which makes the rebuilt
   # `panic_abort` crate fail; the two profile variables below make this job build with unwinding (the race
   # detector does not depend on the panic strategy).
@@ -589,6 +594,44 @@ jobs:
           grep -q __tsan_init "$binary"
           echo "### TSan: $(basename "$binary") is instrumented (__tsan_init linked)" >> "$GITHUB_STEP_SUMMARY"
         working-directory: head
+      # Card 5-12. The audio crate (and the queue test in `base`) are on `develop` before they are on `main`, so the
+      # same presence rule as for physics applies: skipped (and said so) only when neither tree has the crate.
+      - name: Find the audio crate
+        id: audio
+        run: |
+          set -euo pipefail
+          if [ -f head/engine/audio/Cargo.toml ]; then
+            test -f head/engine/base/tests/spsc.rs || { echo "the audio crate is present but engine/base/tests/spsc.rs is missing: not a skip" >&2; exit 1; }
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          elif [ -f trusted/engine/audio/Cargo.toml ]; then
+            echo "the audio crate exists on main but the pushed commit has deleted or moved it: not a skip" >&2
+            exit 1
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Thread-sanitize the SPSC queue tests
+        if: steps.audio.outputs.present == 'true'
+        run: cargo test -p base --test spsc --locked -Zbuild-std --target x86_64-unknown-linux-gnu
+        working-directory: head
+      - name: Thread-sanitize the audio engine tests
+        if: steps.audio.outputs.present == 'true'
+        run: cargo test -p audio --test engine --test engine_threads --locked -Zbuild-std --target x86_64-unknown-linux-gnu
+        working-directory: head
+      - name: Prove the queue and audio test binaries are instrumented
+        if: steps.audio.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          for name in spsc engine engine_threads; do
+            binary=$(find target-tsan -type f -name "${name}-*" -perm -u+x -print -quit)
+            test -n "$binary"
+            grep -q __tsan_init "$binary"
+            echo "### TSan: $(basename "$binary") is instrumented (__tsan_init linked)" >> "$GITHUB_STEP_SUMMARY"
+          done
+        working-directory: head
+      - name: Say that the audio tests did not run
+        if: steps.audio.outputs.present != 'true'
+        run: |
+          echo "### TSan queue and audio tests: not run: audio crate absent (engine/audio/Cargo.toml is on neither main nor the pushed commit)" >> "$GITHUB_STEP_SUMMARY"
       - name: Thread-sanitize the physics tests
         if: steps.physics.outputs.present == 'true'
         run: cargo test -p physics --test determinism --test joints --test parallel --test parallel_allocation --test stability --locked -Zbuild-std --target x86_64-unknown-linux-gnu
