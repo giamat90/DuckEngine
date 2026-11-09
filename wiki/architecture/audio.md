@@ -1,5 +1,7 @@
 # Audio Architecture (from scratch) `[P]`
 
+> The phase 5 shape of the ports, the thread model, the mixer, the adapters and the tests (signatures, cards, choices for the owner) is proposed in [audio-port-v0](audio-port-v0.md); the research pass of card 5-1 is its section 1.
+
 > Research caveat: the audio literature search returned only marketing pages. This design rests on general real-time-audio practice **[K]** and needs a second research pass (miniaudio, SoLoud, FMOD/Wwise docs) before refinement.
 
 ## 1. Boundaries
@@ -25,7 +27,7 @@ sources(voices) -> per-voice DSP (pitch/resample, filter, pan/spatial) -> buses 
 ```
 
 - Fixed block size processing (e.g. 128-1024 frames), float32 internally, SoA buffers, SIMD where measured.
-- Mixer graph is built on the game thread, published to the audio thread as an immutable snapshot (swap by atomic pointer/epoch); **reclaiming the previous snapshot must be real-time-safe** (triple buffer, epoch or RCU), decided in the audio design note (M4).
+- The audio thread owns the mixer and the game thread sends it commands; sound data is shared as immutable `Arc` values and handed back through a retire queue so that nothing is freed on the audio thread. This replaces the earlier idea of publishing an immutable graph snapshot (decided in the audio design note, [audio-port-v0](audio-port-v0.md) section 3, choice O1).
 - Spatialisation: distance attenuation + panning first; HRTF later (needs data and a convolution engine).
 - Format negotiation through the port (sample rate, channels); resampler between engine rate and device rate.
 

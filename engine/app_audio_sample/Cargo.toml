@@ -1,0 +1,16 @@
+[package]
+name = "app_audio_sample"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+license-file.workspace = true
+description = "Layer 4 sample: plays a generated tone and, if given, a WAV file through the audio engine on the miniaudio device (card 5-8)."
+
+[dependencies]
+audio = { path = "../audio", version = "0.1.0" }
+adapter_audio_miniaudio = { path = "../adapter_audio_miniaudio", version = "0.1.0" }
+
+[lints]
+workspace = true

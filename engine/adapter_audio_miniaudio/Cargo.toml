@@ -1,0 +1,39 @@
+[package]
+name = "adapter_audio_miniaudio"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+license-file.workspace = true
+description = "Layer 3 adapter: the audio device port on miniaudio, compiled with a thin C shim (stopgap)."
+
+[dependencies]
+audio = { path = "../audio", version = "0.1.0" }
+
+[build-dependencies]
+adapter_runtime_libs = { path = "../adapter_runtime_libs", version = "0.1.0" }
+cc = "=1.10.0"
+
+[dev-dependencies]
+adapter_runtime_libs = { path = "../adapter_runtime_libs", version = "0.1.0" }
+audio = { path = "../audio", version = "0.1.0", features = ["contract-tests"] }
+base = { path = "../base", version = "0.1.0" }
+
+# Not `workspace = true`: the workspace forbids unsafe code. This adapter denies it instead and
+# allows it in one module (`ffi`), where every block is documented. The rest repeats the
+# workspace lints.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+too_many_lines = "warn"
+too_many_arguments = "deny"
+cognitive_complexity = "deny"
+excessive_nesting = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"
