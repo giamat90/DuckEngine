@@ -41,6 +41,8 @@ pub enum ObtainError {
     ArchiveHash { expected: String, found: String },
     /// The unpacked file is not the one the manifest pins.
     FileHash { expected: String, found: String },
+    /// A single downloaded file is not the one the manifest pins.
+    SourceHash { expected: String, found: String },
 }
 
 impl fmt::Display for ObtainError {
@@ -57,18 +59,22 @@ impl fmt::Display for ObtainError {
                 f,
                 "the unpacked library has SHA-256 {found}, not the pinned {expected}; it was discarded"
             ),
+            Self::SourceHash { expected, found } => write!(
+                f,
+                "the file has SHA-256 {found}, not the pinned {expected}; it was not used"
+            ),
         }
     }
 }
 
 impl std::error::Error for ObtainError {}
 
-fn tool_error(what: &str, error: &io::Error) -> ObtainError {
+pub(crate) fn tool_error(what: &str, error: &io::Error) -> ObtainError {
     ObtainError::Tool(format!("{what}: {error}"))
 }
 
 /// The checked file in the cache, if there is one; a damaged one is removed.
-fn cached(path: &Path, expected: &str) -> Option<PathBuf> {
+pub(crate) fn cached(path: &Path, expected: &str) -> Option<PathBuf> {
     if !path.is_file() {
         return None;
     }
@@ -139,7 +145,7 @@ pub fn obtain(
     result.map(|()| target)
 }
 
-fn keep(file: &Path, target: &Path) -> Result<(), ObtainError> {
+pub(crate) fn keep(file: &Path, target: &Path) -> Result<(), ObtainError> {
     if let Some(folder) = target.parent() {
         fs::create_dir_all(folder).map_err(|e| tool_error("the cache cannot be written", &e))?;
     }

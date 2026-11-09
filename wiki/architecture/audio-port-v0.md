@@ -358,3 +358,33 @@ flowchart TD
 - **Real-time.** `tests/bus_allocation.rs`: 3 000 blocks that start voices on four buses and change bus gain and mute make zero allocations, reallocations and frees.
 - **Tests.** `tests/buses.rs` (18): table checks, master and child routing, gains multiplying down a chain, siblings adding, linear ramp without jumps, mute and unmute with a remembered gain, mute of a parent, master controls, bad arguments, chunk independence with changes, a long call over several internal chunks, a short slice, and the two resampler bounds; five more engine tests; one allocation test.
 - **Not done here, on purpose.** Effects on buses (EQ, reverb, compression), sends, ducking, creating buses at run time, and a per-bus meter. A bus-to-bus move of a playing voice is not planned.
+
+## 17. As built in card 5-7
+
+The first real device: `adapter_audio_miniaudio` (layer 3, tier T1-stopgap) implements `IAudioDevice` on the machine's default playback device. Sections 1 to 16 did not change. Owner decisions of 2026-11-09: O5 route (a), compile with the `cc` crate; fetch the header and treat the card as a governance task (the `architecture.toml` edge and the `THIRD_PARTY.md` row went to `main` first, pull request 21).
+
+```mermaid
+flowchart LR
+  subgraph build["build time (build.rs)"]
+    man["source-file.txt (URL, SHA-256)"] --> fetch["adapter_runtime_libs::source: download once, check, cache"]
+    fetch --> hdr["miniaudio.h 0.11.26"]
+    hdr --> cc["cc crate"]
+    shim["csrc/duck_miniaudio.c"] --> cc
+  end
+  subgraph run["run time"]
+    dev["MiniaudioDevice (IAudioDevice)"] --> ffi["ffi.rs: the only unsafe"]
+    ffi --> c["C shim: 6 functions"]
+    c --> ma["miniaudio device thread"]
+    ma -- "data callback" --> sh["Shared::render: slot, cutting, counters"]
+    sh --> r["AudioRenderer (the engine's processor)"]
+  end
+  cc --> c
+```
+
+- **The build.** `build.rs` reads `source-file.txt`, downloads `miniaudio.h` over https with the card 4-35 helper (new module `adapter_runtime_libs::source`: a single pinned file, no archive), checks its SHA-256, keeps it in the per-user cache and compiles it together with the shim through `cc`. The header is never stored in git. A header of the user's own (`DUCK_MINIAUDIO_HEADER`) is checked against the same hash. Offline or any failure is a build warning, not a failed build: the shim is then compiled without miniaudio, `is_compiled_in()` is false and every `open` reports `NoDevice`, so a program falls back to the Null device. A test keeps the manifest and the `THIRD_PARTY.md` row in step. miniaudio is built without decoding, encoding, generation, resource manager, node graph and engine (device I/O only).
+- **The shim.** About 150 lines of C, the only file that includes the header: `open`, `start`, `stop`, `lost`, `close`, `available`. Rust declares these six functions and never miniaudio's large structs. The data callback only calls a Rust function. A stop nobody asked for (the shim's "stopping" flag is not set) marks the device lost.
+- **The device logic.** `MiniaudioDevice` follows the state rules of the port (`open` when not started, `start` when open, `stop` when started) and holds a `Backend` (the shim, or a fake in the tests). `open` checks the request, refuses wider than stereo with `FormatRefused` (`caps` says 2 channels; the sample rate is not known before opening), closes an earlier stream, asks the backend for the format and returns the sample rate the device really has. The block size is a hint: the renderer is always called with at most `max_block_frames` frames, because `Shared::render` cuts any callback larger than that.
+- **The callback.** `Shared::render` takes the renderer from a mutex with `try_lock` (never blocks; the game thread takes the mutex only while the device is stopped, and `ma_device_stop` returns only after the last callback), calls it in pieces, counts callbacks and frames, and writes silence when there is no renderer or the buffer has the wrong length. No allocation (tested with the counting allocator). `stop` hands the renderer back to the game thread, so the engine's mixer is dropped there, never in the callback.
+- **Unsafe.** One module, `ffi.rs`: the six extern declarations, the callback that turns miniaudio's pointer into a slice, the owner of the handle (closed before the callback's data is released) and the `Send` impl; every block has a `SAFETY:` comment. The adapter is layer 3, outside the unsafe budget of layers 0 to 2.
+- **Tests.** 10 callback tests (cutting, counters, silence, wrong length, take, no allocation), 12 device tests with a fake backend (they run on any machine, the contract suite among them), 3 tests on the real device (the contract suite, counters, and the engine playing a 200 ms sound to its end; on a machine without a device they report "not run: device not set up" and pass, unless `DUCK_REQUIRE_AUDIO` is set), 1 manifest test, 11 tests of the new fetch module.
+- **Not done here, on purpose.** Choosing a device other than the default; enumerating devices; more than two channels; underrun counting (miniaudio does not report it); a native WASAPI adapter (the exit plan); a Linux run (no CI on `develop`; the release pull request runs the ubuntu jobs, where the contract test reports "not run" because a runner has no sound card).

@@ -1,0 +1,7 @@
+# The miniaudio header this adapter compiles, and where the official copy comes from.
+# Read by build.rs through the helper crate adapter_runtime_libs. The same address and hash are
+# in THIRD_PARTY.md (a test keeps the two in step). The header is not stored in git.
+file = miniaudio.h
+url = https://raw.githubusercontent.com/mackron/miniaudio/0.11.26/miniaudio.h
+sha256 = 6b376c7fbb1352ba1e0e432ab66069b335ea9405e45cb6c30b97ef0f3c9c3e0e
+override = DUCK_MINIAUDIO_HEADER

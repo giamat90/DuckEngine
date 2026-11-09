@@ -68,7 +68,7 @@ const KEYS: [&str; 7] = [
     "override",
 ];
 
-fn is_hash(text: &str) -> bool {
+pub(crate) fn is_hash(text: &str) -> bool {
     text.len() == 64
         && text
             .bytes()
@@ -77,27 +77,30 @@ fn is_hash(text: &str) -> bool {
 
 /// True for a path that stays inside its folder: not empty, not absolute, no `..`, no `\`, not
 /// starting with `-` (a command line would read it as an option).
-fn is_inside(path: &str) -> bool {
+pub(crate) fn is_inside(path: &str) -> bool {
     !path.is_empty()
         && !path.starts_with('-')
         && !path.starts_with('/')
         && !path.contains('\\')
         && !path.contains(':')
-        && path.split('/').all(|part| !part.is_empty() && part != "..")
+        && path
+            .split('/')
+            .all(|part| !part.is_empty() && part != ".." && part != ".")
 }
 
-fn field(pairs: &[(String, String)], key: &str) -> Option<String> {
+pub(crate) fn field(pairs: &[(String, String)], key: &str) -> Option<String> {
     pairs
         .iter()
         .find(|(name, _)| name == key)
         .map(|(_, value)| value.clone())
 }
 
-fn required(pairs: &[(String, String)], key: &str) -> Result<String, ManifestError> {
+pub(crate) fn required(pairs: &[(String, String)], key: &str) -> Result<String, ManifestError> {
     field(pairs, key).ok_or_else(|| ManifestError::Missing(key.to_owned()))
 }
 
-fn pairs_of(text: &str) -> Result<Vec<(String, String)>, ManifestError> {
+/// The `key = value` lines of `text`, refusing keys that are not in `keys` and repeated keys.
+pub(crate) fn pairs_of(text: &str, keys: &[&str]) -> Result<Vec<(String, String)>, ManifestError> {
     let mut pairs: Vec<(String, String)> = Vec::new();
     for line in text.lines().map(str::trim) {
         if line.is_empty() || line.starts_with('#') {
@@ -107,7 +110,7 @@ fn pairs_of(text: &str) -> Result<Vec<(String, String)>, ManifestError> {
             .split_once('=')
             .ok_or_else(|| ManifestError::BadLine(line.to_owned()))?;
         let (key, value) = (key.trim().to_owned(), value.trim().to_owned());
-        if !KEYS.contains(&key.as_str()) {
+        if !keys.contains(&key.as_str()) {
             return Err(ManifestError::UnknownKey(key));
         }
         if pairs.iter().any(|(name, _)| *name == key) {
@@ -124,7 +127,7 @@ fn pairs_of(text: &str) -> Result<Vec<(String, String)>, ManifestError> {
 /// [`ManifestError`] when a key is missing, unknown or repeated, a line is malformed, the address
 /// is not https, a hash is not 64 lower-case hex digits or a path is not inside its folder.
 pub fn parse(text: &str) -> Result<Library, ManifestError> {
-    let pairs = pairs_of(text)?;
+    let pairs = pairs_of(text, &KEYS)?;
     let library = Library {
         file: required(&pairs, "file")?,
         url: required(&pairs, "url")?,
