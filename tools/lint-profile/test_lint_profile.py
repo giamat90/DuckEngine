@@ -27,6 +27,7 @@ GATES_TOML = REPO / "gates" / "gates.toml"
 TOOLCHAIN_TOML = REPO / "rust-toolchain.toml"
 UNSAFE_CRATE_TOML = REPO / "engine" / "skeleton-unsafe" / "Cargo.toml"
 PHYSICS_CLIPPY_TOML = REPO / "engine" / "physics" / "clippy.toml"
+AUDIO_CLIPPY_TOML = REPO / "engine" / "audio" / "clippy.toml"
 ARCH_TOML = REPO / "gates" / "architecture.toml"
 BAN_KEYS = ("disallowed-methods", "disallowed-types")
 
@@ -34,6 +35,10 @@ BAN_KEYS = ("disallowed-methods", "disallowed-types")
 REQUIRED_METHOD_BANS = ("f32::sin", "f32::powi", "f32::mul_add", "f64::sin", "std::time::Instant::now",
                         "std::time::SystemTime::now", "slice::sort_unstable", "slice::sort_unstable_by_key")
 REQUIRED_TYPE_BANS = ("std::collections::HashMap", "std::collections::HashSet")
+# Bans the audio crate file must keep (wiki/architecture/audio-port-v0.md sections 3 and 8, card 5-10).
+AUDIO_METHOD_BANS = ("std::thread::sleep", "std::sync::mpsc::channel", "std::sync::mpsc::sync_channel")
+AUDIO_TYPE_BANS = ("std::sync::Mutex", "std::sync::RwLock", "std::sync::Condvar", "std::sync::mpsc::Sender",
+                   "std::sync::mpsc::SyncSender", "std::sync::mpsc::Receiver")
 # Folders that never hold a tracked config file (hidden folders are skipped as well).
 SKIPPED_DIRS = ("target", "node_modules")
 
@@ -93,12 +98,12 @@ def scan_names():
     raise AssertionError("the physics dot-call rule of the arch-check scan was not found")
 
 
-def ban_problems(config):
-    """Required bans missing from a physics crate config."""
+def ban_problems(config, required_methods=REQUIRED_METHOD_BANS, required_types=REQUIRED_TYPE_BANS):
+    """Required bans missing from a crate config (the physics bans unless others are given)."""
     methods = {entry["path"] for entry in config.get("disallowed-methods", [])}
     types = {entry["path"] for entry in config.get("disallowed-types", [])}
-    return [f"disallowed-methods lacks {path}" for path in REQUIRED_METHOD_BANS if path not in methods] + [
-        f"disallowed-types lacks {path}" for path in REQUIRED_TYPE_BANS if path not in types
+    return [f"disallowed-methods lacks {path}" for path in required_methods if path not in methods] + [
+        f"disallowed-types lacks {path}" for path in required_types if path not in types
     ]
 
 
@@ -259,9 +264,27 @@ class CrateLevelConfigs(unittest.TestCase):
         config["disallowed-methods"] = [e for e in config["disallowed-methods"] if e["path"] != "f32::sin"]
         self.assertIn("f32::sin", ban_problems(config)[0])
 
+    def test_an_audio_config_without_bans_is_reported(self):
+        config = read_toml(AUDIO_CLIPPY_TOML)
+        self.assertEqual([], ban_problems(config, AUDIO_METHOD_BANS, AUDIO_TYPE_BANS))
+        self.assertEqual(
+            len(AUDIO_METHOD_BANS) + len(AUDIO_TYPE_BANS),
+            len(ban_problems(read_toml(CLIPPY_TOML), AUDIO_METHOD_BANS, AUDIO_TYPE_BANS)),
+        )
+        config["disallowed-types"] = [e for e in config["disallowed-types"] if e["path"] != "std::sync::Mutex"]
+        self.assertIn("std::sync::Mutex", ban_problems(config, AUDIO_METHOD_BANS, AUDIO_TYPE_BANS)[0])
+
+    def test_the_audio_config_has_exactly_the_real_time_bans_with_reasons(self):
+        config = read_toml(AUDIO_CLIPPY_TOML)
+        self.assertEqual(set(AUDIO_METHOD_BANS), {e["path"] for e in config["disallowed-methods"]})
+        self.assertEqual(set(AUDIO_TYPE_BANS), {e["path"] for e in config["disallowed-types"]})
+        for entry in config["disallowed-methods"] + config["disallowed-types"]:
+            with self.subTest(path=entry["path"]):
+                self.assertTrue(entry.get("reason"))
+
     def test_a_crate_config_may_not_add_other_settings(self):
         for path in config_files():
-            extra = BAN_KEYS if path == PHYSICS_CLIPPY_TOML else ()
+            extra = BAN_KEYS if path in (PHYSICS_CLIPPY_TOML, AUDIO_CLIPPY_TOML) else ()
             with self.subTest(file=path.relative_to(REPO).as_posix()):
                 self.assertEqual([], key_problems(read_toml(path), extra))
 
@@ -446,6 +469,57 @@ class SeededViolations(unittest.TestCase):
                 codes, messages = clippy_run(source, self.target, PHYSICS_CLIPPY_TOML)
                 self.assertIn("clippy::disallowed_types", codes)
                 self.assertTrue(any(f"`{name}`" in m for m in messages), messages)
+
+    # Card 5-10: the audio crate file carries the real-time bans (a lock, a blocking channel, a sleep).
+    def audio_codes(self, source):
+        return clippy_codes(source, self.target, AUDIO_CLIPPY_TOML)
+
+    def test_every_audio_ban_path_resolves(self):
+        _, messages = clippy_run("pub const A: u32 = 1;\n", self.target, AUDIO_CLIPPY_TOML)
+        self.assertEqual([], [m for m in messages if "reachable" in m or "could not be resolved" in m])
+
+    def test_audio_config_flags_each_lock_and_channel_type(self):
+        seeds = {
+            "std::sync::Mutex": "pub fn f() -> std::sync::Mutex<u32> {\n    std::sync::Mutex::new(1)\n}\n",
+            "std::sync::RwLock": "pub fn f() -> std::sync::RwLock<u32> {\n    std::sync::RwLock::new(1)\n}\n",
+            "std::sync::Condvar": "pub fn f() -> std::sync::Condvar {\n    std::sync::Condvar::new()\n}\n",
+            "std::sync::mpsc::Sender": "pub fn f(s: &std::sync::mpsc::Sender<u32>) {\n    let _ = s;\n}\n",
+            "std::sync::mpsc::SyncSender": "pub fn f(s: &std::sync::mpsc::SyncSender<u32>) {\n    let _ = s;\n}\n",
+            "std::sync::mpsc::Receiver": "pub fn f(r: &std::sync::mpsc::Receiver<u32>) {\n    let _ = r;\n}\n",
+        }
+        self.assertEqual(set(AUDIO_TYPE_BANS), set(seeds))
+        for name, source in seeds.items():
+            with self.subTest(ban=name):
+                codes, messages = clippy_run(source, self.target, AUDIO_CLIPPY_TOML)
+                self.assertIn("clippy::disallowed_types", codes)
+                self.assertTrue(any(f"`{name}`" in m for m in messages), messages)
+                self.assertNotIn("clippy::disallowed_types", self.codes(source))
+
+    def test_audio_config_flags_sleep_and_blocking_channels(self):
+        seeds = {
+            "std::thread::sleep": "pub fn f() {\n    std::thread::sleep(std::time::Duration::ZERO);\n}\n",
+            "std::sync::mpsc::channel": "pub fn f() {\n    let _ = std::sync::mpsc::channel::<u32>();\n}\n",
+            "std::sync::mpsc::sync_channel": "pub fn f() {\n    let _ = std::sync::mpsc::sync_channel::<u32>(1);\n}\n",
+        }
+        self.assertEqual(set(AUDIO_METHOD_BANS), set(seeds))
+        for name, source in seeds.items():
+            with self.subTest(ban=name):
+                codes, messages = clippy_run(source, self.target, AUDIO_CLIPPY_TOML)
+                self.assertIn("clippy::disallowed_methods", codes)
+                self.assertTrue(any(f"`{name}`" in m for m in messages), messages)
+                self.assertNotIn("clippy::disallowed_methods", self.codes(source))
+
+    def test_audio_config_allows_atomics_and_arc(self):
+        source = (
+            "use std::sync::Arc;\nuse std::sync::atomic::{AtomicU32, Ordering};\n"
+            "pub fn f(a: &Arc<AtomicU32>) -> u32 {\n    a.fetch_add(1, Ordering::Relaxed)\n}\n"
+        )
+        self.assertEqual(set(), self.audio_codes(source))
+
+    def test_audio_config_keeps_the_clean_code_limits(self):
+        limit = gates_limit("function_length_warn")
+        self.assertNotIn("clippy::too_many_lines", self.audio_codes(function_with_lines(limit)))
+        self.assertIn("clippy::too_many_lines", self.audio_codes(function_with_lines(limit + 1)))
 
     def test_physics_config_allows_the_exact_float_operations(self):
         source = (

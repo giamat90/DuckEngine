@@ -42,11 +42,11 @@ allows `unsafe`). A test fails if the two drift apart.
 
 Clippy reads one `clippy.toml` per crate (the nearest above its manifest, `.clippy.toml` is the hidden
 alias) and a crate-level file replaces the root file: it does not merge. A crate that needs its own
-settings, such as the `disallowed-methods` of `engine/physics/clippy.toml`, must therefore repeat the four
+settings, such as the `disallowed-methods` of `engine/physics/clippy.toml` or the bans of `engine/audio/clippy.toml` (card 5-10), must therefore repeat the four
 thresholds. `tools/lint-profile` walks the tree (hidden folders and `target` skipped) and fails when any
 `clippy.toml` or `.clippy.toml` has a threshold that differs from `gates.toml`, higher or lower, or lacks
-one, or carries any other setting (`msrv`, `allow-*-in-tests`, `allow-invalid`; the physics file may add only `disallowed-methods` and `disallowed-types`); it also fails when the physics file loses a required ban (one entry per class: libm functions for
-`f32` and `f64`, `mul_add`, `Instant::now`, `SystemTime::now`, unstable slice sorts, `HashMap`, `HashSet`).
+one, or carries any other setting (`msrv`, `allow-*-in-tests`, `allow-invalid`; the physics and audio files may add only `disallowed-methods` and `disallowed-types`); it also fails when the physics file loses a required ban (one entry per class: libm functions for
+`f32` and `f64`, `mul_add`, `Instant::now`, `SystemTime::now`, unstable slice sorts, `HashMap`, `HashSet`) or the audio file does not carry exactly its bans (card 5-10, the second line of the real-time rule of the audio callback: `Mutex`, `RwLock`, `Condvar`, the `mpsc` sender and receiver types, `mpsc::channel`, `mpsc::sync_channel`, `thread::sleep`). A seeded test shows that atomics and `Arc` stay allowed.
 Seeded tests lint throwaway crates with the real physics file (a typo after a primitive root such as `f32::` or `slice::` is silent in Clippy, so every such entry is seeded): each ban is flagged, `sqrt` and
 the other exact operations are not, and the length limit still applies. The bans themselves and their
 reasons are described in [ports-and-adapters](../../wiki/architecture/ports-and-adapters.md).
@@ -56,6 +56,7 @@ flowchart LR
   G["gates/gates.toml [clean_code]"] --> T["tools/lint-profile tests"]
   R["clippy.toml (root)"] --> T
   P["engine/physics/clippy.toml"] --> T
+  A["engine/audio/clippy.toml"] --> T
   X["any other (.)clippy.toml"] --> T
   T -->|"threshold differs or is missing, or a required ban is gone"| F["CI fails"]
 ```
