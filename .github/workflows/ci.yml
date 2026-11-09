@@ -97,7 +97,7 @@ jobs:
         run: python -m unittest -q test_golden_check
         working-directory: tools/golden-check
       - name: Test the instruction-count gate
-        run: python -m unittest -q test_icount_gate
+        run: python -m unittest -q test_icount_gate test_icount_gate_audio
         working-directory: tools/icount-gate
       - name: Test the release tools
         run: |
@@ -756,3 +756,96 @@ jobs:
           args=()
           if [ "$HAS_BASE" = true ]; then args=(--base "$RUNNER_TEMP/base.json"); fi
           python trusted/tools/icount-gate/icount_gate.py compare --gates trusted/gates/gates.toml --benchmarks trusted/gates/benchmarks.toml --head "$RUNNER_TEMP/head.json" "${args[@]}" --summary "$GITHUB_STEP_SUMMARY"
+
+  audio_icount:
+    name: Audio instruction count (ubuntu-latest, valgrind callgrind, base against head)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'push' && github.event.before || 'main' }}
+          path: trusted
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event_name == 'push' && github.event.before || 'main' }}
+          path: base
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: head
+          persist-credentials: false
+      # The pushed code runs in this job (cargo build runs its build scripts, the workload is its binary) as the
+      # same user: make the gate files unwritable for it before any of it runs.
+      - name: Lock the trusted checkout
+        run: |
+          set -euo pipefail
+          sudo chown -R root:root trusted
+          sudo chmod -R go-w trusted
+      # Bootstrap: until the card that adds the audio profile is merged, main cannot supply it. That is stated in the
+      # summary (not red, not silent); once the tool is on main this step is always ready=true.
+      - name: Find the gate tool on main
+        id: gate
+        run: |
+          set -euo pipefail
+          if [ -f trusted/tools/icount-gate/icount_gate.py ] && [ -f trusted/gates/benchmarks.toml ] && grep -q '^\[audio_icount\]' trusted/gates/benchmarks.toml; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "### Audio instruction count: not run: icount-gate is not on main yet (the audio profile of tools/icount-gate or [audio_icount] in gates/benchmarks.toml is absent from the trusted checkout)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Find the benchmark tool
+        id: bench
+        if: steps.gate.outputs.ready == 'true'
+        run: python trusted/tools/icount-gate/icount_gate.py presence --benchmark audio --gates trusted/gates/gates.toml --benchmarks trusted/gates/benchmarks.toml --base base --head head --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Install valgrind
+        if: steps.bench.outputs.head == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq valgrind
+          valgrind --version
+      - name: Build the benchmark tool of the pushed commit
+        if: steps.bench.outputs.head == 'true'
+        env:
+          PACKAGE: ${{ steps.bench.outputs.package }}
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain
+          cargo build --release -p "$PACKAGE" --locked
+          echo "### Audio instruction count: head built with $(rustc --version)" >> "$GITHUB_STEP_SUMMARY"
+        working-directory: head
+      - name: Build the benchmark tool of the base tree
+        if: steps.bench.outputs.base == 'true'
+        env:
+          PACKAGE: ${{ steps.bench.outputs.package }}
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain
+          cargo build --release -p "$PACKAGE" --locked
+          echo "### Audio instruction count: base built with $(rustc --version)" >> "$GITHUB_STEP_SUMMARY"
+        working-directory: base
+      - name: Count the instructions of the pushed commit
+        if: steps.bench.outputs.head == 'true'
+        env:
+          PACKAGE: ${{ steps.bench.outputs.package }}
+        run: python trusted/tools/icount-gate/icount_gate.py measure --benchmark audio --gates trusted/gates/gates.toml --benchmarks trusted/gates/benchmarks.toml --bench "head/target/release/$PACKAGE" --out "$RUNNER_TEMP/head.json"
+      - name: Count the instructions of the base tree
+        if: steps.bench.outputs.base == 'true'
+        env:
+          PACKAGE: ${{ steps.bench.outputs.package }}
+        run: python trusted/tools/icount-gate/icount_gate.py measure --benchmark audio --gates trusted/gates/gates.toml --benchmarks trusted/gates/benchmarks.toml --bench "base/target/release/$PACKAGE" --out "$RUNNER_TEMP/base.json"
+      - name: Compare with the bands of main
+        if: steps.bench.outputs.head == 'true'
+        env:
+          HAS_BASE: ${{ steps.bench.outputs.base }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ "$HAS_BASE" = true ]; then args=(--base "$RUNNER_TEMP/base.json"); fi
+          python trusted/tools/icount-gate/icount_gate.py compare --benchmark audio --gates trusted/gates/gates.toml --benchmarks trusted/gates/benchmarks.toml --head "$RUNNER_TEMP/head.json" "${args[@]}" --summary "$GITHUB_STEP_SUMMARY"
