@@ -1,5 +1,7 @@
 # Phase 5 milestone review `[S]`
 
+> **Update (card 5-13, 2026-11-09):** this page records the state at the time of the review. What happened afterwards (cards 5-10 and 5-12 done, the release v0.10.0, the findings that closed) is in [section 10](#10-status-after-the-review-card-5-13). Sections 1 to 9 are left as written.
+
 Card 5-9, written on 2026-11-09 on branch `agent/5-9-phase5-exit` (cut from `develop` at `bc2c962`, which holds cards 5-1 to 5-8 and 5-11; `main` is at `0584d2d`, tag v0.9.2). The roadmap asks for this review at the end of each phase ([roadmap](../workflow/roadmap.md) "Milestone reviews", [quality-metrics §4](../workflow/quality-metrics.md)), and the design note names card 5-9 as the exit record ([audio-port-v0 §9](../architecture/audio-port-v0.md)). It follows the form of the [phase 4 review](phase4-milestone-review.md). **The go/adjust decision, and whether the phase 5 umbrella card is done, are the owner's** (section 8); this page gives evidence and a recommendation, and does not close anything.
 
 **How the numbers were made.** As in earlier phases the release metric report is a placeholder, so there is no whole-phase measurement of coverage or mutation. Coverage and mutation figures are **per-card evidence**, read from `reviews/5-*.md` and marked *recorded, not re-run*. What was **computed for this page** is marked *measured here*: the test run of the four audio crates, file and line counts, the unsafe-budget tool, the architecture check, git history and tags, and the hosted runs read with `gh`. Nothing was lowered, skipped or waived, and no governance file was edited.
@@ -216,3 +218,32 @@ The owner decides; nothing here moves a card.
 - Anything on Linux or ARM64.
 - Whether a person heard the sample.
 - Mermaid syntax: read by the author, not rendered.
+
+## 10. Status after the review (card 5-13)
+
+Written on 2026-11-09 after the owner declared cards 5-10 and 5-12 as governance tasks and asked for the phase to be released. Documentation only; sections 1 to 9 above are not rewritten, because they are the record of what the evidence said on the day.
+
+```mermaid
+flowchart LR
+  rev["5-9 review: partly met, two second lines open"] --> d1["owner: declare 5-10 and 5-12"]
+  d1 --> c10["5-10 Clippy bans (PR 26, main) + 5-10a (PR 25, develop)"]
+  d1 --> c12["5-12 ThreadSanitizer (PR 27, main)"]
+  c10 --> lk["F-LOCK closed: both second lines exist"]
+  c12 --> lk
+  lk --> rel["owner: merge phase 5 -> release PR 28, merge commit, v0.10.0"]
+  rel --> open["still open: F-GATE, F-BUDGET, F-EARS, F-BENCH, phase 6 go"]
+```
+
+| Item | State now | Evidence |
+|---|---|---|
+| Decision 1 (second lines of the real-time rule) | answered: option (a), both declared as governance tasks | cards 5-10 and 5-12 |
+| 5-10 Clippy bans for the audio crate | done, on `main` | PR 26; `engine/audio/clippy.toml`; the `lint-profile` tool tests pin the ban set; [reviews/5-10](../../reviews/5-10.md) |
+| 5-10a (companion) | done: an audio test used a `Mutex`, replaced by a lock-free log | PR 25; [reviews/5-10a](../../reviews/5-10a.md) |
+| 5-12 ThreadSanitizer for the queue and the audio engine tests | done, on `main` | PR 27; [reviews/5-12](../../reviews/5-12.md) |
+| Decision 4 (release) | answered: released | release PR 28, merge commit `fc3c384` with `Release-Batch: 2026-11-09`, tag v0.10.0; `develop` is equal to `main` again |
+| F-LOCK | **closed** | both lines exist; the first hosted ThreadSanitizer run on the real tree passed (run 42666048599) |
+| F-LINUX | **partly closed** | the same run built, linted and tested the audio crates on Ubuntu and on the ARM64 runner, all green. The real-device path (ALSA or Pulse through miniaudio) is still not exercised: the device tests report "not run" there |
+
+**Still open, unchanged from section 5:** F-GATE (no registered voice budget), F-BUDGET (the `spsc.rs` row is 30 for 4 used), F-EARS (no recorded listening check), F-BENCH, F-OVERHEAD, F-RACE, F-MIRI, F-FEATURES. Owner decisions 2 (budget route), 3 (the budget row), 5 (listening check) and 6 (phase 6) are open; phase 6 is not started.
+
+**Process note.** The hosted check `trusted-pr-gates` ended in `startup_failure` three times on the release PR (and once on the PR of 5-12) with no job and no log, then passed on the fourth try after the PR was closed and reopened. The cause was not found. If it returns, retriggering by closing and reopening the PR is what worked; this is an observation, not a diagnosis.

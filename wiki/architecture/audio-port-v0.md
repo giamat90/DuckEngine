@@ -414,3 +414,12 @@ flowchart LR
 ## 19. Phase 5 exit (card 5-9)
 
 The exit record is [spikes/phase5-milestone-review](../spikes/phase5-milestone-review.md) and its evidence file is [reviews/5-9](../../reviews/5-9.md); documentation only. It recommends the phase as done with named exceptions (the Clippy bans and ThreadSanitizer cards, the budget gate, nothing run on Linux) and leaves the decision to the owner.
+
+## 20. The second lines of the real-time rule (cards 5-10, 5-10a, 5-12)
+
+The first line of the rule in section 3 is the design: the mixer takes no lock, and the game thread talks to it only through the lock-free queue. Two tool lines now back it, both governance steps that went to `main` first.
+
+- **Clippy bans (5-10).** `engine/audio/clippy.toml` repeats the four clean-code thresholds and forbids `Mutex`, `RwLock`, `Condvar`, the `mpsc` channel types, `mpsc::channel`, `mpsc::sync_channel` and `thread::sleep` in the audio crate, each with the reason. Atomics and `Arc` are allowed, so the queue is not affected. The one place the crate used a lock, a test of the offline device, now records frame counts in a lock-free log (5-10a). The miniaudio adapter is another crate and keeps its `try_lock` by design (section 17).
+- **ThreadSanitizer (5-12).** The `tsan` job also runs the queue tests of `base` and the `engine` and `engine_threads` tests of the audio crate, where the game thread and the audio thread really run together. It proves the three test binaries link the sanitizer runtime, and it is skipped, and says so in the job summary, only when neither `main` nor the pushed commit has the audio crate.
+
+Not covered: `Barrier`, `thread::park`, `OnceLock` and `LazyLock` are not banned; the other threaded tests of `base` and the miniaudio device thread are not in the ThreadSanitizer job. Both are listed in [reviews/5-10](../../reviews/5-10.md) and [reviews/5-12](../../reviews/5-12.md). Views: [ci-diagrams](../workflow/ci-diagrams.md) (the `tsan` job) and [ports-and-adapters](ports-and-adapters.md) (the bans), plus the one in [the milestone review](../spikes/phase5-milestone-review.md#10-status-after-the-review-card-5-13).
