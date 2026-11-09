@@ -89,6 +89,34 @@ fn waveform() -> Vec<f32> {
         .collect()
 }
 
+/// FNV-1a offset basis and prime (64 bit): a fixed, well-known mixing function for the checksum.
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+/// Renders `blocks` blocks of a `voices`-voice scene without timing anything, for an instruction
+/// counter to watch (card 5-15), and returns one line naming the size and an order-sensitive
+/// checksum of every output sample. The checksum proves the work was done: it changes with the
+/// voice count and with the block count.
+///
+/// # Errors
+/// When `voices` or `blocks` is 0, or the scene cannot be built.
+pub fn icount_workload(voices: u32, blocks: u32) -> Result<String, Box<dyn Error>> {
+    if blocks == 0 {
+        return Err("the workload needs at least one block".into());
+    }
+    let mut scene = Scene::new(voices)?;
+    let mut hash = FNV_OFFSET;
+    for _ in 0..blocks {
+        scene.render_block();
+        for sample in scene.output() {
+            hash = (hash ^ u64::from(sample.to_bits())).wrapping_mul(FNV_PRIME);
+        }
+    }
+    Ok(format!(
+        "voices {voices} blocks {blocks} checksum {hash:016x}"
+    ))
+}
+
 /// The share of one core, in percent, that a block of `frames` frames at `rate` takes when
 /// rendering it costs `block_ns` nanoseconds: the time spent divided by the time the block lasts.
 #[must_use]
