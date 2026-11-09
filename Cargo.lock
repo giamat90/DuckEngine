@@ -37,6 +37,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "app_audio_sample"
+version = "0.1.0"
+dependencies = [
+ "adapter_audio_miniaudio",
+ "audio",
+]
+
+[[package]]
 name = "app_physics_sample"
 version = "0.1.0"
 dependencies = [
@@ -180,6 +188,15 @@ name = "tools_assetc"
 version = "0.1.0"
 dependencies = [
  "assets",
+]
+
+[[package]]
+name = "tools_audio_bench"
+version = "0.1.0"
+dependencies = [
+ "audio",
+ "base",
+ "tools_render_bench",
 ]
 
 [[package]]
