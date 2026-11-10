@@ -105,7 +105,7 @@ impl<'a> Executor<'a> {
     }
 
     fn begin_pass(&mut self, pass: &PassDesc) -> Result<(), RenderError> {
-        let (framebuffer, width, height) = self.target(pass.target)?;
+        let (framebuffer, width, height) = self.target(pass)?;
         let api = self.api();
         api.bind_draw_framebuffer(framebuffer);
         self.ctx
@@ -121,15 +121,41 @@ impl<'a> Executor<'a> {
     }
 
     /// The framebuffer name (0 is the window's) and size of a pass target; a texture gets its
-    /// framebuffer the first time it is drawn into.
-    fn target(&mut self, target: RenderTarget) -> Result<(u32, u32, u32), RenderError> {
+    /// framebuffer the first time it is drawn into. The backbuffer keeps the window's own depth
+    /// buffer: a depth texture named with it is only checked, not drawn into (OpenGL cannot
+    /// attach a texture to the default framebuffer).
+    fn target(&mut self, pass: &PassDesc) -> Result<(u32, u32, u32), RenderError> {
         let api = self.api();
-        let RenderTarget::Texture(id) = target else {
+        let RenderTarget::Texture(id) = pass.target else {
             return Ok((0, self.backbuffer.0, self.backbuffer.1));
         };
+        if let Some(depth) = pass.depth {
+            return self.colour_and_depth(id, depth);
+        }
         let record = self.res.textures.get_mut(id).ok_or(INVALID)?;
         let framebuffer = record.framebuffer(api)?;
         Ok((framebuffer, record.width, record.height))
+    }
+
+    /// The shared framebuffer pointed at a colour texture and a depth texture.
+    fn colour_and_depth(
+        &mut self,
+        colour: TextureId,
+        depth: TextureId,
+    ) -> Result<(u32, u32, u32), RenderError> {
+        let api = self.api();
+        let depth_name = self.res.textures.get(depth).ok_or(INVALID)?.name;
+        let record = self.res.textures.get(colour).ok_or(INVALID)?;
+        let (name, width, height) = (record.name, record.width, record.height);
+        let framebuffer = *self
+            .res
+            .pair_framebuffer
+            .get_or_insert_with(|| api.create_framebuffer());
+        if api.attach_colour_and_depth(framebuffer, name, depth_name) {
+            Ok((framebuffer, width, height))
+        } else {
+            Err(RenderError::Unsupported)
+        }
     }
 
     fn set_viewport(&self, rect: Rect) {

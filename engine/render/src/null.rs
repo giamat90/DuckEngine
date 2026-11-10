@@ -133,6 +133,12 @@ fn validate_pipeline_layout(desc: &PipelineDesc<'_>) -> Result<(), RenderError> 
     if desc.color_format == TextureFormat::Depth32F {
         return Err(INVALID);
     }
+    let wants_depth = desc.depth.test || desc.depth.write;
+    match desc.depth_format {
+        Some(TextureFormat::Depth32F) => {}
+        None if !wants_depth => {}
+        _ => return Err(INVALID),
+    }
     if desc.attributes.is_empty() {
         return Ok(());
     }
@@ -148,6 +154,25 @@ fn validate_pipeline_layout(desc: &PipelineDesc<'_>) -> Result<(), RenderError> 
 
 impl NullDevice {
     fn apply_clear(&mut self, pass: &PassDesc) {
+        self.clear_colour(pass);
+        self.clear_depth(pass);
+    }
+
+    fn clear_depth(&mut self, pass: &PassDesc) {
+        let (Some(depth), Some(value)) = (pass.depth, pass.clear_depth) else {
+            return;
+        };
+        if let Some(record) = self.resources.textures.get_mut(retag(depth)) {
+            let texel = value.to_le_bytes();
+            let paint = |chunk: &mut [u8]| chunk.copy_from_slice(&texel);
+            record
+                .data
+                .chunks_exact_mut(BYTES_PER_TEXEL)
+                .for_each(paint);
+        }
+    }
+
+    fn clear_colour(&mut self, pass: &PassDesc) {
         let (RenderTarget::Texture(target), Some(color)) = (pass.target, pass.clear_color) else {
             return;
         };
@@ -277,6 +302,7 @@ impl IRenderDevice for NullDevice {
         let record = PipelineRec {
             stride: desc.vertex_stride,
             has_attributes: !desc.attributes.is_empty(),
+            depth_format: desc.depth_format,
         };
         insert(&mut self.resources.pipelines, record)
     }
@@ -376,7 +402,11 @@ impl IRenderDevice for NullDevice {
         if self.frame.map(|(current, _)| current) != Some(frame) {
             return Err(RenderError::InvalidHandle);
         }
-        let stats = validate(&self.resources, stream)?;
+        let surface = self
+            .frame
+            .map(|(_, surface)| surface)
+            .ok_or(RenderError::InvalidHandle)?;
+        let stats = validate(&self.resources, surface, stream)?;
         self.run_clears(stream);
         Ok(stats)
     }

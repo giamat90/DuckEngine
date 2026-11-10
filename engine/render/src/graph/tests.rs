@@ -98,6 +98,7 @@ fn recording_emits_barriers_pass_begin_the_body_and_pass_end_in_order() {
         target: RenderTarget::Backbuffer,
         clear_color: Some(CLEAR),
         clear_depth: None,
+        depth: None,
     };
     assert_eq!(
         decode(&stream),

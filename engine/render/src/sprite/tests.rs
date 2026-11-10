@@ -274,6 +274,7 @@ fn rig(sprites: u32) -> Rig {
             write: false,
         },
         color_format: TextureFormat::Rgba8,
+        depth_format: None,
     }));
     let sampler = ok(d.create_sampler(SamplerDesc {
         min_filter: Filter::Nearest,
@@ -396,6 +397,7 @@ fn a_recorded_sprite_frame_is_accepted_by_the_null_device() {
         target: RenderTarget::Backbuffer,
         clear_color: Some([0.0; 4]),
         clear_depth: None,
+        depth: None,
     });
     batcher.record(&mut stream, &r.bindings);
     stream.end_pass();

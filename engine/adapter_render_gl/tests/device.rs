@@ -245,6 +245,7 @@ impl Scene {
                 write: false,
             },
             color_format: TextureFormat::Rgba8,
+            depth_format: None,
         }));
         Self {
             device,
@@ -269,6 +270,7 @@ impl Scene {
             target: RenderTarget::Texture(self.target),
             clear_color: Some([0.0, 0.0, 1.0, 1.0]),
             clear_depth: None,
+            depth: None,
         });
         stream.set_pipeline(self.pipeline);
         stream.set_viewport(Rect {
@@ -510,12 +512,14 @@ fn a_draw_without_a_vertex_buffer_runs_and_both_devices_accept_it() {
             write: false,
         },
         color_format: TextureFormat::Rgba8,
+        depth_format: None,
     }));
     let mut stream = CommandStream::new();
     stream.begin_pass(PassDesc {
         target: RenderTarget::Texture(target),
         clear_color: None,
         clear_depth: None,
+        depth: None,
     });
     stream.set_pipeline(pipeline);
     stream.draw(3, 1);

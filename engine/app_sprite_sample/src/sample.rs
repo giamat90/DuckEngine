@@ -164,6 +164,7 @@ pub fn create_pipeline(
             write: false,
         },
         color_format: TextureFormat::Rgba8,
+        depth_format: None,
     })
 }
 

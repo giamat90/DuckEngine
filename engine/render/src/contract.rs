@@ -5,8 +5,8 @@
 //! test of the GPU adapters.
 
 use crate::desc::{
-    BufferDesc, BufferUsage, PassDesc, Rect, RenderTarget, SubmitStats, SurfaceDesc, TextureDesc,
-    TextureFormat,
+    BufferDesc, BufferUsage, PassDesc, Rect, RenderTarget, ResourceState, SubmitStats, SurfaceDesc,
+    TextureDesc, TextureFormat,
 };
 use crate::device::IRenderDevice;
 use crate::error::RenderError;
@@ -30,6 +30,7 @@ pub fn render_device_contract(device: &mut dyn IRenderDevice, surface: SurfaceDe
     surface_contract(device, surface);
     clear_contract(device, surface);
     stream_rules_contract(device, surface);
+    depth_contract(device, surface);
 }
 
 fn rgba(width: u32, height: u32) -> TextureDesc {
@@ -233,6 +234,7 @@ fn clear_contract(device: &mut dyn IRenderDevice, desc: SurfaceDesc) {
             target: RenderTarget::Texture(target),
             clear_color: Some(color),
             clear_depth: None,
+            depth: None,
         };
         stream.begin_pass(pass);
         stream.end_pass();
@@ -258,6 +260,7 @@ fn clear_contract(device: &mut dyn IRenderDevice, desc: SurfaceDesc) {
         target: RenderTarget::Texture(target),
         clear_color: Some(blue),
         clear_depth: None,
+        depth: None,
     });
     let result = submit_in_frame(device, surface, &rejected);
     assert_eq!(result.map(|_| ()), INVALID_DESC, "unclosed clear pass");
@@ -275,12 +278,92 @@ fn clear_contract(device: &mut dyn IRenderDevice, desc: SurfaceDesc) {
     device.destroy_surface(surface);
 }
 
+fn depth_texture(device: &mut dyn IRenderDevice, size: u32) -> TextureId {
+    let made = device.create_texture(TextureDesc {
+        width: size,
+        height: size,
+        mip_count: 1,
+        format: TextureFormat::Depth32F,
+    });
+    assert!(made.is_ok(), "create a depth texture failed: {made:?}");
+    made.unwrap_or_else(|_| unreachable!())
+}
+
+fn depth_pass(colour: TextureId, depth: TextureId) -> CommandStream {
+    let mut stream = CommandStream::new();
+    stream.begin_pass(PassDesc {
+        target: RenderTarget::Texture(colour),
+        clear_color: Some([0.0, 0.0, 0.0, 1.0]),
+        clear_depth: Some(1.0),
+        depth: Some(depth),
+    });
+    stream.end_pass();
+    stream
+}
+
+/// A pass may carry a depth attachment of the colour size; a wrong one is refused, and the
+/// depth states of a barrier belong to depth textures (port revision of card 6-2).
+fn depth_contract(device: &mut dyn IRenderDevice, desc: SurfaceDesc) {
+    let surface = make_surface(device, desc);
+    let colour = make_texture(device, 4, 4);
+    let depth = depth_texture(device, 4);
+    let small = depth_texture(device, 2);
+    let stale = depth_texture(device, 4);
+    device.destroy_texture(stale);
+    let result = submit_in_frame(device, surface, &depth_pass(colour, depth));
+    assert_eq!(result.map(|_| ()), Ok(()), "a pass with a depth attachment");
+    let result = submit_in_frame(device, surface, &depth_pass(colour, small));
+    assert_eq!(result.map(|_| ()), INVALID_DESC, "depth of another size");
+    let result = submit_in_frame(device, surface, &depth_pass(colour, colour));
+    assert_eq!(
+        result.map(|_| ()),
+        INVALID_DESC,
+        "a colour texture as depth"
+    );
+    let result = submit_in_frame(device, surface, &depth_pass(colour, stale));
+    assert_eq!(
+        result.map(|_| ()),
+        INVALID_HANDLE,
+        "a destroyed depth texture"
+    );
+    for (name, target, to, expected) in [
+        (
+            "depth state on depth",
+            depth,
+            ResourceState::DepthTarget,
+            Ok(()),
+        ),
+        (
+            "depth state on colour",
+            colour,
+            ResourceState::DepthTarget,
+            INVALID_DESC,
+        ),
+        (
+            "colour state on depth",
+            depth,
+            ResourceState::ColorTarget,
+            INVALID_DESC,
+        ),
+    ] {
+        let mut stream = CommandStream::new();
+        stream.barrier(RenderTarget::Texture(target), ResourceState::Undefined, to);
+        let result = submit_in_frame(device, surface, &stream);
+        assert_eq!(result.map(|_| ()), expected, "barrier: {name}");
+    }
+    device.destroy_texture(small);
+    device.destroy_texture(depth);
+    device.destroy_texture(colour);
+    device.destroy_surface(surface);
+}
+
 fn stream_rules_contract(device: &mut dyn IRenderDevice, desc: SurfaceDesc) {
     let surface = make_surface(device, desc);
     let backbuffer = PassDesc {
         target: RenderTarget::Backbuffer,
         clear_color: None,
         clear_depth: None,
+        depth: None,
     };
     let mut unclosed = CommandStream::new();
     unclosed.begin_pass(backbuffer);

@@ -478,6 +478,7 @@ impl CompiledGraph {
                 target: self.render_target(bound, pass.target)?,
                 clear_color: pass.clear_color,
                 clear_depth: None,
+                depth: None,
             });
             body(pass.id, stream);
             stream.end_pass();

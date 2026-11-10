@@ -167,6 +167,9 @@ pub struct PipelineDesc<'a> {
     pub depth: DepthState,
     /// Format of the colour target.
     pub color_format: TextureFormat,
+    /// Format of the depth attachment the pipeline is used with, or `None` for a pass without
+    /// one. A pipeline that tests or writes depth needs `Some(Depth32F)`.
+    pub depth_format: Option<TextureFormat>,
 }
 
 /// Index width.
@@ -208,6 +211,9 @@ pub struct PassDesc {
     pub clear_color: Option<[f32; 4]>,
     /// Clear depth, or keep the contents.
     pub clear_depth: Option<f32>,
+    /// The depth attachment: a `Depth32F` texture of the colour target's size, or `None` for a
+    /// pass without depth. The pipelines drawn in the pass must name the same depth format.
+    pub depth: Option<TextureId>,
 }
 
 /// Counts reported by `submit`.
@@ -228,6 +234,8 @@ pub enum ResourceState {
     Undefined,
     /// Written as the colour target of a pass.
     ColorTarget,
+    /// Written and tested as the depth attachment of a pass (depth textures only).
+    DepthTarget,
     /// Read by shaders (sampled).
     ShaderRead,
     /// Ready to be presented (meant for the backbuffer; the Null device does not enforce it).

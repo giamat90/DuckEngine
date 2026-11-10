@@ -14,6 +14,7 @@ fn basic_scene() -> CommandStream {
         target: RenderTarget::Backbuffer,
         clear_color: Some([0.25, 0.5, 0.75, 1.0]),
         clear_depth: None,
+        depth: None,
     });
     s.set_pipeline(h(0, 0));
     s.set_viewport(Rect {
@@ -33,6 +34,7 @@ fn basic_scene() -> CommandStream {
         target: RenderTarget::Texture(h(3, 1)),
         clear_color: None,
         clear_depth: Some(1.0),
+        depth: None,
     });
     s.end_pass();
     s

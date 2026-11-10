@@ -247,3 +247,42 @@ O1 to O9 were accepted with the recommendations (owner, 2026-11-02, "I accept").
 - **No GPU in CI (new in effect).** Hosted runners have no GPU; the GL path is tested where a device exists. The owner's machine is the only certain one until `llvmpipe` is shown to work.
 - **Stream layout.** The byte layout is fixed in card 3-2; changing it later changes the golden files. The version word is the mitigation.
 - **Not settled here:** the shader language, the compilers, the sRGB handling of the swapchain, the texture compression formats, text rendering, the vertex layout declaration syntax. Each is decided in the card that first needs it.
+
+## 13. Revision 1: depth in a pass, a pipeline and a barrier (card 6-2)
+
+The one counted port revision of phase 6 ([vulkan-and-mesh-v0](vulkan-and-mesh-v0.md) section 5). Vulkan's dynamic rendering and the Null validation both need to know the depth attachment of a pass, so the port now says it.
+
+```mermaid
+classDiagram
+  class PassDesc {
+    target: RenderTarget
+    clear_color: Option~RGBA~
+    clear_depth: Option~f32~
+    depth: Option~TextureId~  (new)
+  }
+  class PipelineDesc {
+    depth: DepthState
+    color_format: TextureFormat
+    depth_format: Option~TextureFormat~  (new)
+  }
+  class ResourceState {
+    Undefined
+    ColorTarget
+    DepthTarget  (new)
+    ShaderRead
+    Present
+  }
+  PassDesc --> TextureId : depth attachment
+  PipelineDesc ..> PassDesc : formats must match at set_pipeline
+  Barrier --> ResourceState
+```
+
+- **`PassDesc.depth`**: a `Depth32F` texture of the colour target's size (for the backbuffer, the surface size). `None` is a pass without depth, as before. `clear_depth` without an attachment is still accepted (OpenGL clears the window's own depth buffer).
+- **A depth texture is never its own colour target.** A pass whose colour target is the depth attachment is refused (OpenGL would find the framebuffer incomplete). `Present` and `ShaderRead` are allowed on depth textures (a depth texture may be sampled later); only the colour and depth target states are tied to the texture kind.
+- **`PipelineDesc.depth_format`**: `Some(Depth32F)` for a pipeline used in a pass with a depth attachment, `None` otherwise. A pipeline that tests or writes depth must say `Some(Depth32F)`; any other format is refused. `set_pipeline` is refused when the pipeline's depth format and the pass's attachment disagree (Vulkan needs both formats at pipeline creation and at `begin_rendering`).
+- **`ResourceState::DepthTarget`**: only for depth textures; `ColorTarget` is refused on them, and neither is for the backbuffer. The `barrier` command already names a texture handle, so a depth texture needs no new command: only the state tag `4` is new.
+- **Stream bytes.** A `begin_pass` payload with a depth attachment is 38 bytes (the old 30 plus the depth handle); without one it is the 30 bytes it always was, so every stream recorded before the revision is byte-identical and the golden dumps did not change. A payload of any other length is refused. The stream version word stays `1`.
+- **Null device.** Validates all of the above and clears a depth texture to `clear_depth` (the bytes read back as the float).
+- **OpenGL adapter.** A pass with a colour texture and a depth texture draws through one shared framebuffer that is re-pointed at the two textures for each such pass, so no cached framebuffer can outlive a destroyed texture. A pass on the backbuffer keeps using the window's own depth buffer (OpenGL cannot attach a texture to the default framebuffer): the depth texture named there is checked, not drawn into. A later sample that reads such a depth texture on OpenGL would not see the depth; that is a known limit until a card needs it.
+- **Contract suite.** New `depth_contract`: a pass with a matching depth texture is accepted; one of another size, a colour texture, or a destroyed texture is refused with the right error; the depth states of a barrier belong to depth textures. A deliberately broken device (accepts a wrong depth attachment) fails it.
+- **Not in this revision.** Render graph support for a depth attachment (the graph still emits `depth: None`; the mesh frontend card extends it), stencil, depth formats other than `Depth32F`, multisampling, sampling a depth texture in a shader.

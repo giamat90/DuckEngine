@@ -57,6 +57,7 @@ fn state(s: ResourceState) -> &'static str {
         ResourceState::ColorTarget => "color_target",
         ResourceState::ShaderRead => "shader_read",
         ResourceState::Present => "present",
+        ResourceState::DepthTarget => "depth_target",
     }
 }
 
@@ -69,8 +70,11 @@ fn target(t: RenderTarget) -> String {
 
 fn pass(p: &PassDesc) -> String {
     let target = target(p.target);
+    let depth = p
+        .depth
+        .map_or_else(String::new, |d| format!(" depth=texture({})", handle(d)));
     format!(
-        "target={target} clear_color={} clear_depth={}",
+        "target={target} clear_color={} clear_depth={}{depth}",
         option(p.clear_color),
         option(p.clear_depth)
     )

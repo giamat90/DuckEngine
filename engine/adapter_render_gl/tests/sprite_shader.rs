@@ -119,6 +119,7 @@ fn sprite_pipeline(
             write: false,
         },
         color_format: TextureFormat::Rgba8,
+        depth_format: None,
     }))
 }
 
@@ -209,6 +210,7 @@ fn the_sprite_shaders_from_the_golden_asset_draw_a_textured_triangle() {
         target: RenderTarget::Texture(target),
         clear_color: Some([0.0, 0.0, 1.0, 1.0]),
         clear_depth: None,
+        depth: None,
     });
     stream.set_pipeline(pipeline);
     stream.set_viewport(Rect {
