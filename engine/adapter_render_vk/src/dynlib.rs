@@ -31,6 +31,7 @@ mod os {
         ) -> *mut c_void;
         pub unsafe fn GetProcAddress(module: *mut c_void, name: *const c_char) -> *mut c_void;
         pub unsafe fn FreeLibrary(module: *mut c_void) -> i32;
+        pub unsafe fn GetModuleHandleW(name: *const u16) -> *mut c_void;
     }
 }
 
@@ -66,6 +67,15 @@ impl Library {
     pub fn symbol(&self, name: &CStr) -> Option<NonNull<c_void>> {
         NonNull::new(raw_symbol(self.0.as_ptr(), name))
     }
+}
+
+/// The module handle (`HINSTANCE`) of the running executable, which a Win32 surface asks for.
+#[cfg(windows)]
+#[must_use]
+pub fn module_instance() -> *const c_void {
+    // SAFETY: a null name asks for the handle of the calling process's executable; the call has
+    // no other input.
+    unsafe { os::GetModuleHandleW(core::ptr::null()) }.cast_const()
 }
 
 /// An address as a function pointer of type `F`.

@@ -8,7 +8,8 @@ use crate::error::VulkanError;
 use crate::instance::Instance;
 use crate::select::{Candidate, DeviceType, choose_device};
 use crate::version::ApiVersion;
-use crate::vk::QueueHandle;
+use crate::vk::{PhysicalDeviceHandle, QueueHandle};
+use std::rc::Rc;
 
 /// How to start.
 #[derive(Clone, Copy, Debug, Default)]
@@ -39,22 +40,34 @@ pub struct DeviceInfo {
     pub queue_family: u32,
     /// Whether the validation layer is on.
     pub validation_active: bool,
+    /// Whether the system and the device can present to a window (the surface and swapchain
+    /// extensions are there).
+    pub can_present: bool,
+}
+
+/// What the context and everything made from it share: the objects, owned in the order Vulkan
+/// needs them destroyed (the device, then the instance, then the loader).
+///
+/// A [`crate::Presenter`] holds a reference too, so the device cannot go away under it, whichever
+/// of the two is dropped first.
+pub(crate) struct Core {
+    pub(crate) device: Device,
+    pub(crate) instance: Instance,
+    pub(crate) _entry: Entry,
+    pub(crate) gpu: PhysicalDeviceHandle,
+    pub(crate) queue: QueueHandle,
+    pub(crate) queue_family: u32,
+    pub(crate) can_present: bool,
 }
 
 /// A Vulkan 1.3 instance and device with one graphics queue.
 ///
-/// Fields are dropped in order: the device first, then the instance, then the loader. That is
-/// the order Vulkan requires.
+/// The objects live in a shared core that is dropped when the context and everything made from it
+/// (presenters) are gone: the device first, then the instance, then the loader. That is the order
+/// Vulkan requires.
 pub struct VulkanContext {
     info: DeviceInfo,
-    #[expect(
-        dead_code,
-        reason = "the swapchain and submit code of card 6-7 uses the queue"
-    )]
-    queue: QueueHandle,
-    device: Device,
-    instance: Instance,
-    _entry: Entry,
+    core: Rc<Core>,
 }
 
 impl VulkanContext {
@@ -87,6 +100,7 @@ impl VulkanContext {
             .graphics_family
             .ok_or(VulkanError::NoSuitableDevice)?;
         let (device, queue) = Device::create(&instance, gpu, queue_family)?;
+        let can_present = instance.surface_fns().is_some() && gpu.swapchain_extension;
         let info = DeviceInfo {
             name: gpu.name.clone(),
             device_type: gpu.candidate.device_type,
@@ -97,14 +111,25 @@ impl VulkanContext {
             device_id: gpu.device_id,
             queue_family,
             validation_active: instance.validation_active(),
+            can_present,
         };
         Ok(Self {
             info,
-            queue,
-            device,
-            instance,
-            _entry: entry,
+            core: Rc::new(Core {
+                device,
+                instance,
+                _entry: entry,
+                gpu: gpu.handle,
+                queue,
+                queue_family,
+                can_present,
+            }),
         })
+    }
+
+    /// The shared objects, for what is made from the context.
+    pub(crate) fn core(&self) -> &Rc<Core> {
+        &self.core
     }
 
     /// What the driver said about the chosen device.
@@ -116,7 +141,7 @@ impl VulkanContext {
     /// What the validation layer reported so far (empty when it is off).
     #[must_use]
     pub fn validation_report(&self) -> ValidationReport {
-        self.instance.validation_report()
+        self.core.instance.validation_report()
     }
 
     /// Waits until the device has finished all submitted work.
@@ -124,7 +149,7 @@ impl VulkanContext {
     /// # Errors
     /// [`VulkanError::Call`] with the driver's result (for example device lost).
     pub fn wait_idle(&self) -> Result<(), VulkanError> {
-        self.device.wait_idle()
+        self.core.device.wait_idle()
     }
 }
 

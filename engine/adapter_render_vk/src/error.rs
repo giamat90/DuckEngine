@@ -2,6 +2,7 @@
 
 use crate::version::ApiVersion;
 use crate::vk::ERROR_INITIALIZATION_FAILED;
+use crate::vk_present::{ERROR_OUT_OF_DATE, ERROR_SURFACE_LOST, SUBOPTIMAL};
 use core::fmt;
 
 /// Why the adapter could not start, or a Vulkan call failed.
@@ -16,6 +17,11 @@ pub enum VulkanError {
     /// No physical device has Vulkan 1.3 with dynamic rendering, synchronization2, sampler
     /// anisotropy and a graphics queue.
     NoSuitableDevice,
+    /// The system or the device cannot do what was asked (no surface extension, a queue family
+    /// that cannot present, no usable swapchain format, a null window token).
+    Unsupported(&'static str),
+    /// The window's surface is gone (`VK_ERROR_SURFACE_LOST_KHR`).
+    SurfaceLost,
     /// A Vulkan call returned an error code.
     Call {
         /// The Vulkan function.
@@ -23,6 +29,16 @@ pub enum VulkanError {
         /// The `VkResult`.
         result: i32,
     },
+}
+
+/// The error for a failed call: a lost surface is a value of its own, anything else a call error.
+#[must_use]
+pub fn call_or_lost(call: &'static str, result: i32) -> VulkanError {
+    if result == ERROR_SURFACE_LOST {
+        VulkanError::SurfaceLost
+    } else {
+        VulkanError::Call { call, result }
+    }
 }
 
 /// The name of a `VkResult` the adapter handles; others are "unknown result".
@@ -38,6 +54,9 @@ pub fn result_name(result: i32) -> &'static str {
         -7 => "VK_ERROR_EXTENSION_NOT_PRESENT",
         -8 => "VK_ERROR_FEATURE_NOT_PRESENT",
         -9 => "VK_ERROR_INCOMPATIBLE_DRIVER",
+        ERROR_SURFACE_LOST => "VK_ERROR_SURFACE_LOST_KHR",
+        ERROR_OUT_OF_DATE => "VK_ERROR_OUT_OF_DATE_KHR",
+        SUBOPTIMAL => "VK_SUBOPTIMAL_KHR",
         _ => "unknown result",
     }
 }
@@ -56,7 +75,7 @@ pub fn check_created(
             call,
             result: ERROR_INITIALIZATION_FAILED,
         }),
-        _ => Err(VulkanError::Call { call, result }),
+        _ => Err(call_or_lost(call, result)),
     }
 }
 
@@ -71,6 +90,8 @@ impl fmt::Display for VulkanError {
             Self::NoSuitableDevice => f.write_str(
                 "no Vulkan device with 1.3, dynamic rendering, synchronization2 and a graphics queue",
             ),
+            Self::Unsupported(what) => write!(f, "not supported: {what}"),
+            Self::SurfaceLost => f.write_str("the window surface was lost"),
             Self::Call { call, result } => {
                 write!(f, "{call} failed: {} ({result})", result_name(*result))
             }
@@ -92,6 +113,8 @@ mod tests {
             VulkanError::MissingFunction("vkCreateDevice"),
             VulkanError::InstanceTooOld(ApiVersion::new(1, 1, 0)),
             VulkanError::NoSuitableDevice,
+            VulkanError::Unsupported("a thing"),
+            VulkanError::SurfaceLost,
             VulkanError::Call {
                 call: "vkCreateInstance",
                 result: -9,
@@ -104,7 +127,8 @@ mod tests {
         }
         assert!(texts[1].contains("vkCreateDevice"));
         assert!(texts[2].contains("1.1.0"));
-        assert!(texts[4].contains("vkCreateInstance") && texts[4].contains("-9"));
+        assert!(texts[4].contains("a thing"));
+        assert!(texts[6].contains("vkCreateInstance") && texts[6].contains("-9"));
     }
 
     #[test]
@@ -118,7 +142,29 @@ mod tests {
         assert_eq!(result_name(-7), "VK_ERROR_EXTENSION_NOT_PRESENT");
         assert_eq!(result_name(-8), "VK_ERROR_FEATURE_NOT_PRESENT");
         assert_eq!(result_name(-9), "VK_ERROR_INCOMPATIBLE_DRIVER");
-        assert_eq!(result_name(-1_000_000_000), "unknown result");
+        assert_eq!(result_name(-1_000_000_000), "VK_ERROR_SURFACE_LOST_KHR");
+        assert_eq!(result_name(-1_000_001_004), "VK_ERROR_OUT_OF_DATE_KHR");
+        assert_eq!(result_name(1_000_001_003), "VK_SUBOPTIMAL_KHR");
+        assert_eq!(result_name(-999_999_999), "unknown result");
+    }
+
+    #[test]
+    fn a_lost_surface_is_its_own_error_whichever_call_found_it() {
+        assert_eq!(
+            call_or_lost("vkX", -1_000_000_000),
+            VulkanError::SurfaceLost
+        );
+        assert_eq!(
+            check_created("vkCreateSwapchainKHR", -1_000_000_000, true),
+            Err(VulkanError::SurfaceLost)
+        );
+        assert_eq!(
+            call_or_lost("vkX", -4),
+            VulkanError::Call {
+                call: "vkX",
+                result: -4
+            }
+        );
     }
 
     #[test]

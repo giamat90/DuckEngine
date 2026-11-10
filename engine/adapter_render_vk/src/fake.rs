@@ -18,11 +18,21 @@ use crate::vk::{
     InstanceHandle, LayerProperties, PhysicalDeviceFeatures2, PhysicalDeviceHandle,
     PhysicalDeviceProperties, QueueFamilyProperties, QueueHandle, VkResult, Vulkan13Features,
 };
+mod present;
+
+pub use present::{PresentRecord, SubmitRecord, SwapchainRequest};
+
+use crate::vk_present::{Extent2D, SurfaceCapabilities, SurfaceFormat};
 use core::ffi::{CStr, c_char, c_void};
 use core::ptr::without_provenance_mut;
 use std::cell::RefCell;
+use std::collections::VecDeque;
 
 /// A fake physical device.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one flag per capability the fake can withhold"
+)]
 #[derive(Clone, Debug)]
 pub struct FakeGpu {
     pub name: &'static str,
@@ -33,6 +43,7 @@ pub struct FakeGpu {
     pub dynamic_rendering: bool,
     pub synchronization2: bool,
     pub sampler_anisotropy: bool,
+    pub swapchain_extension: bool,
 }
 
 impl FakeGpu {
@@ -46,6 +57,7 @@ impl FakeGpu {
             dynamic_rendering: true,
             synchronization2: true,
             sampler_anisotropy: true,
+            swapchain_extension: true,
         }
     }
 }
@@ -80,6 +92,28 @@ pub struct Script {
     pub extensions_requested: u32,
     pub device_request: Option<DeviceRequest>,
     pub queue_request: Option<(u32, u32)>,
+    pub instance_extensions: Vec<&'static str>,
+    pub present_support: bool,
+    pub surface_caps: SurfaceCapabilities,
+    pub surface_formats: Vec<SurfaceFormat>,
+    pub acquire_results: VecDeque<VkResult>,
+    pub present_results: VecDeque<VkResult>,
+    pub create_swapchain_result: VkResult,
+    pub submit_result: VkResult,
+    /// A creating call that fails with out-of-host-memory every time it is made.
+    pub fail_call: Option<&'static str>,
+    pub swapchain_request: Option<SwapchainRequest>,
+    pub swapchains_created: u32,
+    pub submits: Vec<SubmitRecord>,
+    pub presents: Vec<PresentRecord>,
+    pub barriers: Vec<(u32, u32)>,
+    pub clears: Vec<[f32; 4]>,
+    pub live: Vec<(&'static str, u64)>,
+    pub next_handle: u64,
+    pub next_image: u32,
+    pub swapchain_images: Vec<(u64, Vec<u64>)>,
+    pub support_queries: Vec<u32>,
+    pub surface_window: Option<usize>,
 }
 
 impl Script {
@@ -102,7 +136,65 @@ impl Script {
             extensions_requested: 0,
             device_request: None,
             queue_request: None,
+            instance_extensions: SURFACE_EXTENSION_NAMES.to_vec(),
+            present_support: true,
+            surface_caps: default_caps(),
+            surface_formats: vec![bgra8_srgb()],
+            acquire_results: VecDeque::new(),
+            present_results: VecDeque::new(),
+            create_swapchain_result: vk::SUCCESS,
+            submit_result: vk::SUCCESS,
+            fail_call: None,
+            swapchain_request: None,
+            swapchains_created: 0,
+            submits: Vec::new(),
+            presents: Vec::new(),
+            barriers: Vec::new(),
+            clears: Vec::new(),
+            live: Vec::new(),
+            next_handle: 0,
+            next_image: 0,
+            swapchain_images: Vec::new(),
+            support_queries: Vec::new(),
+            surface_window: None,
         }
+    }
+}
+
+#[cfg(windows)]
+const SURFACE_EXTENSION_NAMES: [&str; 2] = ["VK_KHR_surface", "VK_KHR_win32_surface"];
+#[cfg(not(windows))]
+const SURFACE_EXTENSION_NAMES: [&str; 2] = ["VK_KHR_surface", "VK_KHR_xlib_surface"];
+
+fn default_caps() -> SurfaceCapabilities {
+    SurfaceCapabilities {
+        min_image_count: 2,
+        max_image_count: 8,
+        current_extent: Extent2D {
+            width: 800,
+            height: 600,
+        },
+        min_image_extent: Extent2D {
+            width: 1,
+            height: 1,
+        },
+        max_image_extent: Extent2D {
+            width: 4096,
+            height: 4096,
+        },
+        max_image_array_layers: 1,
+        supported_transforms: 1,
+        current_transform: 1,
+        supported_composite_alpha: 1,
+        supported_usage_flags: crate::vk_present::IMAGE_USAGE_COLOR_ATTACHMENT
+            | crate::vk_present::IMAGE_USAGE_TRANSFER_SRC,
+    }
+}
+
+fn bgra8_srgb() -> SurfaceFormat {
+    SurfaceFormat {
+        format: crate::vk_present::FORMAT_B8G8R8A8_UNORM,
+        color_space: 0,
     }
 }
 
@@ -118,6 +210,30 @@ pub fn install(script: Script) {
 /// Reads or changes the script of this thread.
 pub fn with<R>(f: impl FnOnce(&mut Script) -> R) -> R {
     SCRIPT.with(|cell| f(&mut cell.borrow_mut()))
+}
+
+/// Installs `script` and starts a context on the fake driver with default options.
+pub fn started(script: Script) -> crate::VulkanContext {
+    install(script);
+    // SAFETY: the fake lookup function returns functions with the signatures the adapter expects.
+    let entry = match unsafe { crate::entry::Entry::from_proc_addr(get_instance_proc_addr, None) } {
+        Ok(entry) => entry,
+        Err(error) => panic!("the fake entry failed: {error}"),
+    };
+    match crate::VulkanContext::create_with_entry(entry, crate::VulkanOptions::default()) {
+        Ok(context) => context,
+        Err(error) => panic!("expected a context, got: {error}"),
+    }
+}
+
+/// How many frames were presented so far.
+pub fn presents_so_far() -> usize {
+    with(|script| script.presents.len())
+}
+
+/// The objects made and not yet destroyed: kind and handle.
+pub fn live_objects() -> Vec<(&'static str, u64)> {
+    with(|script| script.live.clone())
 }
 
 /// The calls so far, in order.
@@ -218,7 +334,7 @@ pub unsafe extern "system" fn get_instance_proc_addr(
         "vkDestroyDebugUtilsMessengerEXT" => {
             address!(destroy_messenger as unsafe extern "system" fn(_, _, _))
         }
-        _ => core::ptr::null_mut(),
+        _ => present::lookup(name),
     }
 }
 
