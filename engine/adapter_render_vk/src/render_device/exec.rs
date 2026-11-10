@@ -6,9 +6,9 @@
 //! [`Resources`] (the textures), not read from the stream: a pass moves its targets to the
 //! attachment layouts itself, so a stream that skips a barrier still draws, as it does on GL.
 //!
-//! Version 0 of the card 6-9 work knows no pipeline yet: the commands that need one (set pipeline,
-//! viewport, binds, draws) are accepted and do nothing, which cannot be seen because the device
-//! cannot make a pipeline, and the bookkeeping device refuses a draw without one.
+//! The state commands (pipeline, viewport, binds) and the draws are in [`commands`]. Descriptor
+//! sets are written lazily: a bind only notes what is bound, and the first draw after a bind
+//! takes a pair of sets from the frame's pool, writes them and binds them.
 #![expect(
     unsafe_code,
     reason = "dynamic rendering is a C interface; every unsafe block has a SAFETY comment"
@@ -16,6 +16,7 @@
 
 use super::TextureRec;
 use super::convert::render_error;
+use crate::draw::{Bindings, Draw};
 use crate::frame::{Transition, barrier};
 use crate::gear::Gear;
 use crate::presenter::Backbuffer;
@@ -23,6 +24,7 @@ use crate::resources::{Resources, TextureId as OwnTextureId};
 use crate::sync::state_access;
 use crate::table::Table;
 use crate::upload::EVERYTHING;
+use crate::vk_draw::Handle;
 use crate::vk_present::{
     ACCESS_NONE, ClearColor, CommandBufferHandle, Extent2D, ImageHandle, ImageViewHandle,
     LAYOUT_COLOR_ATTACHMENT, LAYOUT_PRESENT_SRC, LAYOUT_UNDEFINED, LOAD_OP_CLEAR, Offset2D, Rect2D,
@@ -35,6 +37,9 @@ use render::error::RenderError;
 use render::ids::TextureId;
 use render::stream::{Command, CommandStream};
 
+mod commands;
+pub use commands::Objects;
+
 const INVALID: RenderError = RenderError::InvalidDescription;
 
 /// `VK_ATTACHMENT_LOAD_OP_LOAD`.
@@ -45,6 +50,17 @@ const DEPTH_RANGE: SubresourceRange = SubresourceRange {
     ..SubresourceRange::COLOR
 };
 
+/// What the commands of a pass need to know about its target.
+#[derive(Clone, Copy, Default)]
+pub struct PassTarget {
+    /// The size, for the viewport.
+    pub extent: (u32, u32),
+    /// `B8G8R8A8` (else `R8G8B8A8`): picks the pipeline variant.
+    pub bgra: bool,
+    /// The backbuffer: its viewport is flipped (see [`commands`]).
+    pub flip: bool,
+}
+
 /// What the frame knows about its backbuffer while commands are recorded.
 pub struct FrameState {
     pub back: Backbuffer,
@@ -52,6 +68,11 @@ pub struct FrameState {
     pub layout: u32,
     /// A rendering scope is open (a pass began and has not ended).
     pub in_pass: bool,
+    /// The target of the open pass.
+    pub target: PassTarget,
+    /// What the stream bound so far, and whether the sets must be made again before a draw.
+    pub bindings: Bindings,
+    pub dirty: bool,
 }
 
 impl FrameState {
@@ -62,6 +83,9 @@ impl FrameState {
             back,
             layout: LAYOUT_UNDEFINED,
             in_pass: false,
+            target: PassTarget::default(),
+            bindings: Bindings::default(),
+            dirty: true,
         }
     }
 }
@@ -81,6 +105,7 @@ struct Attachment {
     view: ImageViewHandle,
     width: u32,
     height: u32,
+    bgra: bool,
     range: SubresourceRange,
 }
 
@@ -91,6 +116,10 @@ pub struct Exec<'a> {
     pub textures: &'a Table<TextureRec>,
     pub resources: &'a mut Resources,
     pub state: &'a mut FrameState,
+    pub draw: &'a Draw,
+    /// The descriptor pool of the frame's slot.
+    pub pool: Handle,
+    pub objects: Objects<'a>,
 }
 
 impl Exec<'_> {
@@ -118,15 +147,7 @@ impl Exec<'_> {
                 Ok(())
             }
             Command::Barrier { target, to, .. } => self.barrier(target, to),
-            // No pipeline can exist yet, so nothing can be drawn (see the module comment).
-            Command::SetPipeline(_)
-            | Command::SetViewport(_)
-            | Command::BindUniforms { .. }
-            | Command::BindTexture { .. }
-            | Command::BindVertexBuffer { .. }
-            | Command::BindIndexBuffer { .. }
-            | Command::Draw { .. }
-            | Command::DrawIndexed { .. } => Ok(()),
+            other => self.state_or_draw(other),
         }
     }
 
@@ -146,6 +167,7 @@ impl Exec<'_> {
                 view: self.state.back.view,
                 width: self.state.back.extent.width,
                 height: self.state.back.extent.height,
+                bgra: true,
                 range: SubresourceRange::COLOR,
             }),
             RenderTarget::Texture(id) => self.texture_attachment(id),
@@ -164,6 +186,7 @@ impl Exec<'_> {
             view: handles.view,
             width: record.width,
             height: record.height,
+            bgra: record.bgra,
             range: if record.depth {
                 DEPTH_RANGE
             } else {
@@ -264,6 +287,12 @@ impl Exec<'_> {
         };
         begin_rendering(self.gear, self.cmd, &rendering);
         self.state.in_pass = true;
+        self.state.target = PassTarget {
+            extent: (color.width, color.height),
+            bgra: color.bgra,
+            flip: matches!(color.slot, Slot::Back),
+        };
+        self.start_pass_state();
         Ok(())
     }
 

@@ -186,7 +186,7 @@ pub fn lookup(name: &str) -> *mut c_void {
         "vkGetPhysicalDeviceFormatProperties" => {
             address!(format_properties as unsafe extern "system" fn(_, _, _))
         }
-        _ => core::ptr::null_mut(),
+        _ => super::draw::lookup(name),
     }
 }
 

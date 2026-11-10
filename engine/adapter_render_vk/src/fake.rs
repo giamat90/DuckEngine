@@ -18,6 +18,7 @@ use crate::vk::{
     InstanceHandle, LayerProperties, PhysicalDeviceFeatures2, PhysicalDeviceHandle,
     PhysicalDeviceProperties, QueueFamilyProperties, QueueHandle, VkResult, Vulkan13Features,
 };
+pub mod draw;
 pub mod present;
 pub mod resource;
 
@@ -122,6 +123,8 @@ pub struct Script {
     pub surface_window: Option<usize>,
     /// Memory, buffers, images and samplers (card 6-8).
     pub world: resource::World,
+    /// Shaders, pipelines, descriptors and draw commands (card 6-14).
+    pub draw: draw::DrawWorld,
 }
 
 impl Script {
@@ -168,6 +171,7 @@ impl Script {
             support_queries: Vec::new(),
             surface_window: None,
             world: resource::World::new(),
+            draw: draw::DrawWorld::new(),
         }
     }
 }

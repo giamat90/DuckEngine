@@ -28,6 +28,7 @@ name = "adapter_render_vk"
 version = "0.1.0"
 dependencies = [
  "adapter_window_glfw",
+ "assets",
  "base",
  "platform",
  "render",

@@ -8,6 +8,12 @@ use crate::context::Core;
 use crate::entry::missing;
 use crate::error::VulkanError;
 use crate::vk::{Bool32, DeviceHandle, QueueHandle, SUCCESS, VkResult};
+use crate::vk_draw::{
+    DescriptorPoolCreateInfo, DescriptorSetAllocateInfo, DescriptorSetLayoutCreateInfo,
+    GraphicsPipelineCreateInfo, Handle, PipelineLayoutCreateInfo, ShaderModuleCreateInfo, Viewport,
+    WriteDescriptorSet,
+};
+use crate::vk_present::Rect2D;
 use crate::vk_present::{
     BufferCreateInfo, BufferHandle, BufferImageCopy, CommandBufferAllocateInfo,
     CommandBufferBeginInfo, CommandBufferHandle, CommandPoolCreateInfo, CommandPoolHandle,
@@ -107,6 +113,33 @@ function_table! {
     }
 }
 
+function_table! {
+    /// The device functions of shaders, pipelines, descriptors and draw commands.
+    pub struct DrawFns {
+        create_shader_module: unsafe extern "system" fn(DeviceHandle, *const ShaderModuleCreateInfo, *const c_void, *mut Handle) -> VkResult = c"vkCreateShaderModule",
+        destroy_shader_module: unsafe extern "system" fn(DeviceHandle, Handle, *const c_void) = c"vkDestroyShaderModule",
+        create_descriptor_set_layout: unsafe extern "system" fn(DeviceHandle, *const DescriptorSetLayoutCreateInfo, *const c_void, *mut Handle) -> VkResult = c"vkCreateDescriptorSetLayout",
+        destroy_descriptor_set_layout: unsafe extern "system" fn(DeviceHandle, Handle, *const c_void) = c"vkDestroyDescriptorSetLayout",
+        create_pipeline_layout: unsafe extern "system" fn(DeviceHandle, *const PipelineLayoutCreateInfo, *const c_void, *mut Handle) -> VkResult = c"vkCreatePipelineLayout",
+        destroy_pipeline_layout: unsafe extern "system" fn(DeviceHandle, Handle, *const c_void) = c"vkDestroyPipelineLayout",
+        create_descriptor_pool: unsafe extern "system" fn(DeviceHandle, *const DescriptorPoolCreateInfo, *const c_void, *mut Handle) -> VkResult = c"vkCreateDescriptorPool",
+        destroy_descriptor_pool: unsafe extern "system" fn(DeviceHandle, Handle, *const c_void) = c"vkDestroyDescriptorPool",
+        reset_descriptor_pool: unsafe extern "system" fn(DeviceHandle, Handle, u32) -> VkResult = c"vkResetDescriptorPool",
+        allocate_descriptor_sets: unsafe extern "system" fn(DeviceHandle, *const DescriptorSetAllocateInfo, *mut Handle) -> VkResult = c"vkAllocateDescriptorSets",
+        update_descriptor_sets: unsafe extern "system" fn(DeviceHandle, u32, *const WriteDescriptorSet, u32, *const c_void) = c"vkUpdateDescriptorSets",
+        create_graphics_pipelines: unsafe extern "system" fn(DeviceHandle, Handle, u32, *const GraphicsPipelineCreateInfo, *const c_void, *mut Handle) -> VkResult = c"vkCreateGraphicsPipelines",
+        destroy_pipeline: unsafe extern "system" fn(DeviceHandle, Handle, *const c_void) = c"vkDestroyPipeline",
+        cmd_bind_pipeline: unsafe extern "system" fn(CommandBufferHandle, u32, Handle) = c"vkCmdBindPipeline",
+        cmd_bind_descriptor_sets: unsafe extern "system" fn(CommandBufferHandle, u32, Handle, u32, u32, *const Handle, u32, *const u32) = c"vkCmdBindDescriptorSets",
+        cmd_bind_vertex_buffers: unsafe extern "system" fn(CommandBufferHandle, u32, u32, *const BufferHandle, *const u64) = c"vkCmdBindVertexBuffers",
+        cmd_bind_index_buffer: unsafe extern "system" fn(CommandBufferHandle, BufferHandle, u64, u32) = c"vkCmdBindIndexBuffer",
+        cmd_set_viewport: unsafe extern "system" fn(CommandBufferHandle, u32, u32, *const Viewport) = c"vkCmdSetViewport",
+        cmd_set_scissor: unsafe extern "system" fn(CommandBufferHandle, u32, u32, *const Rect2D) = c"vkCmdSetScissor",
+        cmd_draw: unsafe extern "system" fn(CommandBufferHandle, u32, u32, u32, u32) = c"vkCmdDraw",
+        cmd_draw_indexed: unsafe extern "system" fn(CommandBufferHandle, u32, u32, u32, i32, u32) = c"vkCmdDrawIndexed",
+    }
+}
+
 /// Loads the memory functions of the core's device.
 ///
 /// # Errors
@@ -119,6 +152,20 @@ pub fn load_memory_fns(core: &Core) -> Result<MemoryFns, VulkanError> {
     };
     // SAFETY: the driver returns functions with the declared signatures for these names.
     unsafe { MemoryFns::load(lookup) }.map_err(missing)
+}
+
+/// Loads the shader, pipeline, descriptor and draw functions of the core's device.
+///
+/// # Errors
+/// [`VulkanError::MissingFunction`] naming the first function the driver lacks.
+pub fn load_draw_fns(core: &Core) -> Result<DrawFns, VulkanError> {
+    let device = core.device.handle();
+    let lookup = |name: &CStr| {
+        // SAFETY: `device` is the live device of `core`.
+        unsafe { core.instance.device_proc_addr(device, name) }
+    };
+    // SAFETY: the driver returns functions with the declared signatures for these names.
+    unsafe { DrawFns::load(lookup) }.map_err(missing)
 }
 
 /// Loads the resource functions of the core's device.
