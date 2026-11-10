@@ -7,9 +7,11 @@
 
 use super::MAX_BINDING_SLOTS;
 use super::resources::{Resources, lookup};
-use crate::desc::{BufferUsage, IndexType, PassDesc, RenderTarget, SubmitStats, TextureFormat};
+use crate::desc::{
+    BufferUsage, IndexType, PassDesc, RenderTarget, ResourceState, SubmitStats, TextureFormat,
+};
 use crate::error::RenderError;
-use crate::ids::{BufferId, PipelineId};
+use crate::ids::{BufferId, PipelineId, SurfaceId};
 use crate::stream::{Command, CommandStream};
 
 const INVALID: RenderError = RenderError::InvalidDescription;
@@ -22,7 +24,11 @@ struct Bound {
 
 #[derive(Default)]
 struct PassState {
+    /// Size of the backbuffer of the frame's surface.
+    backbuffer: (u32, u32),
     open: bool,
+    /// Whether the open pass has a depth attachment.
+    has_depth: bool,
     /// Stride and whether the pipeline reads vertex attributes.
     pipeline: Option<(u32, bool)>,
     vertex: Option<Bound>,
@@ -32,9 +38,14 @@ struct PassState {
 /// Checks the whole stream; the counts it returns are what `submit` reports.
 pub(super) fn validate(
     res: &Resources,
+    surface: SurfaceId,
     stream: &CommandStream,
 ) -> Result<SubmitStats, RenderError> {
-    let mut state = PassState::default();
+    let backbuffer = lookup(&res.surfaces, surface).map(|s| (s.width, s.height))?;
+    let mut state = PassState {
+        backbuffer,
+        ..PassState::default()
+    };
     let mut totals = SubmitStats::default();
     for command in stream.commands() {
         let command = command.map_err(|_| INVALID)?;
@@ -94,14 +105,49 @@ fn check_vertex_slot(slot: u32) -> Result<(), RenderError> {
     if slot == 0 { Ok(()) } else { Err(INVALID) }
 }
 
-fn check_target(res: &Resources, pass: &PassDesc) -> Result<(), RenderError> {
-    let RenderTarget::Texture(texture) = pass.target else {
+fn check_target(
+    res: &Resources,
+    pass: &PassDesc,
+    backbuffer: (u32, u32),
+) -> Result<(), RenderError> {
+    let size = match pass.target {
+        RenderTarget::Backbuffer => backbuffer,
+        RenderTarget::Texture(texture) => {
+            let record = lookup(&res.textures, texture)?;
+            let colour_into_depth =
+                pass.clear_color.is_some() && record.desc.format == TextureFormat::Depth32F;
+            if colour_into_depth {
+                return Err(INVALID);
+            }
+            (record.desc.width, record.desc.height)
+        }
+    };
+    let Some(depth) = pass.depth else {
         return Ok(());
     };
-    let record = lookup(&res.textures, texture)?;
-    let colour_into_depth =
-        pass.clear_color.is_some() && record.desc.format == TextureFormat::Depth32F;
-    if colour_into_depth {
+    let record = lookup(&res.textures, depth)?;
+    let fits = record.desc.format == TextureFormat::Depth32F
+        && (record.desc.width, record.desc.height) == size;
+    if fits { Ok(()) } else { Err(INVALID) }
+}
+
+/// A depth state needs a depth texture, a colour state a colour one; the backbuffer is colour.
+fn check_states(
+    res: &Resources,
+    target: RenderTarget,
+    from: ResourceState,
+    to: ResourceState,
+) -> Result<(), RenderError> {
+    let is_depth = match target {
+        RenderTarget::Backbuffer => false,
+        RenderTarget::Texture(texture) => {
+            lookup(&res.textures, texture)?.desc.format == TextureFormat::Depth32F
+        }
+    };
+    let touches = |state: ResourceState| [from, to].contains(&state);
+    let depth_state_on_colour = touches(ResourceState::DepthTarget) && !is_depth;
+    let colour_state_on_depth = touches(ResourceState::ColorTarget) && is_depth;
+    if depth_state_on_colour || colour_state_on_depth {
         Err(INVALID)
     } else {
         Ok(())
@@ -115,8 +161,8 @@ impl PassState {
             self.begin(res, pass)?;
             return Ok(false);
         }
-        if let Command::Barrier { target, .. } = command {
-            return self.barrier(res, *target);
+        if let Command::Barrier { target, from, to } = command {
+            return self.barrier(res, *target, (*from, *to));
         }
         if !self.open {
             return Err(INVALID);
@@ -138,13 +184,16 @@ impl PassState {
     }
 
     /// Barriers sit between passes and name a live texture (or the backbuffer).
-    fn barrier(&self, res: &Resources, target: RenderTarget) -> Result<bool, RenderError> {
+    fn barrier(
+        &self,
+        res: &Resources,
+        target: RenderTarget,
+        (from, to): (ResourceState, ResourceState),
+    ) -> Result<bool, RenderError> {
         if self.open {
             return Err(INVALID);
         }
-        if let RenderTarget::Texture(texture) = target {
-            lookup(&res.textures, texture)?;
-        }
+        check_states(res, target, from, to)?;
         Ok(false)
     }
 
@@ -152,9 +201,11 @@ impl PassState {
         if self.open {
             return Err(INVALID);
         }
-        check_target(res, pass)?;
+        check_target(res, pass, self.backbuffer)?;
         *self = Self {
+            backbuffer: self.backbuffer,
             open: true,
+            has_depth: pass.depth.is_some(),
             ..Self::default()
         };
         Ok(())
@@ -162,6 +213,9 @@ impl PassState {
 
     fn set_pipeline(&mut self, res: &Resources, pipeline: PipelineId) -> Result<(), RenderError> {
         let record = lookup(&res.pipelines, pipeline)?;
+        if record.depth_format.is_some() != self.has_depth {
+            return Err(INVALID);
+        }
         self.pipeline = Some((record.stride, record.has_attributes));
         Ok(())
     }

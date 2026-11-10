@@ -251,6 +251,7 @@ fn pipeline(device: &mut GlDevice) -> PipelineId {
             write: false,
         },
         color_format: TextureFormat::Rgba8,
+        depth_format: None,
     }))
 }
 

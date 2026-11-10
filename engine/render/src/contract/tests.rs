@@ -33,6 +33,7 @@ enum Flaw {
     AcceptsStaleInStream,
     UnnamedDevice,
     NoIndexTypes,
+    AcceptsBadDepth,
 }
 
 /// A Null device wrapped so one rule is broken; the contract must notice.
@@ -139,6 +140,9 @@ impl IRenderDevice for Broken {
             | (Flaw::AcceptsStaleInStream, Err(RenderError::InvalidHandle)) => {
                 Ok(SubmitStats::default())
             }
+            (Flaw::AcceptsBadDepth, Err(RenderError::InvalidDescription)) if uses_depth(stream) => {
+                Ok(SubmitStats::default())
+            }
             (Flaw::IgnoresClear, Ok(stats)) => Ok(SubmitStats {
                 commands: stats.commands,
                 draws: 1,
@@ -156,6 +160,13 @@ impl IRenderDevice for Broken {
     fn read_back(&mut self, texture: TextureId, out: &mut [u8]) -> Result<(), RenderError> {
         self.inner.read_back(texture, out)
     }
+}
+
+fn uses_depth(stream: &CommandStream) -> bool {
+    stream
+        .commands()
+        .flatten()
+        .any(|command| matches!(command, crate::stream::Command::BeginPass(p) if p.depth.is_some()))
 }
 
 fn run_broken(flaw: Flaw) {
@@ -214,4 +225,10 @@ fn a_device_without_index_types_fails_the_contract() {
 #[should_panic(expected = "stale buffer in a stream")]
 fn a_device_that_accepts_a_stale_handle_in_a_stream_fails_the_contract() {
     run_broken(Flaw::AcceptsStaleInStream);
+}
+
+#[test]
+#[should_panic(expected = "depth of another size")]
+fn a_device_that_accepts_a_wrong_depth_attachment_fails_the_contract() {
+    run_broken(Flaw::AcceptsBadDepth);
 }

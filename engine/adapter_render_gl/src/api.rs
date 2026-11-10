@@ -495,6 +495,27 @@ impl Api {
         None
     }
 
+    /// A new, empty framebuffer.
+    pub fn create_framebuffer(&self) -> u32 {
+        let mut name = 0u32;
+        // SAFETY: a context is current; `name` has room for the one name requested.
+        unsafe { (self.create_framebuffers)(1, &raw mut name) };
+        name
+    }
+
+    /// Points `framebuffer` at `colour` (attachment 0) and `depth`, level 0, and says whether the
+    /// driver finds the pair complete.
+    pub fn attach_colour_and_depth(&self, framebuffer: u32, colour: u32, depth: u32) -> bool {
+        // SAFETY: a context is current; the names are the ones of live textures and framebuffer.
+        let status = unsafe {
+            (self.named_framebuffer_texture)(framebuffer, COLOR_ATTACHMENT0, colour, 0);
+            (self.named_framebuffer_texture)(framebuffer, DEPTH_ATTACHMENT, depth, 0);
+            (self.named_framebuffer_draw_buffer)(framebuffer, COLOR_ATTACHMENT0);
+            (self.check_named_framebuffer_status)(framebuffer, DRAW_FRAMEBUFFER)
+        };
+        status == FRAMEBUFFER_COMPLETE
+    }
+
     pub fn delete_framebuffer(&self, framebuffer: u32) {
         // SAFETY: a context is current; one name is read from a live local.
         unsafe { (self.delete_framebuffers)(1, &raw const framebuffer) };

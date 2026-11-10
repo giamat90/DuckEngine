@@ -2,7 +2,9 @@
 //!
 //! Layout: a 4-byte version word ([`STREAM_VERSION`]), then commands. A command is a 16-bit opcode,
 //! a 16-bit payload length, then a fixed payload per opcode (numbers little-endian, a handle as its
-//! 32-bit index then its 32-bit generation). Decoding is a loop over the buffer ([`Commands`]), no
+//! 32-bit index then its 32-bit generation). A `begin_pass` payload of 38 bytes (instead of 30)
+//! ends with the handle of a depth attachment; a pass without depth keeps the 30 bytes it always
+//! had, so streams recorded before depth existed are unchanged. Decoding is a loop over the buffer ([`Commands`]), no
 //! virtual call per command. The buffer keeps its capacity across [`CommandStream::clear`], so
 //! refilling a frame to the same size allocates nothing. Decoding accepts only the canonical form
 //! (unused fields zero), so decode then encode reproduces the bytes. Opcode 12 and up are reserved.
@@ -181,6 +183,9 @@ fn put_pass(out: &mut Vec<u8>, pass: &PassDesc) {
         RenderTarget::Backbuffer => out.extend_from_slice(&[0; 8]),
         RenderTarget::Texture(texture) => put_handle(out, texture),
     }
+    if let Some(depth) = pass.depth {
+        put_handle(out, depth);
+    }
 }
 
 fn state_tag(state: ResourceState) -> u32 {
@@ -189,6 +194,7 @@ fn state_tag(state: ResourceState) -> u32 {
         ResourceState::ColorTarget => 1,
         ResourceState::ShaderRead => 2,
         ResourceState::Present => 3,
+        ResourceState::DepthTarget => 4,
     }
 }
 
@@ -285,7 +291,7 @@ impl CommandStream {
         self.bytes.extend_from_slice(&[0, 0]);
         write(&mut self.bytes);
         let payload = self.bytes.len() - length_at - 2;
-        // Every payload is at most 30 bytes (see the `largest_payload_fits_the_length_field` test).
+        // Every payload is at most 38 bytes (see the `largest_payload_fits_the_length_field` test).
         let length = u16::try_from(payload).unwrap_or(u16::MAX);
         self.bytes[length_at..length_at + 2].copy_from_slice(&length.to_le_bytes());
     }
@@ -482,6 +488,11 @@ fn decode_pass(r: &mut Reader<'_>) -> Result<PassDesc, StreamError> {
     let color = [r.f32()?, r.f32()?, r.f32()?, r.f32()?];
     let depth = r.f32()?;
     let texture = r.handle()?;
+    let depth_attachment = if r.bytes.is_empty() {
+        None
+    } else {
+        Some(r.handle()?)
+    };
     let target = match target_tag {
         TARGET_BACKBUFFER => RenderTarget::Backbuffer,
         TARGET_TEXTURE => RenderTarget::Texture(texture),
@@ -499,6 +510,7 @@ fn decode_pass(r: &mut Reader<'_>) -> Result<PassDesc, StreamError> {
         target,
         clear_color: (flags & FLAG_COLOR != 0).then_some(color),
         clear_depth: (flags & FLAG_DEPTH != 0).then_some(depth),
+        depth: depth_attachment,
     })
 }
 
@@ -508,6 +520,7 @@ fn decode_state(r: &mut Reader<'_>) -> Result<ResourceState, StreamError> {
         1 => Ok(ResourceState::ColorTarget),
         2 => Ok(ResourceState::ShaderRead),
         3 => Ok(ResourceState::Present),
+        4 => Ok(ResourceState::DepthTarget),
         _ => Err(StreamError::BadValue),
     }
 }

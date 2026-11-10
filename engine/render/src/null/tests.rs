@@ -78,6 +78,7 @@ fn pipeline_desc(
             write: false,
         },
         color_format: TextureFormat::Rgba8,
+        depth_format: None,
     }
 }
 
@@ -101,6 +102,7 @@ fn backbuffer_pass() -> PassDesc {
         target: RenderTarget::Backbuffer,
         clear_color: None,
         clear_depth: None,
+        depth: None,
     }
 }
 
@@ -109,6 +111,7 @@ fn pass_to(texture: TextureId, color: Option<[f32; 4]>) -> PassDesc {
         target: RenderTarget::Texture(texture),
         clear_color: color,
         clear_depth: None,
+        depth: None,
     }
 }
 
@@ -346,6 +349,7 @@ fn pipelines_are_validated() {
     );
     let depth_target = PipelineDesc {
         color_format: TextureFormat::Depth32F,
+        depth_format: None,
         ..pipeline_desc(vs, fs, 8, &[POSITION])
     };
     assert_eq!(d.create_pipeline(depth_target), Err(invalid));
