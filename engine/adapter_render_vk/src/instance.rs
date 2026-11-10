@@ -85,7 +85,8 @@ impl Instance {
         if !BASELINE.is_met_by(version) {
             return Err(VulkanError::InstanceTooOld(version));
         }
-        let validation = validation && entry.has_layer(VALIDATION_LAYER)?;
+        // Validation is a development aid: if the layers cannot be listed, run without it.
+        let validation = validation && entry.has_layer(VALIDATION_LAYER).unwrap_or(false);
         let application = ApplicationInfo {
             s_type: STYPE_APPLICATION_INFO,
             p_next: core::ptr::null(),
@@ -231,7 +232,14 @@ impl Instance {
             .take_while(|byte| **byte != 0)
             .map(|byte| byte.cast_unsigned())
             .collect();
-        let (dynamic_rendering, synchronization2, sampler_anisotropy) = self.features(handle);
+        let api_version = ApiVersion::from_raw(properties.api_version);
+        // The Vulkan 1.3 feature structure only exists for a device that reports 1.3.
+        let (dynamic_rendering, synchronization2, sampler_anisotropy) =
+            if BASELINE.is_met_by(api_version) {
+                self.features(handle)
+            } else {
+                (false, false, false)
+            };
         PhysicalDevice {
             handle,
             name: String::from_utf8_lossy(&name_bytes).into_owned(),
@@ -239,7 +247,7 @@ impl Instance {
             vendor_id: properties.vendor_id,
             device_id: properties.device_id,
             candidate: Candidate {
-                api_version: ApiVersion::from_raw(properties.api_version),
+                api_version,
                 device_type: DeviceType::from_raw(properties.device_type),
                 graphics_family: self.graphics_family(handle),
                 dynamic_rendering,

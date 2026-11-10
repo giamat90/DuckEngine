@@ -72,6 +72,9 @@ pub struct Script {
     pub create_device_result: VkResult,
     pub wait_idle_result: VkResult,
     pub null_queue: bool,
+    pub layer_list_result: VkResult,
+    pub create_messenger_result: VkResult,
+    pub enumerate_devices_result: VkResult,
     pub log: Vec<&'static str>,
     pub layers_requested: u32,
     pub extensions_requested: u32,
@@ -91,6 +94,9 @@ impl Script {
             create_device_result: vk::SUCCESS,
             wait_idle_result: vk::SUCCESS,
             null_queue: false,
+            layer_list_result: vk::SUCCESS,
+            create_messenger_result: vk::SUCCESS,
+            enumerate_devices_result: vk::SUCCESS,
             log: Vec::new(),
             layers_requested: 0,
             extensions_requested: 0,
@@ -234,6 +240,11 @@ unsafe extern "system" fn create_instance(
         return result;
     }
     unsafe {
+        assert_eq!((*info).s_type, vk::STYPE_INSTANCE_CREATE_INFO);
+        assert_eq!(
+            (*(*info).application_info).api_version,
+            crate::BASELINE.raw()
+        );
         let layers = (*info).enabled_layer_count;
         let extensions = (*info).enabled_extension_count;
         with(|script| {
@@ -253,6 +264,10 @@ unsafe extern "system" fn enumerate_instance_version(out: *mut u32) -> VkResult 
 
 unsafe extern "system" fn enumerate_layers(count: *mut u32, out: *mut LayerProperties) -> VkResult {
     note("vkEnumerateInstanceLayerProperties");
+    let listed = with(|script| script.layer_list_result);
+    if listed != vk::SUCCESS {
+        return listed;
+    }
     let mut layers = Vec::new();
     if with(|script| script.validation_layer) {
         let mut layer = LayerProperties::zeroed();
@@ -291,6 +306,10 @@ unsafe extern "system" fn enumerate_physical_devices(
     out: *mut PhysicalDeviceHandle,
 ) -> VkResult {
     note("vkEnumeratePhysicalDevices");
+    let listed = with(|script| script.enumerate_devices_result);
+    if listed != vk::SUCCESS {
+        return listed;
+    }
     let handles: Vec<PhysicalDeviceHandle> = (0..with(|script| script.gpus.len()))
         .map(|i| PhysicalDeviceHandle(fake_handle(FIRST_GPU + i)))
         .collect();
@@ -414,6 +433,10 @@ unsafe extern "system" fn create_messenger(
     out: *mut vk::MessengerHandle,
 ) -> VkResult {
     note("vkCreateDebugUtilsMessengerEXT");
+    let created = with(|script| script.create_messenger_result);
+    if created != vk::SUCCESS {
+        return created;
+    }
     unsafe {
         assert!(
             (*info).user_callback.is_some(),

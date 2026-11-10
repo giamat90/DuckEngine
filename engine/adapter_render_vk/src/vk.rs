@@ -15,6 +15,8 @@ pub type MessengerHandle = u64;
 pub const SUCCESS: VkResult = 0;
 /// `VK_INCOMPLETE`: an enumeration had more entries than the caller's array held.
 pub const INCOMPLETE: VkResult = 5;
+/// `VK_ERROR_INITIALIZATION_FAILED`.
+pub const ERROR_INITIALIZATION_FAILED: VkResult = -3;
 
 /// `VK_STRUCTURE_TYPE_APPLICATION_INFO`.
 pub const STYPE_APPLICATION_INFO: u32 = 0;

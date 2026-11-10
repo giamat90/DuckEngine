@@ -1,6 +1,7 @@
 //! Errors of the Vulkan adapter. Values, never panics.
 
 use crate::version::ApiVersion;
+use crate::vk::ERROR_INITIALIZATION_FAILED;
 use core::fmt;
 
 /// Why the adapter could not start, or a Vulkan call failed.
@@ -51,7 +52,10 @@ pub fn check_created(
 ) -> Result<(), VulkanError> {
     match (result, handle_is_null) {
         (0, false) => Ok(()),
-        (0, true) => Err(VulkanError::Call { call, result: -3 }),
+        (0, true) => Err(VulkanError::Call {
+            call,
+            result: ERROR_INITIALIZATION_FAILED,
+        }),
         _ => Err(VulkanError::Call { call, result }),
     }
 }

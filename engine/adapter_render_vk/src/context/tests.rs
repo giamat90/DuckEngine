@@ -334,3 +334,60 @@ fn a_driver_that_gives_no_queue_fails_and_frees_the_device_and_the_instance() {
         ["vkDestroyDevice", "vkDestroyInstance"]
     );
 }
+
+#[test]
+fn a_failing_layer_list_runs_without_validation_instead_of_failing() {
+    let mut script = one_gpu();
+    script.validation_layer = true;
+    script.layer_list_result = -3;
+    fake::install(script);
+    let context = started_with(VulkanOptions { validation: true });
+    assert!(!context.info().validation_active);
+    assert_eq!(fake::with(|script| script.layers_requested), 0);
+}
+
+#[test]
+fn a_failed_messenger_fails_the_start_and_frees_the_instance() {
+    let mut script = one_gpu();
+    script.validation_layer = true;
+    script.create_messenger_result = -1;
+    fake::install(script);
+    let error = refused_with(VulkanOptions { validation: true });
+    assert_eq!(
+        error,
+        VulkanError::Call {
+            call: "vkCreateDebugUtilsMessengerEXT",
+            result: -1
+        }
+    );
+    assert_eq!(calls(&["vkDestroyInstance"]), ["vkDestroyInstance"]);
+}
+
+#[test]
+fn missing_messenger_functions_fail_the_start_and_free_the_instance() {
+    let mut script = one_gpu();
+    script.validation_layer = true;
+    script.missing = vec!["vkCreateDebugUtilsMessengerEXT"];
+    fake::install(script);
+    let error = refused_with(VulkanOptions { validation: true });
+    assert_eq!(
+        error,
+        VulkanError::MissingFunction("vkCreateDebugUtilsMessengerEXT")
+    );
+    assert_eq!(calls(&["vkDestroyInstance"]), ["vkDestroyInstance"]);
+}
+
+#[test]
+fn a_failed_device_listing_frees_the_instance() {
+    let mut script = one_gpu();
+    script.enumerate_devices_result = -1;
+    let error = refused(script);
+    assert_eq!(
+        error,
+        VulkanError::Call {
+            call: "vkEnumeratePhysicalDevices",
+            result: -1
+        }
+    );
+    assert_eq!(calls(&["vkDestroyInstance"]), ["vkDestroyInstance"]);
+}

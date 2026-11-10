@@ -9,9 +9,9 @@ use crate::error::VulkanError;
 use crate::instance::{Instance, PhysicalDevice};
 use crate::vk::{
     CORE_FEATURE_COUNT, DeviceCreateInfo, DeviceHandle, DeviceQueueCreateInfo,
-    FEATURE_13_DYNAMIC_RENDERING, FEATURE_13_SYNCHRONIZATION2, FEATURE_SAMPLER_ANISOTROPY,
-    FEATURES_13_COUNT, PhysicalDeviceFeatures, PhysicalDeviceFeatures2, QueueHandle,
-    STYPE_DEVICE_CREATE_INFO, STYPE_DEVICE_QUEUE_CREATE_INFO, STYPE_FEATURES_2,
+    ERROR_INITIALIZATION_FAILED, FEATURE_13_DYNAMIC_RENDERING, FEATURE_13_SYNCHRONIZATION2,
+    FEATURE_SAMPLER_ANISOTROPY, FEATURES_13_COUNT, PhysicalDeviceFeatures, PhysicalDeviceFeatures2,
+    QueueHandle, STYPE_DEVICE_CREATE_INFO, STYPE_DEVICE_QUEUE_CREATE_INFO, STYPE_FEATURES_2,
     STYPE_VULKAN_1_3_FEATURES, SUCCESS, VkResult, Vulkan13Features,
 };
 use core::ffi::c_void;
@@ -107,7 +107,7 @@ impl Device {
             // `device` is dropped here, which destroys it.
             return Err(VulkanError::Call {
                 call: "vkGetDeviceQueue",
-                result: -3,
+                result: ERROR_INITIALIZATION_FAILED,
             });
         }
         Ok((device, queue))
