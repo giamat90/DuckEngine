@@ -1,0 +1,10 @@
+render-stream v1
+begin_pass target=backbuffer clear_color=[0.0, 0.0, 0.25, 1.0] clear_depth=1.0 depth=texture(#6.0)
+set_viewport x=0 y=0 w=640 h=480
+set_pipeline #0.0
+bind_uniforms slot=0 buffer=#2.0
+bind_index_buffer buffer=#3.0 offset=0 type=u16
+bind_vertex_buffer slot=0 buffer=#1.0 offset=0
+bind_texture slot=0 texture=#4.0 sampler=#5.0
+draw_indexed indices=36 instances=1
+end_pass

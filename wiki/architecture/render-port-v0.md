@@ -286,3 +286,26 @@ classDiagram
 - **OpenGL adapter.** A pass with a colour texture and a depth texture draws through one shared framebuffer that is re-pointed at the two textures for each such pass, so no cached framebuffer can outlive a destroyed texture. A pass on the backbuffer keeps using the window's own depth buffer (OpenGL cannot attach a texture to the default framebuffer): the depth texture named there is checked, not drawn into. A later sample that reads such a depth texture on OpenGL would not see the depth; that is a known limit until a card needs it.
 - **Contract suite.** New `depth_contract`: a pass with a matching depth texture is accepted; one of another size, a colour texture, or a destroyed texture is refused with the right error; the depth states of a barrier belong to depth textures. A deliberately broken device (accepts a wrong depth attachment) fails it.
 - **Not in this revision.** Render graph support for a depth attachment (the graph still emits `depth: None`; the mesh frontend card extends it), stencil, depth formats other than `Depth32F`, multisampling, sampling a depth texture in a shader.
+
+## 14. The mesh frontend (card 6-3)
+
+The 3D counterpart of the sprite frontend: no port call is new. It is plain data in `render` (layer 2) and a perspective matrix constructor in `base` (layer 0), as [vulkan-and-mesh-v0](vulkan-and-mesh-v0.md) section 5 said.
+
+```mermaid
+flowchart LR
+  cam["PerspectiveCamera<br/>position, target, up, fov, aspect, near, far"] -->|"view_projection / mvp(model)"| mat["Mat4<br/>perspective_rh * look_at_rh * model"]
+  mat -->|"matrix_bytes"| ubo["uniform buffer (64 bytes)"]
+  cube["cube_vertices / cube_indices<br/>24 vertices, 36 indices"] -->|"encode_mesh_vertices"| vbo["vertex buffer (32-byte stride)"]
+  ubo --> rec["record_mesh(stream, MeshBindings, index_count)"]
+  vbo --> rec
+  rec --> cs["CommandStream<br/>set_pipeline, bind x4, draw_indexed"]
+  cs --> dev["IRenderDevice<br/>Null, OpenGL (Vulkan next)"]
+```
+
+- **`Mat4::perspective_rh(fov_y, aspect, near, far)`** and **`Mat4::look_at_rh(eye, target, up)`** (`base`, Class 2 public API like `orthographic_rh`): right-handed, Y up, the camera looks down -Z, depth 0 to 1 (`z = -near` maps to 0, `z = -far` to 1). Both return `None` for a view that cannot exist (field of view outside (0, pi), non-positive aspect or near, `far` not beyond `near`, `eye` equal to `target`, `up` parallel to the view direction, a value that is not finite).
+- **`PerspectiveCamera`** (`render::camera`): `view_projection()` and `mvp(&model)`; `None` as above.
+- **`MeshVertex`** (`render::mesh`): position (3 floats), normal (3 floats), uv (2 floats), 32 bytes in vertex slot 0, locations 0, 1, 2. Slot 0 only, as the design note recommended; no widening of the vertex input.
+- **`cube_vertices()` and `cube_indices()`**: the unit cube, 24 vertices (four per face, so each face has its own normal and uv), 36 `u16` indices, counter-clockwise seen from outside, uv (0, 0) at the top-left of the image.
+- **`record_mesh`**: pipeline, uniform (slot 0), index buffer, vertex buffer, texture (slot 0), one `draw_indexed`; nothing for an empty mesh. The pipeline must carry `depth_format: Some(Depth32F)` and the pass a depth texture (port revision 1, section 13).
+- **Tests.** Camera and matrix maths on the CPU; cube geometry (outward counter-clockwise winding, one normal per face, a full texture per face); a golden stream (`engine/render/golden/mesh_scene.txt`); the Null device accepts a depth-tested frame and refuses the depth pipeline in a pass without depth; recording a frame makes no allocator call; and on a real OpenGL 4.5 device two cubes drawn near-first then far render with the near one in front, with a control frame (depth test off) in which the far cube wins the overlap. The GL test uses inline GLSL, so it needs no shader tool. It sees only the front face of each cube, so the winding of the other faces is verified on the CPU only (the port has no cull state to test it against).
+- **Not in this card.** The render graph still emits `depth: None` (a pass with a depth attachment is recorded by hand, as the image test does; the mesh sample, card 6-11, decides whether the graph should learn it), lighting, a mesh file format, more than one vertex slot, instancing.
