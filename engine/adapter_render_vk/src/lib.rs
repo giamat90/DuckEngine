@@ -30,18 +30,28 @@ mod fake;
 mod frame;
 mod gear;
 mod instance;
+mod memory;
 mod plan;
 mod presenter;
+mod resources;
 mod select;
+mod slab;
+mod suballoc;
 mod surface;
 mod swapchain;
+mod upload;
 mod version;
 mod vk;
 mod vk_present;
+mod vk_resource;
 
 pub use context::{DeviceInfo, VulkanContext, VulkanOptions};
 pub use debug::ValidationReport;
 pub use error::VulkanError;
 pub use presenter::{FrameOutcome, Presenter};
+pub use resources::{
+    AddressMode, BufferDesc, BufferId, BufferUsage, Filter, Region, Resources, SamplerDesc,
+    SamplerId, TextureDesc, TextureFormat, TextureHandles, TextureId,
+};
 pub use select::{Candidate, DeviceType, choose_device};
 pub use version::{ApiVersion, BASELINE};

@@ -58,6 +58,7 @@ pub(crate) struct Core {
     pub(crate) queue: QueueHandle,
     pub(crate) queue_family: u32,
     pub(crate) can_present: bool,
+    pub(crate) max_texture_extent: u32,
 }
 
 /// A Vulkan 1.3 instance and device with one graphics queue.
@@ -123,6 +124,7 @@ impl VulkanContext {
                 queue,
                 queue_family,
                 can_present,
+                max_texture_extent: gpu.max_image_dimension_2d,
             }),
         })
     }
@@ -130,6 +132,14 @@ impl VulkanContext {
     /// The shared objects, for what is made from the context.
     pub(crate) fn core(&self) -> &Rc<Core> {
         &self.core
+    }
+
+    /// Makes the buffers, textures and samplers of this device.
+    ///
+    /// # Errors
+    /// [`VulkanError::MissingFunction`] or [`VulkanError::Call`] while setting up.
+    pub fn create_resources(&self) -> Result<crate::Resources, VulkanError> {
+        crate::Resources::new(&self.core, crate::Resources::DEFAULT_BLOCK)
     }
 
     /// What the driver said about the chosen device.

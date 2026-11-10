@@ -15,6 +15,7 @@ use crate::vk_present::{
     MemoryAllocateInfo, MemoryHandle, MemoryRequirements, PresentInfo, RenderingInfo,
     SemaphoreHandle, SubmitInfo2, SwapchainCreateInfo, SwapchainHandle, SyncCreateInfo,
 };
+use crate::vk_resource::{BufferCopy, ImageCreateInfo, SamplerCreateInfo, SamplerHandle};
 use core::ffi::{CStr, c_void};
 use std::rc::Rc;
 
@@ -60,6 +61,78 @@ function_table! {
         unmap_memory: unsafe extern "system" fn(DeviceHandle, MemoryHandle) = c"vkUnmapMemory",
         cmd_copy_image_to_buffer: unsafe extern "system" fn(CommandBufferHandle, ImageHandle, u32, BufferHandle, u32, *const BufferImageCopy) = c"vkCmdCopyImageToBuffer",
     }
+}
+
+function_table! {
+    /// The device functions of the memory sub-allocator.
+    pub struct MemoryFns {
+        allocate: unsafe extern "system" fn(DeviceHandle, *const MemoryAllocateInfo, *const c_void, *mut MemoryHandle) -> VkResult = c"vkAllocateMemory",
+        free: unsafe extern "system" fn(DeviceHandle, MemoryHandle, *const c_void) = c"vkFreeMemory",
+        map: unsafe extern "system" fn(DeviceHandle, MemoryHandle, u64, u64, u32, *mut *mut c_void) -> VkResult = c"vkMapMemory",
+        unmap: unsafe extern "system" fn(DeviceHandle, MemoryHandle) = c"vkUnmapMemory",
+    }
+}
+
+function_table! {
+    /// The device functions of buffers, images, samplers and the upload commands. None of them
+    /// needs the swapchain extension, so a device that cannot present can still hold resources.
+    pub struct ResourceFns {
+        create_buffer: unsafe extern "system" fn(DeviceHandle, *const BufferCreateInfo, *const c_void, *mut BufferHandle) -> VkResult = c"vkCreateBuffer",
+        destroy_buffer: unsafe extern "system" fn(DeviceHandle, BufferHandle, *const c_void) = c"vkDestroyBuffer",
+        get_buffer_memory_requirements: unsafe extern "system" fn(DeviceHandle, BufferHandle, *mut MemoryRequirements) = c"vkGetBufferMemoryRequirements",
+        bind_buffer_memory: unsafe extern "system" fn(DeviceHandle, BufferHandle, MemoryHandle, u64) -> VkResult = c"vkBindBufferMemory",
+        create_image: unsafe extern "system" fn(DeviceHandle, *const ImageCreateInfo, *const c_void, *mut ImageHandle) -> VkResult = c"vkCreateImage",
+        destroy_image: unsafe extern "system" fn(DeviceHandle, ImageHandle, *const c_void) = c"vkDestroyImage",
+        get_image_memory_requirements: unsafe extern "system" fn(DeviceHandle, ImageHandle, *mut MemoryRequirements) = c"vkGetImageMemoryRequirements",
+        bind_image_memory: unsafe extern "system" fn(DeviceHandle, ImageHandle, MemoryHandle, u64) -> VkResult = c"vkBindImageMemory",
+        create_image_view: unsafe extern "system" fn(DeviceHandle, *const ImageViewCreateInfo, *const c_void, *mut ImageViewHandle) -> VkResult = c"vkCreateImageView",
+        destroy_image_view: unsafe extern "system" fn(DeviceHandle, ImageViewHandle, *const c_void) = c"vkDestroyImageView",
+        create_sampler: unsafe extern "system" fn(DeviceHandle, *const SamplerCreateInfo, *const c_void, *mut SamplerHandle) -> VkResult = c"vkCreateSampler",
+        destroy_sampler: unsafe extern "system" fn(DeviceHandle, SamplerHandle, *const c_void) = c"vkDestroySampler",
+        create_command_pool: unsafe extern "system" fn(DeviceHandle, *const CommandPoolCreateInfo, *const c_void, *mut CommandPoolHandle) -> VkResult = c"vkCreateCommandPool",
+        destroy_command_pool: unsafe extern "system" fn(DeviceHandle, CommandPoolHandle, *const c_void) = c"vkDestroyCommandPool",
+        reset_command_pool: unsafe extern "system" fn(DeviceHandle, CommandPoolHandle, u32) -> VkResult = c"vkResetCommandPool",
+        allocate_command_buffers: unsafe extern "system" fn(DeviceHandle, *const CommandBufferAllocateInfo, *mut CommandBufferHandle) -> VkResult = c"vkAllocateCommandBuffers",
+        begin_command_buffer: unsafe extern "system" fn(CommandBufferHandle, *const CommandBufferBeginInfo) -> VkResult = c"vkBeginCommandBuffer",
+        end_command_buffer: unsafe extern "system" fn(CommandBufferHandle) -> VkResult = c"vkEndCommandBuffer",
+        create_fence: unsafe extern "system" fn(DeviceHandle, *const SyncCreateInfo, *const c_void, *mut FenceHandle) -> VkResult = c"vkCreateFence",
+        destroy_fence: unsafe extern "system" fn(DeviceHandle, FenceHandle, *const c_void) = c"vkDestroyFence",
+        wait_for_fences: unsafe extern "system" fn(DeviceHandle, u32, *const FenceHandle, Bool32, u64) -> VkResult = c"vkWaitForFences",
+        reset_fences: unsafe extern "system" fn(DeviceHandle, u32, *const FenceHandle) -> VkResult = c"vkResetFences",
+        queue_submit2: unsafe extern "system" fn(QueueHandle, u32, *const SubmitInfo2, FenceHandle) -> VkResult = c"vkQueueSubmit2",
+        cmd_pipeline_barrier2: unsafe extern "system" fn(CommandBufferHandle, *const DependencyInfo) = c"vkCmdPipelineBarrier2",
+        cmd_copy_buffer: unsafe extern "system" fn(CommandBufferHandle, BufferHandle, BufferHandle, u32, *const BufferCopy) = c"vkCmdCopyBuffer",
+        cmd_copy_buffer_to_image: unsafe extern "system" fn(CommandBufferHandle, BufferHandle, ImageHandle, u32, u32, *const BufferImageCopy) = c"vkCmdCopyBufferToImage",
+        cmd_copy_image_to_buffer: unsafe extern "system" fn(CommandBufferHandle, ImageHandle, u32, BufferHandle, u32, *const BufferImageCopy) = c"vkCmdCopyImageToBuffer",
+    }
+}
+
+/// Loads the memory functions of the core's device.
+///
+/// # Errors
+/// [`VulkanError::MissingFunction`] naming the first function the driver lacks.
+pub fn load_memory_fns(core: &Core) -> Result<MemoryFns, VulkanError> {
+    let device = core.device.handle();
+    let lookup = |name: &CStr| {
+        // SAFETY: `device` is the live device of `core`.
+        unsafe { core.instance.device_proc_addr(device, name) }
+    };
+    // SAFETY: the driver returns functions with the declared signatures for these names.
+    unsafe { MemoryFns::load(lookup) }.map_err(missing)
+}
+
+/// Loads the resource functions of the core's device.
+///
+/// # Errors
+/// [`VulkanError::MissingFunction`] naming the first function the driver lacks.
+pub fn load_resource_fns(core: &Core) -> Result<ResourceFns, VulkanError> {
+    let device = core.device.handle();
+    let lookup = |name: &CStr| {
+        // SAFETY: `device` is the live device of `core`.
+        unsafe { core.instance.device_proc_addr(device, name) }
+    };
+    // SAFETY: the driver returns functions with the declared signatures for these names.
+    unsafe { ResourceFns::load(lookup) }.map_err(missing)
 }
 
 /// `Ok` for `VK_SUCCESS`, else the call and its result as an error value.

@@ -21,12 +21,26 @@ use crate::vk::{
     STYPE_INSTANCE_CREATE_INFO, STYPE_VULKAN_1_3_FEATURES, SUCCESS, VkResult, Vulkan13Features,
 };
 use crate::vk_present::{EXT_SWAPCHAIN, ExtensionProperties, PhysicalDeviceMemoryProperties};
+use crate::vk_resource::FormatProperties;
 use core::ffi::{CStr, c_char, c_void};
 use std::sync::Arc;
 
 const VALIDATION_LAYER: &CStr = c"VK_LAYER_KHRONOS_validation";
 const DEBUG_UTILS: &CStr = c"VK_EXT_debug_utils";
 const ENGINE_NAME: &CStr = c"DuckEngine";
+
+/// `maxImageDimension2D`: the second 32-bit word of `VkPhysicalDeviceLimits`, which the
+/// properties keep as raw 64-bit words; the bytes of a word are the bytes in memory, so bytes 4
+/// to 8 are that field on any byte order.
+fn max_image_dimension_2d(properties: &PhysicalDeviceProperties) -> u32 {
+    let word = properties
+        .limits
+        .first()
+        .copied()
+        .unwrap_or(0)
+        .to_ne_bytes();
+    u32::from_ne_bytes([word[4], word[5], word[6], word[7]])
+}
 
 /// More devices or queue families than any system has; a larger count is cut here.
 const MAX_ENUMERATED: u32 = 1024;
@@ -45,6 +59,7 @@ function_table! {
         get_device_proc_addr: unsafe extern "system" fn(DeviceHandle, *const c_char) -> *mut c_void = c"vkGetDeviceProcAddr",
         enumerate_device_extensions: unsafe extern "system" fn(PhysicalDeviceHandle, *const c_char, *mut u32, *mut ExtensionProperties) -> VkResult = c"vkEnumerateDeviceExtensionProperties",
         get_memory_properties: unsafe extern "system" fn(PhysicalDeviceHandle, *mut PhysicalDeviceMemoryProperties) = c"vkGetPhysicalDeviceMemoryProperties",
+        get_format_properties: unsafe extern "system" fn(PhysicalDeviceHandle, u32, *mut FormatProperties) = c"vkGetPhysicalDeviceFormatProperties",
     }
 }
 
@@ -67,6 +82,8 @@ pub struct PhysicalDevice {
     pub candidate: Candidate,
     /// Whether the device offers `VK_KHR_swapchain`.
     pub swapchain_extension: bool,
+    /// The largest width or height of a 2D image (`maxImageDimension2D`).
+    pub max_image_dimension_2d: u32,
 }
 
 /// A Vulkan instance.
@@ -284,6 +301,7 @@ impl Instance {
             vendor_id: properties.vendor_id,
             device_id: properties.device_id,
             swapchain_extension: self.device_has_extension(handle, EXT_SWAPCHAIN),
+            max_image_dimension_2d: max_image_dimension_2d(&properties),
             candidate: Candidate {
                 api_version,
                 device_type: DeviceType::from_raw(properties.device_type),
@@ -330,6 +348,14 @@ impl Instance {
                 .iter()
                 .take(written)
                 .any(|extension| name_is(&extension.extension_name, name))
+    }
+
+    /// What the device can do with `format` (the features per tiling).
+    pub fn format_properties(&self, gpu: PhysicalDeviceHandle, format: u32) -> FormatProperties {
+        let mut properties = FormatProperties::default();
+        // SAFETY: `gpu` was listed by this instance; `properties` is a valid output.
+        unsafe { (self.fns.get_format_properties)(gpu, format, &raw mut properties) };
+        properties
     }
 
     /// The memory types and heaps of the device.

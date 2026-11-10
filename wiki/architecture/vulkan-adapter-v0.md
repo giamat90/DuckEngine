@@ -1,6 +1,6 @@
-# Vulkan adapter v0: loader, device, surface, swapchain (cards 6-6 and 6-7, parts 1 and 2)
+# Vulkan adapter v0: loader, device, swapchain, memory and resources (cards 6-6, 6-7 and 6-8, parts 1 to 3)
 
-Status: parts 1 and 2 of 4 of `adapter_render_vk` (part 2 is section 5), the second real render backend of phase 6 ([vulkan-and-mesh-v0](vulkan-and-mesh-v0.md) sections 2, 3 and 8). This page grows with each part (6-7 swapchain, 6-8 memory and resources, 6-9 shaders, pipelines and draw). Part 1 draws nothing: it starts Vulkan, chooses a device, makes the logical device and its graphics queue, and proves the start-up and the tear-down order without a GPU.
+Status: parts 1 to 3 of 4 of `adapter_render_vk` (part 2 is section 5, part 3 is section 6), the second real render backend of phase 6 ([vulkan-and-mesh-v0](vulkan-and-mesh-v0.md) sections 2, 3 and 8). This page grows with each part (6-7 swapchain, 6-8 memory and resources, 6-9 shaders, pipelines and draw). Part 1 draws nothing: it starts Vulkan, chooses a device, makes the logical device and its graphics queue, and proves the start-up and the tear-down order without a GPU.
 
 ## 1. What part 1 delivers
 
@@ -115,3 +115,53 @@ sequenceDiagram
 | Real device and window | `tests/presenter.rs`: GLFW window, clear to red, green and blue and read the pixel back (Bgra byte order), 120 frames in flight, a resize request (the window is not resized: the window port has no call for it) | yes; "not run: device not set up" otherwise, a failure when `DUCK_REQUIRE_VK=1` |
 
 **Limits of part 2:** the validation layer is not installed on the development machine, so the real-device tests ran without it; the structure-type constants are pinned to the header's numbers in a unit test because neither the fake nor an absent layer would catch a wrong one. The Linux surface path (Xlib) is compiled and checked with Clippy but has not run; it opens its own X connection without an error handler, so a stale window id would end the process (the presenter's contract is that the window outlives it). The token must name a live window: Vulkan does not check it. Only the clear is drawn; shaders, pipelines and resources come in 6-8 and 6-9.
+
+## 6. Part 3: memory sub-allocator, buffers, textures, samplers, staged uploads (card 6-8)
+
+`VulkanContext::create_resources()` returns a `Resources`: the tables of buffers, textures and samplers of one device, over a memory manager and an uploader. Each resource is named by a generational id (`BufferId`, `TextureId`, `SamplerId`); a destroyed or never-made id is `InvalidHandle`, and a reused slot does not answer to the old id. The adapter does not depend on `render` until 6-9, so the descriptions here (`BufferDesc`, `TextureDesc`, `SamplerDesc`, `Region`) are the adapter's own; card 6-9 maps the port's types onto them.
+
+```mermaid
+flowchart LR
+  app["caller (6-9: the render device)"] --> res["Resources: Slab of buffers, textures, samplers"]
+  res --> mem["MemoryManager: pools per (memory type, Kind)"]
+  mem --> fl["FreeList per block: best fit, coalescing"]
+  mem --> blk["vkAllocateMemory blocks, 32 MiB, host-visible ones mapped whole"]
+  res --> up["Uploader: staging buffer, one command pool, one fence"]
+  up --> mem
+  up --> q["graphics queue: submit, wait for the fence"]
+  fake["fake driver: checks bind, image layouts, usage flags"] -.-> res
+```
+
+**The sub-allocator (choice O2).** A block is one `vkAllocateMemory` call of 32 MiB. A pool is one memory type and one kind of resource (linear buffers, or optimal-tiling images), so `bufferImageGranularity` never matters. Inside a block a `FreeList` (pure data, no `unsafe`) hands out the smallest free range that fits, the first of equals, at the requested power-of-two alignment, and joins neighbours when a range comes back; a second release of the same range is refused. A request larger than a quarter of a block gets a block of its own with its exact size, freed when it is empty. An emptied ordinary block goes back to the driver unless it is the last one of its pool. Host-visible blocks are mapped once, whole. A device-local request falls back to any allowed memory type; an upload request needs host-visible and coherent memory, else `Unsupported`.
+
+**Uploads.** A write copies the bytes into a host-visible staging buffer (at least 64 KiB, grown when a write is larger) and submits one transfer on the graphics queue; the call returns after the fence signals, so the data is there when it returns and the staging buffer is idle for the next write. A buffer write is wrapped in two global memory barriers (everything to transfer, transfer to everything), whose first scope also covers earlier submissions. A texture write moves the image from its tracked layout to transfer-destination, copies, and leaves it in shader-read; `read_back` does the same round trip the other way, adds a barrier from the transfer write to the host read (a fence wait alone does not make device writes visible to the CPU), and returns the image to the layout it had. When the wait for a transfer fails after the submit, the texture is still recorded in its new layout and the next transfer waits for the pending one first.
+
+**Rules the code keeps, each with a test against the fake driver:**
+
+- A failed create call releases whatever was made before it (image, view, memory range, buffer); a failed start of `Resources` or of the uploader destroys the pool and the fence it already made (a test found the second one missing in the first version of the uploader).
+- A resource owns only its own handles; dropping `Resources` waits for the device, destroys samplers, textures, buffers, the staging buffer and the transfer objects, then frees every block.
+- `Resources` loads its own function tables, not the presenter's, so a device without the swapchain extension can hold resources.
+- Texture size is checked against `maxImageDimension2D`, the mip count against the length of the chain, a write region against the texture and the byte count against the region, all before anything is recorded.
+- Colour textures can be sampled, copied to and from, and drawn into; a depth texture is a depth attachment and is readable only when the device allows `D32` as a copy source.
+- The fake driver checks what it can see: memory type allowed, offset aligned, no two resources sharing bytes, the layout an image is in when it is copied or the old layout an image barrier names, the usage flags a copy needs. It records the stage and access masks of global barriers (a test pins the host-read barrier of `read_back`) but does not judge the other masks: that is the validation layer's job, which is not installed here.
+- `MemoryManager::free` takes the allocation by value, so a range cannot be freed twice; a request of size zero or an alignment that is not a power of two is refused before a block is made.
+- A depth texture needs the device to support `D32` as a depth attachment (else `Unsupported`); it is readable only with the copy-source feature too.
+
+**How part 3 is tested:**
+
+| Level | What | Needs a GPU |
+|---|---|---|
+| Unit | `FreeList` (15 tests, including a long mixed run that never overlaps), `Slab` (8), the struct sizes and numbers of the new Vulkan types against the header | no |
+| Fake driver | `MemoryManager` (15 tests: sharing, dedicated blocks, reuse, returning empty blocks, refused blocks, out of memory, a failed mapping) and `Resources` (40 tests: creation, bounds, write and read-back, partial writes, the barrier order, layout tracking, stale ids, injected failures with the live objects counted, drop) | no |
+| Real device | `tests/resources.rs`: texel round trips from 1x1 to 300x17, a partial write, a 300 KB buffer write, 400 small resources sharing a few blocks, samplers, a depth texture and refused sizes | yes; "not run: device not set up" otherwise, a failure when `DUCK_REQUIRE_VK=1` |
+
+**Limits of part 3:**
+
+- A write waits for the GPU (one fence per transfer): simple and correct, but a CPU stall per upload. A frame-batched upload path is a later optimisation, to be justified by a benchmark.
+- Destroying a resource frees it at once; the caller must know no submitted work still uses it. Card 6-9 owns that rule once frames exist.
+- Only mip level 0 is written; the other levels of a texture are undefined until something fills them. A texture never written has undefined contents.
+- A failed block allocation is an error; there is no retry with a smaller block.
+- The validation layer is not installed on the development machine, so the real-device tests ran without it (each prints a note); the barrier masks are checked by the fake driver only where stated above, and no real-device test reads a buffer back.
+- Read-back staging uses uncached host-coherent memory; a `HOST_CACHED` placement would read faster.
+- An id carries nothing that ties it to the `Resources` that made it; an id from a second `Resources` with the same index and generation would be accepted.
+- The presenter's capture buffer still uses a direct `vkAllocateMemory`; moving it onto the manager is left for a later card.
