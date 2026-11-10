@@ -4,8 +4,8 @@
 //! a 16-bit payload length, then a fixed payload per opcode (numbers little-endian, a handle as its
 //! 32-bit index then its 32-bit generation). A `begin_pass` payload of 38 bytes (instead of 30)
 //! ends with the handle of a depth attachment; a pass without depth keeps the 30 bytes it always
-//! had, so streams recorded before depth existed are unchanged. Decoding is a loop over the buffer ([`Commands`]), no
-//! virtual call per command. The buffer keeps its capacity across [`CommandStream::clear`], so
+//! had, so streams recorded before depth existed are unchanged. Decoding is a loop over the buffer
+//! ([`Commands`]), no virtual call per command. The buffer keeps its capacity across [`CommandStream::clear`], so
 //! refilling a frame to the same size allocates nothing. Decoding accepts only the canonical form
 //! (unused fields zero), so decode then encode reproduces the bytes. Opcode 12 and up are reserved.
 

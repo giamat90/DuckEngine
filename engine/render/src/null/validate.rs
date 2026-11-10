@@ -125,6 +125,9 @@ fn check_target(
     let Some(depth) = pass.depth else {
         return Ok(());
     };
+    if pass.target == RenderTarget::Texture(depth) {
+        return Err(INVALID);
+    }
     let record = lookup(&res.textures, depth)?;
     let fits = record.desc.format == TextureFormat::Depth32F
         && (record.desc.width, record.desc.height) == size;

@@ -386,3 +386,21 @@ fn the_null_device_clears_a_depth_texture() {
         height: 0,
     };
 }
+
+#[test]
+fn a_depth_texture_cannot_be_its_own_colour_target() {
+    let mut rig = rig();
+    let depth = make_texture(&mut rig, 4, TextureFormat::Depth32F);
+    let mut stream = CommandStream::new();
+    stream.begin_pass(PassDesc {
+        target: RenderTarget::Texture(depth),
+        clear_color: None,
+        clear_depth: Some(1.0),
+        depth: Some(depth),
+    });
+    stream.end_pass();
+    assert_eq!(
+        submit(&mut rig, &stream),
+        Err(RenderError::InvalidDescription)
+    );
+}
