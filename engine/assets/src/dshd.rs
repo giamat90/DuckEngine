@@ -1,9 +1,10 @@
 //! The `dshd` v0 shader program format and its reader (card 3-11; the shader asset of
 //! `wiki/architecture/render-port-v0.md` sections 7 and 8, decided by ADR-0009).
 //!
-//! A file holds one or two shader modules (a vertex and a fragment module) for one backend, here
-//! GLSL 450 text, with the engine's own small reflection record, so runtime code never sees the
-//! reflection format of a compiler. All integers are little-endian.
+//! A file holds one or two shader modules (a vertex and a fragment module) for one backend, with
+//! the engine's own small reflection record, so runtime code never sees the reflection format of a
+//! compiler. The backend is GLSL 450 text (for the OpenGL adapter) or SPIR-V (for the Vulkan
+//! adapter, card 6-4). All integers are little-endian.
 //!
 //! Header (8 bytes):
 //!
@@ -11,7 +12,7 @@
 //! |---|---|---|
 //! | 0 | 4 | magic `DSHD` |
 //! | 4 | 2 | version (0) |
-//! | 6 | 1 | backend (0 = GLSL 450 text) |
+//! | 6 | 1 | backend (0 = GLSL 450 text, 1 = SPIR-V) |
 //! | 7 | 1 | module count (1 or 2) |
 //!
 //! Then, per module, a 16-byte record, `input_count` entries of 2 bytes, and the code:
@@ -27,9 +28,11 @@
 //! | 12 | 4 | reserved, zero |
 //!
 //! An input entry is the shader input location and its float component count (1 to 4), in strictly
-//! increasing location order. The entry point of every module is `main`. The code is UTF-8 text. The
-//! file length must equal the header plus all modules exactly. The reader borrows the bytes and
-//! never allocates.
+//! increasing location order. The entry point of every module is `main`. For backend 0 the code is
+//! UTF-8 text. For backend 1 the code is a SPIR-V binary: a whole number of 32-bit words, at least
+//! the 5-word header, starting with the magic `0x07230203` in little-endian byte order; anything
+//! else is refused before a driver could see it. The file length must equal the header plus all
+//! modules exactly. The reader borrows the bytes and never allocates.
 
 use core::fmt;
 
@@ -47,6 +50,13 @@ pub const MAX_CODE_LEN: usize = 1 << 20;
 const MAGIC: [u8; 4] = *b"DSHD";
 const VERSION: u16 = 0;
 const BACKEND_GLSL_450: u8 = 0;
+const BACKEND_SPIRV: u8 = 1;
+/// The first word of every SPIR-V binary, read as little-endian bytes.
+const SPIRV_MAGIC: [u8; 4] = 0x0723_0203u32.to_le_bytes();
+/// Bytes of a SPIR-V word.
+const SPIRV_WORD: usize = 4;
+/// Shortest SPIR-V binary: the five header words.
+const SPIRV_MIN_LEN: usize = 5 * SPIRV_WORD;
 const MAX_MODULES: usize = 2;
 const INPUT_LEN: usize = 2;
 const MAX_COMPONENTS: u8 = 4;
@@ -76,8 +86,10 @@ pub enum DshdError {
     EmptyCode,
     /// Code longer than [`MAX_CODE_LEN`].
     CodeTooLong,
-    /// Code that is not UTF-8.
+    /// GLSL code that is not UTF-8.
     BadCode,
+    /// SPIR-V code that is not whole words, is shorter than the SPIR-V header, or lacks the magic.
+    BadSpirv,
     /// A reserved field is not zero.
     ReservedNonZero,
     /// Bytes remain after the last module.
@@ -99,6 +111,7 @@ impl fmt::Display for DshdError {
             Self::EmptyCode => f.write_str("empty code"),
             Self::CodeTooLong => f.write_str("code too long"),
             Self::BadCode => f.write_str("code is not UTF-8"),
+            Self::BadSpirv => f.write_str("code is not a SPIR-V binary"),
             Self::ReservedNonZero => f.write_str("reserved field is not zero"),
             Self::TrailingData => f.write_str("trailing data"),
         }
@@ -106,6 +119,32 @@ impl fmt::Display for DshdError {
 }
 
 impl std::error::Error for DshdError {}
+
+/// The kind of code a file carries (the backend byte).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backend {
+    /// GLSL 450 text, for the OpenGL adapter.
+    Glsl450,
+    /// A SPIR-V binary, for the Vulkan adapter.
+    SpirV,
+}
+
+impl Backend {
+    fn to_byte(self) -> u8 {
+        match self {
+            Self::Glsl450 => BACKEND_GLSL_450,
+            Self::SpirV => BACKEND_SPIRV,
+        }
+    }
+
+    fn from_byte(byte: u8) -> Result<Self, DshdError> {
+        match byte {
+            BACKEND_GLSL_450 => Ok(Self::Glsl450),
+            BACKEND_SPIRV => Ok(Self::SpirV),
+            other => Err(DshdError::UnsupportedBackend(other)),
+        }
+    }
+}
 
 /// The pipeline stage of a module.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,7 +205,59 @@ pub struct ModuleSpec<'a> {
     pub code: &'a str,
 }
 
-fn check_inputs(spec: &ModuleSpec<'_>) -> Result<(), DshdError> {
+/// What the encoder needs to write one SPIR-V module: like [`ModuleSpec`], with a binary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpirvModuleSpec<'a> {
+    /// Stage of the module.
+    pub stage: Stage,
+    /// Its uniform block, if it has one.
+    pub uniform: Option<UniformBlock>,
+    /// Binding of its sampled texture, if it has one.
+    pub texture_binding: Option<u8>,
+    /// Vertex inputs, in increasing location order (empty for a fragment module).
+    pub inputs: &'a [VertexInput],
+    /// The SPIR-V binary (whole little-endian words, see the module documentation).
+    pub code: &'a [u8],
+}
+
+/// The fields both spec types share; the code as bytes.
+struct Raw<'a> {
+    stage: Stage,
+    uniform: Option<UniformBlock>,
+    texture_binding: Option<u8>,
+    inputs: &'a [VertexInput],
+    code: &'a [u8],
+}
+
+trait AsRaw {
+    fn raw(&self) -> Raw<'_>;
+}
+
+impl AsRaw for ModuleSpec<'_> {
+    fn raw(&self) -> Raw<'_> {
+        Raw {
+            stage: self.stage,
+            uniform: self.uniform,
+            texture_binding: self.texture_binding,
+            inputs: self.inputs,
+            code: self.code.as_bytes(),
+        }
+    }
+}
+
+impl AsRaw for SpirvModuleSpec<'_> {
+    fn raw(&self) -> Raw<'_> {
+        Raw {
+            stage: self.stage,
+            uniform: self.uniform,
+            texture_binding: self.texture_binding,
+            inputs: self.inputs,
+            code: self.code,
+        }
+    }
+}
+
+fn check_inputs(spec: &Raw<'_>) -> Result<(), DshdError> {
     let fragment_has_inputs = spec.stage == Stage::Fragment && !spec.inputs.is_empty();
     let widths_ok = spec
         .inputs
@@ -182,7 +273,7 @@ fn check_inputs(spec: &ModuleSpec<'_>) -> Result<(), DshdError> {
     Ok(())
 }
 
-fn check_bindings(spec: &ModuleSpec<'_>) -> Result<(), DshdError> {
+fn check_bindings(spec: &Raw<'_>) -> Result<(), DshdError> {
     let block_ok = spec
         .uniform
         .is_none_or(|u| u.binding != NO_BINDING && u.size > 0);
@@ -194,38 +285,69 @@ fn check_bindings(spec: &ModuleSpec<'_>) -> Result<(), DshdError> {
     }
 }
 
-fn check_module(spec: &ModuleSpec<'_>) -> Result<(), DshdError> {
-    check_inputs(spec)?;
-    check_bindings(spec)?;
-    match spec.code.len() {
+/// Whether `code` is a SPIR-V binary as far as the header goes: whole words, at least the five
+/// header words, the magic first. The rest is the driver's to validate.
+fn is_spirv(code: &[u8]) -> bool {
+    code.len() >= SPIRV_MIN_LEN
+        && code.len().is_multiple_of(SPIRV_WORD)
+        && code.starts_with(&SPIRV_MAGIC)
+}
+
+fn check_code(code: &[u8], backend: Backend) -> Result<(), DshdError> {
+    match code.len() {
         0 => Err(DshdError::EmptyCode),
         n if n > MAX_CODE_LEN => Err(DshdError::CodeTooLong),
+        _ if backend == Backend::SpirV && !is_spirv(code) => Err(DshdError::BadSpirv),
         _ => Ok(()),
     }
 }
 
-fn check_modules(modules: &[ModuleSpec<'_>]) -> Result<(), DshdError> {
+fn check_module(spec: &Raw<'_>, backend: Backend) -> Result<(), DshdError> {
+    check_inputs(spec)?;
+    check_bindings(spec)?;
+    check_code(spec.code, backend)
+}
+
+fn check_modules<T: AsRaw>(modules: &[T], backend: Backend) -> Result<(), DshdError> {
     if modules.is_empty() || modules.len() > MAX_MODULES {
         return Err(DshdError::BadModuleCount);
     }
-    if modules.len() == 2 && modules[0].stage == modules[1].stage {
+    if let [first, second] = modules
+        && first.raw().stage == second.raw().stage
+    {
         return Err(DshdError::DuplicateStage);
     }
-    modules.iter().try_for_each(check_module)
+    modules
+        .iter()
+        .try_for_each(|m| check_module(&m.raw(), backend))
 }
 
-/// Total file length for `modules`.
+fn total_len<T: AsRaw>(modules: &[T], backend: Backend) -> Result<usize, DshdError> {
+    check_modules(modules, backend)?;
+    Ok(modules.iter().fold(HEADER_LEN, |sum, m| {
+        let raw = m.raw();
+        sum + RECORD_LEN + raw.inputs.len() * INPUT_LEN + raw.code.len()
+    }))
+}
+
+/// Total file length for GLSL `modules`.
 ///
 /// # Errors
 /// The first problem found in the modules, see [`DshdError`].
 pub fn encoded_len(modules: &[ModuleSpec<'_>]) -> Result<usize, DshdError> {
-    check_modules(modules)?;
-    Ok(modules.iter().fold(HEADER_LEN, |sum, m| {
-        sum + RECORD_LEN + m.inputs.len() * INPUT_LEN + m.code.len()
-    }))
+    total_len(modules, Backend::Glsl450)
 }
 
-fn record(spec: &ModuleSpec<'_>, code_len: u32) -> [u8; RECORD_LEN] {
+/// Total file length for SPIR-V `modules`.
+///
+/// # Errors
+/// The first problem found in the modules, see [`DshdError`]; a binary that is not SPIR-V is
+/// [`DshdError::BadSpirv`].
+pub fn spirv_encoded_len(modules: &[SpirvModuleSpec<'_>]) -> Result<usize, DshdError> {
+    total_len(modules, Backend::SpirV)
+}
+
+fn record(spec: &Raw<'_>, code_len: u32) -> [u8; RECORD_LEN] {
     let mut r = [0u8; RECORD_LEN];
     r[0] = spec.stage.to_byte();
     r[1] = u8::try_from(spec.inputs.len()).unwrap_or(u8::MAX);
@@ -236,7 +358,7 @@ fn record(spec: &ModuleSpec<'_>, code_len: u32) -> [u8; RECORD_LEN] {
     r
 }
 
-fn write_module<'o>(out: &'o mut [u8], spec: &ModuleSpec<'_>) -> Result<&'o mut [u8], DshdError> {
+fn write_module<'o>(out: &'o mut [u8], spec: &Raw<'_>) -> Result<&'o mut [u8], DshdError> {
     let code_len = u32::try_from(spec.code.len()).map_err(|_| DshdError::CodeTooLong)?;
     let (head, rest) = out
         .split_at_mut_checked(RECORD_LEN)
@@ -251,33 +373,54 @@ fn write_module<'o>(out: &'o mut [u8], spec: &ModuleSpec<'_>) -> Result<&'o mut 
     let (code, rest) = rest
         .split_at_mut_checked(spec.code.len())
         .ok_or(DshdError::Truncated)?;
-    code.copy_from_slice(spec.code.as_bytes());
+    code.copy_from_slice(spec.code);
     Ok(rest)
 }
 
-/// Writes the file for `modules` into `out`; returns the bytes written. Never allocates.
-///
-/// # Errors
-/// The modules are checked like [`encoded_len`]; [`DshdError::Truncated`] when `out` is too small.
-pub fn encode_into(out: &mut [u8], modules: &[ModuleSpec<'_>]) -> Result<usize, DshdError> {
-    let total = encoded_len(modules)?;
+fn write_all<T: AsRaw>(
+    out: &mut [u8],
+    modules: &[T],
+    backend: Backend,
+) -> Result<usize, DshdError> {
+    let total = total_len(modules, backend)?;
     let dst = out.get_mut(..total).ok_or(DshdError::Truncated)?;
     let (head, mut rest) = dst
         .split_at_mut_checked(HEADER_LEN)
         .ok_or(DshdError::Truncated)?;
     head[0..4].copy_from_slice(&MAGIC);
     head[4..6].copy_from_slice(&VERSION.to_le_bytes());
-    head[6] = BACKEND_GLSL_450;
+    head[6] = backend.to_byte();
     head[7] = u8::try_from(modules.len()).map_err(|_| DshdError::BadModuleCount)?;
     for module in modules {
-        rest = write_module(rest, module)?;
+        rest = write_module(rest, &module.raw())?;
     }
     Ok(total)
+}
+
+/// Writes the GLSL file for `modules` into `out`; returns the bytes written. Never allocates.
+///
+/// # Errors
+/// The modules are checked like [`encoded_len`]; [`DshdError::Truncated`] when `out` is too small.
+pub fn encode_into(out: &mut [u8], modules: &[ModuleSpec<'_>]) -> Result<usize, DshdError> {
+    write_all(out, modules, Backend::Glsl450)
+}
+
+/// Writes the SPIR-V file for `modules` into `out`; returns the bytes written. Never allocates.
+///
+/// # Errors
+/// The modules are checked like [`spirv_encoded_len`]; [`DshdError::Truncated`] when `out` is too
+/// small.
+pub fn encode_spirv_into(
+    out: &mut [u8],
+    modules: &[SpirvModuleSpec<'_>],
+) -> Result<usize, DshdError> {
+    write_all(out, modules, Backend::SpirV)
 }
 
 /// A validated view over a `dshd` file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Program<'a> {
+    backend: Backend,
     count: u8,
     data: &'a [u8],
 }
@@ -289,7 +432,10 @@ pub struct Module<'a> {
     uniform: Option<UniformBlock>,
     texture_binding: Option<u8>,
     inputs: &'a [u8],
-    code: &'a str,
+    code: &'a [u8],
+    backend: Backend,
+    /// The code as text; empty for a SPIR-V module.
+    text: &'a str,
 }
 
 fn le_u32(bytes: &[u8], at: usize) -> Option<u32> {
@@ -302,7 +448,7 @@ fn binding(byte: u8) -> Option<u8> {
 }
 
 /// Reads the module at the start of `data`; returns it and the bytes after it.
-fn read_module(data: &[u8]) -> Result<(Module<'_>, &[u8]), DshdError> {
+fn read_module(data: &[u8], backend: Backend) -> Result<(Module<'_>, &[u8]), DshdError> {
     let head = data
         .first_chunk::<RECORD_LEN>()
         .ok_or(DshdError::Truncated)?;
@@ -330,7 +476,15 @@ fn read_module(data: &[u8]) -> Result<(Module<'_>, &[u8]), DshdError> {
     let (code, after) = after
         .split_at_checked(code_len)
         .ok_or(DshdError::Truncated)?;
-    let code = core::str::from_utf8(code).map_err(|_| DshdError::BadCode)?;
+    let text = match backend {
+        Backend::Glsl450 => core::str::from_utf8(code).map_err(|_| DshdError::BadCode)?,
+        Backend::SpirV => {
+            if !is_spirv(code) {
+                return Err(DshdError::BadSpirv);
+            }
+            ""
+        }
+    };
     let uniform = binding(head[2]).map(|b| UniformBlock { binding: b, size });
     let block_matches = uniform.is_some() == (size > 0);
     if !block_matches || !inputs_valid(inputs) {
@@ -346,6 +500,8 @@ fn read_module(data: &[u8]) -> Result<(Module<'_>, &[u8]), DshdError> {
         texture_binding: binding(head[3]),
         inputs,
         code,
+        backend,
+        text,
     };
     Ok((module, after))
 }
@@ -365,11 +521,11 @@ fn inputs_valid(inputs: &[u8]) -> bool {
 }
 
 /// Checks `count` modules in a row; returns the bytes after the last one.
-fn walk(data: &[u8], count: u8) -> Result<&[u8], DshdError> {
+fn walk(data: &[u8], count: u8, backend: Backend) -> Result<&[u8], DshdError> {
     let mut rest = data;
     let mut previous = None;
     for _ in 0..count {
-        let (module, after) = read_module(rest)?;
+        let (module, after) = read_module(rest, backend)?;
         if previous == Some(module.stage) {
             return Err(DshdError::DuplicateStage);
         }
@@ -396,20 +552,28 @@ impl<'a> Program<'a> {
         if version != VERSION {
             return Err(DshdError::UnsupportedVersion(version));
         }
-        if head[6] != BACKEND_GLSL_450 {
-            return Err(DshdError::UnsupportedBackend(head[6]));
-        }
+        let backend = Backend::from_byte(head[6])?;
         let count = head[7];
         if count == 0 || usize::from(count) > MAX_MODULES {
             return Err(DshdError::BadModuleCount);
         }
         let data = bytes.get(HEADER_LEN..).ok_or(DshdError::Truncated)?;
-        let rest = walk(data, count)?;
+        let rest = walk(data, count, backend)?;
         if rest.is_empty() {
-            Ok(Self { count, data })
+            Ok(Self {
+                backend,
+                count,
+                data,
+            })
         } else {
             Err(DshdError::TrailingData)
         }
+    }
+
+    /// The kind of code the file carries.
+    #[must_use]
+    pub fn backend(&self) -> Backend {
+        self.backend
     }
 
     /// Number of modules (1 or 2).
@@ -426,9 +590,11 @@ impl<'a> Program<'a> {
         }
         let mut rest = self.data;
         for _ in 0..index {
-            rest = read_module(rest).ok()?.1;
+            rest = read_module(rest, self.backend).ok()?.1;
         }
-        read_module(rest).ok().map(|(module, _)| module)
+        read_module(rest, self.backend)
+            .ok()
+            .map(|(module, _)| module)
     }
 
     /// The module of `stage`, if the file has one.
@@ -459,10 +625,32 @@ impl<'a> Module<'a> {
         self.texture_binding
     }
 
-    /// The GLSL 450 text; the entry point is `main`.
+    /// The GLSL 450 text; the entry point is `main`. Empty for a SPIR-V module (see
+    /// [`Module::spirv`]). Check [`Program::backend`] first: a SPIR-V file given to a GLSL
+    /// consumer would otherwise hand it an empty shader.
     #[must_use]
     pub fn code(&self) -> &'a str {
-        self.code
+        self.text
+    }
+
+    /// The SPIR-V binary (whole little-endian words, magic checked) of a SPIR-V module; `None` for
+    /// a GLSL module. The entry point is `main`. The slice is only byte-aligned (it sits at an
+    /// arbitrary offset in the file): never cast it to `*const u32`, copy it with
+    /// [`Module::spirv_words`].
+    #[must_use]
+    pub fn spirv(&self) -> Option<&'a [u8]> {
+        (self.backend == Backend::SpirV).then_some(self.code)
+    }
+
+    /// The SPIR-V binary as 32-bit words, for a driver that wants a `u32` array (the words are
+    /// read from the bytes, so alignment does not matter); `None` for a GLSL module.
+    #[must_use]
+    pub fn spirv_words(self) -> Option<impl Iterator<Item = u32> + 'a> {
+        self.spirv().map(|bytes| {
+            bytes
+                .chunks_exact(SPIRV_WORD)
+                .map(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]))
+        })
     }
 
     /// Number of vertex inputs.
