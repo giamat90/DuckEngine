@@ -14,7 +14,7 @@ use render::desc::{SurfaceDesc, TextureDesc, TextureFormat};
 use render::device::IRenderDevice;
 use render::ids::SurfaceId;
 
-#[path = "../../render/tests/support/sprite_image.rs"]
+#[path = "support/sprite_image.rs"]
 mod scene;
 
 use scene::{

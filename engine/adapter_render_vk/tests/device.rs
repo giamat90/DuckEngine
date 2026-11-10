@@ -22,7 +22,7 @@ use render::stream::CommandStream;
 use std::sync::{Mutex, PoisonError};
 
 /// The sprite image scene and its reference picture, shared with the OpenGL adapter's image test.
-#[path = "../../render/tests/support/sprite_image.rs"]
+#[path = "../../adapter_render_gl/tests/support/sprite_image.rs"]
 mod scene;
 
 /// GLFW is one library with global state: one test at a time uses it.
