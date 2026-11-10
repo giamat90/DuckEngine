@@ -24,6 +24,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter_render_vk"
+version = "0.1.0"
+
+[[package]]
 name = "adapter_runtime_libs"
 version = "0.1.0"
 

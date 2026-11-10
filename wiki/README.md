@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v1.31 (2026-11-10).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v1.32 (2026-11-10).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.32** - Vulkan adapter part 1 (card 6-6, Class 2; new adapter, `unsafe`): new page [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md), the loader, instance, device choice, device and graphics queue of the new `adapter_render_vk` crate, its tear-down order and how it is tested without a GPU.
 > - **v1.31** - Vulkan availability spike (card 6-5, Class 1 documentation; spike, no engine code): new page [spikes/vulkan-availability-spike](spikes/vulkan-availability-spike.md), what the hosted runner images offer: lavapipe on Linux after an `apt install` (Ubuntu 24.04, 26.04 = `ubuntu-latest`, 22.04), no Vulkan device on Windows; recommendation for O6; the two open items of [architecture/vulkan-and-mesh-v0](architecture/vulkan-and-mesh-v0.md) are measured.
 > - **v1.30** - SPIR-V output of the shader tool (card 6-4, Class 2: the engine's own asset format and a build tool, not a port revision and not a governance file; ordinary card into `develop`): `dshd` backend byte `1` (SPIR-V) with the reader's hostile-input checks (magic, whole words, minimum size), `IShaderCompiler::compile_spirv`, `shaderc --backend spirv`, the golden `sprite.spv.dshd`; see [render-port-v0](architecture/render-port-v0.md) section 15. Engine-side preparation before the swap-diff range of phase 6.
 > - **v1.29** - Mesh frontend (card 6-3, Class 2: public API in `base` and `render`; ordinary card into `develop`): `Mat4::perspective_rh` and `Mat4::look_at_rh`, `PerspectiveCamera`, `MeshVertex` with its 32-byte layout, the unit cube, `record_mesh`, a golden stream of the mesh scene, tests on the Null device and an image test with depth on OpenGL; see [render-port-v0](architecture/render-port-v0.md) section 14. Engine-side preparation before the swap-diff range of phase 6.
@@ -188,6 +189,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 39 | [spikes/phase4-milestone-review](spikes/phase4-milestone-review.md) | Phase 4 milestone review (card 4-25): exit criteria, cards and releases, metrics (per-card vs whole-phase), hosted CI evidence, open findings, process lessons and the recommendation for the owner |
 | 40 | [spikes/phase5-milestone-review](spikes/phase5-milestone-review.md) | Phase 5 milestone review (card 5-9): exit criteria, cards and pull requests, metrics (per-card vs whole-phase), open findings, process lessons and the recommendation for the owner |
 | 41 | [spikes/vulkan-availability-spike](spikes/vulkan-availability-spike.md) | Vulkan availability spike (card 6-5): what hosted Linux and Windows runners offer (lavapipe versions, no Windows device), recommendation for O6 |
+| 42 | [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md) | Vulkan adapter (card 6-6 onwards): loader, instance, device, queue; ownership and tear-down; tests |
 
 ## Confidence legend used in this wiki
 
