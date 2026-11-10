@@ -1,7 +1,7 @@
 //! The 2D camera: an orthographic view-projection matrix (design: `wiki/architecture/render-port-v0.md`
 //! section 5). Right-handed, Y up, depth 0 to 1, column-major, like every matrix in the engine.
 
-use base::math::{Mat4, Vec2};
+use base::math::{Mat4, Vec2, Vec3};
 
 /// Depth range in front of the camera; sprites sit at z = 0, inside it.
 const NEAR: f32 = -1.0;
@@ -65,6 +65,43 @@ impl OrthographicCamera {
             return None;
         }
         Mat4::orthographic_rh(min, max, NEAR, FAR)
+    }
+}
+
+/// A camera that looks from `position` at `target` through a perspective lens.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PerspectiveCamera {
+    /// Where the camera is.
+    pub position: Vec3,
+    /// The world point it looks at.
+    pub target: Vec3,
+    /// Roughly which way is up; must not be parallel to the view direction.
+    pub up: Vec3,
+    /// Vertical field of view, radians, in (0, pi).
+    pub fov_y: f32,
+    /// Width over height of the viewport.
+    pub aspect: f32,
+    /// Distance of the near plane, positive.
+    pub near: f32,
+    /// Distance of the far plane, beyond `near`.
+    pub far: f32,
+}
+
+impl PerspectiveCamera {
+    /// The matrix from world to clip space (depth 0 to 1); `None` when the camera cannot look:
+    /// see [`Mat4::perspective_rh`] and [`Mat4::look_at_rh`].
+    #[must_use]
+    pub fn view_projection(&self) -> Option<Mat4> {
+        let projection = Mat4::perspective_rh(self.fov_y, self.aspect, self.near, self.far)?;
+        let view = Mat4::look_at_rh(self.position, self.target, self.up)?;
+        Some(projection * view)
+    }
+
+    /// The model-view-projection matrix of an object placed by `model`; `None` as
+    /// [`Self::view_projection`].
+    #[must_use]
+    pub fn mvp(&self, model: &Mat4) -> Option<Mat4> {
+        Some(self.view_projection()? * *model)
     }
 }
 
