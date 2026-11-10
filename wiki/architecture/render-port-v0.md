@@ -309,3 +309,26 @@ flowchart LR
 - **`record_mesh`**: pipeline, uniform (slot 0), index buffer, vertex buffer, texture (slot 0), one `draw_indexed`; nothing for an empty mesh. The pipeline must carry `depth_format: Some(Depth32F)` and the pass a depth texture (port revision 1, section 13).
 - **Tests.** Camera and matrix maths on the CPU; cube geometry (outward counter-clockwise winding, one normal per face, a full texture per face); a golden stream (`engine/render/golden/mesh_scene.txt`); the Null device accepts a depth-tested frame and refuses the depth pipeline in a pass without depth; recording a frame makes no allocator call; and on a real OpenGL 4.5 device two cubes drawn near-first then far render with the near one in front, with a control frame (depth test off) in which the far cube wins the overlap. The GL test uses inline GLSL, so it needs no shader tool. It sees only the front face of each cube, so the winding of the other faces is verified on the CPU only (the port has no cull state to test it against).
 - **Not in this card.** The render graph still emits `depth: None` (a pass with a depth attachment is recorded by hand, as the image test does; the mesh sample, card 6-11, decides whether the graph should learn it), lighting, a mesh file format, more than one vertex slot, instancing.
+
+## 15. The SPIR-V output of the shader tool (card 6-4)
+
+The shader file `dshd` gains a second backend and the shader tool a second output, so the Vulkan adapter (cards 6-6 to 6-9) can take its shaders from a file, as the OpenGL adapter does. No port call changes: the blob stays opaque to the port ([vulkan-and-mesh-v0](vulkan-and-mesh-v0.md) section 4).
+
+```mermaid
+flowchart LR
+  src["GLSL 450 source (.vert, .frag)"] -->|"glslang -V"| spv["SPIR-V (the same for both outputs)"]
+  spv -->|"SPIRV-Cross --version 450"| glsl["GLSL 450 text"]
+  spv -->|"SPIRV-Cross --reflect"| refl["reflection record"]
+  glsl --> d0["dshd, backend 0 (OpenGL)"]
+  spv --> d1["dshd, backend 1 (Vulkan)"]
+  refl --> d0
+  refl --> d1
+  d1 --> rd["Program::parse: magic, whole words, minimum size, checked before a driver sees the blob"]
+```
+
+- **File format.** Byte 6 of the header, the backend, may now be `1` (SPIR-V) besides `0` (GLSL 450 text). Everything else is unchanged, so every existing file is read and written byte for byte as before. One file has one backend: the GL and the Vulkan program are two files from the same source. The code of a SPIR-V module is a binary of whole 32-bit words, at least the 5-word header, starting with the magic `0x07230203` in little-endian byte order. A binary with the other byte order, a length that is not a multiple of 4, fewer than 20 bytes, or a different first word is refused with `DshdError::BadSpirv`, by the reader and by the encoder. The size limit stays 1 MiB. The reader never allocates and gives a hostile file an error, not a panic.
+- **Reading.** `Program::backend()` says which kind a file is; `Module::spirv()` gives the binary of a SPIR-V module (`None` for GLSL); `Module::code()` still gives the GLSL text and is empty for a SPIR-V module. A program is opened as the backend it declares, never guessed from the bytes.
+- **Writing.** `SpirvModuleSpec`, `spirv_encoded_len` and `encode_spirv_into` next to the GLSL ones; the checks (stage, bindings, inputs, size) are shared.
+- **Tool.** `IShaderCompiler::compile_spirv` returns the SPIR-V glslang made, with the reflection of the same source (the same SPIR-V feeds both outputs, so the two reflections are equal; a contract rule checks it). `shaderc --backend spirv` writes a SPIR-V file; `--backend glsl` (the default) is the old behaviour. glslang runs with the same arguments as before, so the SPIR-V is the Vulkan 1.0 flavour that every Vulkan 1.3 driver accepts (O3).
+- **Checked-in asset.** `engine/tools_shaderc/golden/sprite.spv.dshd`, compared with the tool output by a test (skipped, and said so, when the tools are not set up; `DUCK_REQUIRE_SHADER_TOOLS=1` makes the missing tools a failure).
+- **Not in this card.** No `VkShaderModule` (card 6-9), no validation with `spirv-val` (the driver and the validation layers do that in 6-9), no second compiler. Whether "SPIR-V direct next to SPIR-V converted to GLSL" satisfies the rule of two for the compiler path stays the owner's decision recorded as O4 (accepted for phase 6 as option a).

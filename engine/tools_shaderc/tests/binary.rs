@@ -3,7 +3,7 @@
 //! Tests that need the real tools print `not run: tool not set up` and pass without them;
 //! `DUCK_REQUIRE_SHADER_TOOLS=1` makes them fail instead.
 
-use assets::dshd::{Program, Stage, UniformBlock, VertexInput};
+use assets::dshd::{Backend, Program, Stage, UniformBlock, VertexInput};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tools_shaderc::tools::{ENV_REQUIRE, ENV_ROOT, ToolPaths, is_required};
@@ -166,4 +166,77 @@ fn a_broken_shader_fails_with_diagnostics_and_writes_nothing() {
     assert!(output.is_ok_and(|o| !o.status.success()
         && String::from_utf8_lossy(&o.stderr).contains("glslang rejected the source")));
     assert!(!out.exists());
+}
+
+/// The sprite shaders compiled to SPIR-V by `shaderc` (card 6-4).
+fn make_spirv_sprite(root: &Path, name: &str) -> Vec<u8> {
+    let out = scratch(name).join("sprite.spv.dshd");
+    let status = Command::new(SHADERC)
+        .arg("--tools")
+        .arg(root)
+        .arg("--backend")
+        .arg("spirv")
+        .arg(crate_file("shaders/sprite.vert"))
+        .arg(crate_file("shaders/sprite.frag"))
+        .arg("-o")
+        .arg(&out)
+        .status();
+    assert!(status.is_ok_and(|s| s.success()));
+    std::fs::read(&out).unwrap_or_default()
+}
+
+#[test]
+fn the_golden_spirv_asset_reads_and_has_the_reflection_of_the_glsl_asset() {
+    let spirv = std::fs::read(crate_file("golden/sprite.spv.dshd")).unwrap_or_default();
+    let glsl = std::fs::read(crate_file("golden/sprite.dshd")).unwrap_or_default();
+    let (spirv, glsl) = (Program::parse(&spirv), Program::parse(&glsl));
+    assert!(spirv.is_ok() && glsl.is_ok(), "{spirv:?} {glsl:?}");
+    let (spirv, glsl) = (
+        spirv.unwrap_or_else(|_| unreachable!()),
+        glsl.unwrap_or_else(|_| unreachable!()),
+    );
+    assert_eq!(spirv.backend(), Backend::SpirV);
+    assert_eq!(spirv.module_count(), 2);
+    for stage in [Stage::Vertex, Stage::Fragment] {
+        let (s, g) = (spirv.module_for(stage), glsl.module_for(stage));
+        assert!(s.is_some() && g.is_some());
+        let (s, g) = (
+            s.unwrap_or_else(|| unreachable!()),
+            g.unwrap_or_else(|| unreachable!()),
+        );
+        assert_eq!(s.uniform(), g.uniform(), "{stage:?}");
+        assert_eq!(s.texture_binding(), g.texture_binding(), "{stage:?}");
+        assert_eq!(
+            s.inputs().collect::<Vec<_>>(),
+            g.inputs().collect::<Vec<_>>(),
+            "{stage:?}"
+        );
+        assert!(s.spirv().is_some_and(|b| b.len() > 20));
+    }
+}
+
+#[test]
+fn the_golden_spirv_asset_is_what_the_tool_makes_today() {
+    let Some(root) = tools_root() else {
+        println!(
+            "not run: tool not set up. golden/sprite.spv.dshd was NOT compared with the tool output"
+        );
+        return;
+    };
+    let made = make_spirv_sprite(&root, "golden-spirv");
+    let golden = std::fs::read(crate_file("golden/sprite.spv.dshd")).unwrap_or_default();
+    assert!(!made.is_empty());
+    assert!(
+        made == golden,
+        "regenerate golden/sprite.spv.dshd and review the diff"
+    );
+}
+
+#[test]
+fn an_unknown_backend_prints_usage_and_fails() {
+    let output = Command::new(SHADERC)
+        .args(["--backend", "dxil", "a.vert", "-o", "o.dshd"])
+        .output();
+    assert!(output.is_ok_and(|o| !o.status.success()
+        && String::from_utf8_lossy(&o.stderr).contains("--backend glsl|spirv")));
 }

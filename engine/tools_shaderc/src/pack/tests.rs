@@ -1,5 +1,5 @@
 use super::*;
-use crate::compiler::Reflection;
+use crate::compiler::{CompiledSpirv, Reflection};
 use assets::dshd::{Program, Stage, UniformBlock, VertexInput};
 
 fn vertex() -> CompiledModule {
@@ -30,6 +30,50 @@ fn fragment() -> CompiledModule {
             inputs: Vec::new(),
         },
     }
+}
+
+fn spirv(stage: Stage, reflection: Reflection) -> CompiledSpirv {
+    let code = [0x0723_0203u32, 0x0001_0000, 0, 1, 0]
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect();
+    CompiledSpirv {
+        stage,
+        code,
+        reflection,
+    }
+}
+
+#[test]
+fn packed_spirv_reads_back_with_the_blobs_and_the_reflection() {
+    let (v, f) = (vertex(), fragment());
+    let modules = [
+        spirv(Stage::Vertex, v.reflection.clone()),
+        spirv(Stage::Fragment, f.reflection.clone()),
+    ];
+    let bytes = pack_spirv(&modules).unwrap_or_default();
+    let program = Program::parse(&bytes);
+    assert!(program.is_ok(), "{program:?}");
+    let program = program.unwrap_or_else(|_| unreachable!());
+    assert_eq!(program.backend(), assets::dshd::Backend::SpirV);
+    assert!(program.module_for(Stage::Vertex).is_some_and(|m| {
+        m.spirv() == Some(modules[0].code.as_slice())
+            && m.uniform() == v.reflection.uniform
+            && m.input_count() == 1
+    }));
+    assert!(
+        program
+            .module_for(Stage::Fragment)
+            .is_some_and(|m| m.texture_binding() == Some(0))
+    );
+}
+
+#[test]
+fn spirv_that_is_not_a_binary_is_not_packed() {
+    let mut bad = spirv(Stage::Vertex, Reflection::default());
+    bad.code[0] ^= 1;
+    assert_eq!(pack_spirv(&[bad]), Err(DshdError::BadSpirv));
+    assert_eq!(pack_spirv(&[]), Err(DshdError::BadModuleCount));
 }
 
 #[test]

@@ -324,6 +324,7 @@ fn every_error_has_its_own_message() {
         DshdError::EmptyCode,
         DshdError::CodeTooLong,
         DshdError::BadCode,
+        DshdError::BadSpirv,
         DshdError::ReservedNonZero,
         DshdError::TrailingData,
     ];
@@ -441,4 +442,245 @@ fn reader_limits_the_code_length() {
     let mut empty = encode(&[fragment()]);
     empty[at..at + 4].copy_from_slice(&0u32.to_le_bytes());
     assert_eq!(Program::parse(&empty), Err(DshdError::EmptyCode));
+}
+
+// ---- Card 6-4: the SPIR-V backend (backend byte 1) ----
+
+/// A tiny but well-formed SPIR-V header (magic, version 1.0, generator, bound, schema) and one
+/// word that is not UTF-8, so the blob is not valid text.
+fn spirv_blob() -> Vec<u8> {
+    [0x0723_0203u32, 0x0001_0000, 0, 1, 0, 0xFFFF_FFFF]
+        .iter()
+        .flat_map(|w| w.to_le_bytes())
+        .collect()
+}
+
+fn spirv_vertex(code: &[u8]) -> SpirvModuleSpec<'_> {
+    SpirvModuleSpec {
+        stage: Stage::Vertex,
+        uniform: Some(UniformBlock {
+            binding: 0,
+            size: 64,
+        }),
+        texture_binding: None,
+        inputs: &INPUTS,
+        code,
+    }
+}
+
+fn spirv_fragment(code: &[u8]) -> SpirvModuleSpec<'_> {
+    SpirvModuleSpec {
+        stage: Stage::Fragment,
+        uniform: None,
+        texture_binding: Some(0),
+        inputs: &[],
+        code,
+    }
+}
+
+fn encode_spirv(modules: &[SpirvModuleSpec<'_>]) -> Vec<u8> {
+    let mut out = vec![0u8; must(spirv_encoded_len(modules))];
+    let written = must(encode_spirv_into(&mut out, modules));
+    assert_eq!(written, out.len());
+    out
+}
+
+#[test]
+fn a_spirv_pair_round_trips_with_its_blobs_byte_for_byte() {
+    let blob = spirv_blob();
+    let bytes = encode_spirv(&[spirv_vertex(&blob), spirv_fragment(&blob)]);
+    assert_eq!(bytes[6], 1, "backend byte");
+    let program = must(Program::parse(&bytes));
+    assert_eq!(program.backend(), Backend::SpirV);
+    assert_eq!(program.module_count(), 2);
+    let v = program.module_for(Stage::Vertex);
+    assert!(v.is_some_and(|m| m.spirv() == Some(blob.as_slice())
+        && m.uniform().is_some_and(|u| u.size == 64)
+        && m.input_count() == 3));
+    let f = program.module_for(Stage::Fragment);
+    assert!(
+        f.is_some_and(|m| m.spirv() == Some(blob.as_slice()) && m.texture_binding() == Some(0))
+    );
+}
+
+#[test]
+fn a_glsl_program_reports_its_backend_and_has_no_spirv() {
+    let bytes = encode(&[vertex(), fragment()]);
+    let program = must(Program::parse(&bytes));
+    assert_eq!(program.backend(), Backend::Glsl450);
+    assert!(
+        program
+            .module(0)
+            .is_some_and(|m| m.spirv().is_none() && m.code() == VERTEX_CODE)
+    );
+}
+
+#[test]
+fn a_spirv_module_has_no_glsl_text() {
+    let blob = spirv_blob();
+    let bytes = encode_spirv(&[spirv_vertex(&blob)]);
+    let program = must(Program::parse(&bytes));
+    assert!(program.module(0).is_some_and(|m| m.code().is_empty()));
+}
+
+#[test]
+fn the_spirv_encoder_refuses_a_blob_the_reader_would_refuse() {
+    let good = spirv_blob();
+    let mut wrong_magic = good.clone();
+    wrong_magic[0] ^= 1;
+    let swapped: Vec<u8> = good
+        .chunks_exact(4)
+        .flat_map(|w| [w[3], w[2], w[1], w[0]])
+        .collect();
+    let cases: [(&[u8], DshdError); 6] = [
+        (&[], DshdError::EmptyCode),
+        (&good[..4], DshdError::BadSpirv),
+        (&good[..16], DshdError::BadSpirv),
+        (&good[..23], DshdError::BadSpirv),
+        (&wrong_magic, DshdError::BadSpirv),
+        (&swapped, DshdError::BadSpirv),
+    ];
+    for (blob, want) in cases {
+        assert_eq!(
+            spirv_encoded_len(&[spirv_vertex(blob)]),
+            Err(want),
+            "len {}",
+            blob.len()
+        );
+    }
+}
+
+#[test]
+fn the_spirv_encoder_keeps_the_other_rules() {
+    let blob = spirv_blob();
+    let mut two_vertex = [spirv_vertex(&blob), spirv_vertex(&blob)];
+    assert_eq!(
+        spirv_encoded_len(&two_vertex),
+        Err(DshdError::DuplicateStage)
+    );
+    two_vertex[1].stage = Stage::Fragment;
+    assert_eq!(
+        spirv_encoded_len(&two_vertex),
+        Err(DshdError::BadInputs),
+        "a fragment module with inputs"
+    );
+    assert_eq!(spirv_encoded_len(&[]), Err(DshdError::BadModuleCount));
+    let mut tiny = vec![0u8; 8];
+    assert_eq!(
+        encode_spirv_into(&mut tiny, &[spirv_vertex(&blob)]),
+        Err(DshdError::Truncated)
+    );
+}
+
+#[test]
+fn the_spirv_limit_is_the_code_limit_in_whole_words() {
+    let mut max = spirv_blob();
+    max.resize(MAX_CODE_LEN, 0);
+    assert!(spirv_encoded_len(&[spirv_vertex(&max)]).is_ok());
+    max.resize(MAX_CODE_LEN + 4, 0);
+    assert_eq!(
+        spirv_encoded_len(&[spirv_vertex(&max)]),
+        Err(DshdError::CodeTooLong)
+    );
+}
+
+#[test]
+fn the_reader_refuses_a_spirv_blob_with_a_bad_magic() {
+    let blob = spirv_blob();
+    let mut bytes = encode_spirv(&[spirv_vertex(&blob)]);
+    let code_at = HEADER_LEN + RECORD_LEN + INPUTS.len() * 2;
+    bytes[code_at] ^= 1;
+    assert_eq!(Program::parse(&bytes), Err(DshdError::BadSpirv));
+}
+
+#[test]
+fn the_reader_refuses_a_spirv_blob_that_is_not_whole_words() {
+    let blob = spirv_blob();
+    let mut bytes = encode_spirv(&[spirv_vertex(&blob)]);
+    let len_at = HEADER_LEN + 8;
+    let shorter = u32::try_from(blob.len() - 1).unwrap_or(0);
+    bytes[len_at..len_at + 4].copy_from_slice(&shorter.to_le_bytes());
+    bytes.pop();
+    assert_eq!(Program::parse(&bytes), Err(DshdError::BadSpirv));
+}
+
+#[test]
+fn the_reader_refuses_a_spirv_blob_shorter_than_its_header() {
+    let blob = spirv_blob();
+    let mut bytes = encode_spirv(&[spirv_vertex(&blob)]);
+    let len_at = HEADER_LEN + 8;
+    bytes[len_at..len_at + 4].copy_from_slice(&16u32.to_le_bytes());
+    bytes.truncate(bytes.len() - (blob.len() - 16));
+    assert_eq!(Program::parse(&bytes), Err(DshdError::BadSpirv));
+}
+
+#[test]
+fn the_words_of_a_spirv_module_are_read_from_the_bytes() {
+    let blob = spirv_blob();
+    let bytes = encode_spirv(&[spirv_vertex(&blob)]);
+    let program = must(Program::parse(&bytes));
+    let words: Option<Vec<u32>> = program
+        .module(0)
+        .and_then(Module::spirv_words)
+        .map(Iterator::collect);
+    assert_eq!(
+        words,
+        Some(vec![0x0723_0203, 0x0001_0000, 0, 1, 0, 0xFFFF_FFFF])
+    );
+    let glsl = encode(&[vertex()]);
+    let glsl = must(Program::parse(&glsl));
+    assert!(glsl.module(0).is_some_and(|m| m.spirv_words().is_none()));
+}
+
+#[test]
+fn a_bad_blob_in_the_second_module_is_refused_by_the_reader() {
+    let blob = spirv_blob();
+    let mut bytes = encode_spirv(&[spirv_vertex(&blob), spirv_fragment(&blob)]);
+    let second_code = bytes.len() - blob.len();
+    bytes[second_code + 3] ^= 0xFF;
+    assert_eq!(Program::parse(&bytes), Err(DshdError::BadSpirv));
+}
+
+#[test]
+fn trailing_bytes_after_a_spirv_file_are_refused() {
+    let blob = spirv_blob();
+    let mut bytes = encode_spirv(&[spirv_vertex(&blob)]);
+    bytes.push(0);
+    assert_eq!(Program::parse(&bytes), Err(DshdError::TrailingData));
+}
+
+#[test]
+fn a_byte_swapped_magic_is_refused_by_the_reader() {
+    let blob = spirv_blob();
+    let mut bytes = encode_spirv(&[spirv_vertex(&blob)]);
+    let code_at = HEADER_LEN + RECORD_LEN + INPUTS.len() * 2;
+    bytes[code_at..code_at + 4].reverse();
+    assert_eq!(Program::parse(&bytes), Err(DshdError::BadSpirv));
+}
+
+#[test]
+fn every_prefix_of_a_spirv_file_is_refused() {
+    let blob = spirv_blob();
+    let bytes = encode_spirv(&[spirv_vertex(&blob), spirv_fragment(&blob)]);
+    for cut in 0..bytes.len() {
+        assert!(Program::parse(&bytes[..cut]).is_err(), "prefix {cut}");
+    }
+}
+
+#[test]
+fn a_backend_byte_that_is_neither_glsl_nor_spirv_is_refused() {
+    assert_eq!(
+        Program::parse(&patched(6, 2)),
+        Err(DshdError::UnsupportedBackend(2))
+    );
+}
+
+#[test]
+fn flipping_a_glsl_file_to_the_spirv_backend_is_refused() {
+    assert_eq!(Program::parse(&patched(6, 1)), Err(DshdError::BadSpirv));
+}
+
+#[test]
+fn the_glsl_encoder_still_writes_backend_zero() {
+    assert_eq!(encode(&[vertex(), fragment()])[6], 0);
 }

@@ -1,21 +1,25 @@
-//! The command line: `shaderc [--tools DIR] <input.vert|input.frag>... -o <output.dshd>`.
+//! The command line:
+//! `shaderc [--tools DIR] [--backend glsl|spirv] <input.vert|input.frag>... -o <output.dshd>`.
 //!
-//! The stage of each input comes from its extension. Tool locations come from `--tools`, else the
+//! The backend is the kind of code the file carries: GLSL 450 text (the default, for the OpenGL
+//! adapter) or SPIR-V (for the Vulkan adapter); a repeated `--backend` keeps the last one. The stage
+//! of each input comes from its extension. Tool locations come from `--tools`, else the
 //! environment (`DUCK_SHADER_TOOLS`, `DUCK_GLSLANG`, `DUCK_SPIRV_CROSS`), else the default folder.
 //! The output file appears whole or not at all: it is written beside the target and renamed.
 
-use crate::compiler::{CompileError, CompiledModule, IShaderCompiler, Source};
+use crate::compiler::{CompileError, IShaderCompiler, Source};
 use crate::external::ExternalCompiler;
-use crate::pack::pack;
+use crate::pack::{pack, pack_spirv};
 use crate::tools::ToolPaths;
-use assets::dshd::{DshdError, Stage};
+use assets::dshd::{Backend, DshdError, Stage};
 use core::fmt;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Usage text printed on a wrong command line.
-pub const USAGE: &str = "usage: shaderc [--tools DIR] <input.vert|input.frag>... -o <output.dshd>";
+pub const USAGE: &str = "usage: shaderc [--tools DIR] [--backend glsl|spirv] \
+<input.vert|input.frag>... -o <output.dshd>";
 
 /// Why a run failed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,6 +65,8 @@ pub struct Args {
     pub inputs: Vec<(Stage, String)>,
     /// Destination path.
     pub output: String,
+    /// The kind of code to write; GLSL unless `--backend` says otherwise.
+    pub backend: Backend,
 }
 
 /// The stage a file name asks for, from its extension.
@@ -76,20 +82,36 @@ pub fn stage_of(name: &str) -> Option<Stage> {
     }
 }
 
+fn backend_of(name: &str) -> Option<Backend> {
+    match name {
+        "glsl" => Some(Backend::Glsl450),
+        "spirv" => Some(Backend::SpirV),
+        _ => None,
+    }
+}
+
 /// Parses the arguments after the program name.
 ///
 /// # Errors
-/// [`CliError::Usage`] for an unknown flag, a missing value, an input with an unknown extension,
-/// no input or no output.
+/// [`CliError::Usage`] for an unknown flag, a missing value, an unknown backend, an input with an
+/// unknown extension, no input or no output.
 pub fn parse_args(args: &[String]) -> Result<Args, CliError> {
     let mut tools = None;
     let mut output = None;
+    let mut backend = Backend::Glsl450;
     let mut inputs = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         match arg.as_str() {
             "--tools" => tools = Some(PathBuf::from(rest.next().ok_or(CliError::Usage)?)),
             "-o" => output = Some(rest.next().ok_or(CliError::Usage)?.clone()),
+            "--backend" => {
+                backend = rest
+                    .next()
+                    .map(String::as_str)
+                    .and_then(backend_of)
+                    .ok_or(CliError::Usage)?;
+            }
             flag if flag.starts_with('-') => return Err(CliError::Usage),
             name => {
                 let stage =
@@ -103,6 +125,7 @@ pub fn parse_args(args: &[String]) -> Result<Args, CliError> {
             tools,
             inputs,
             output,
+            backend,
         }),
         _ => Err(CliError::Usage),
     }
@@ -124,22 +147,23 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-fn compile_all(
-    compiler: &dyn IShaderCompiler,
+fn read_source(name: &str) -> Result<String, CliError> {
+    fs::read_to_string(name).map_err(|e| CliError::Read(name.to_string(), e.to_string()))
+}
+
+/// Compiles every input with `compile` (one call per file, in order).
+fn compile_all<T>(
     inputs: &[(Stage, String)],
-) -> Result<Vec<CompiledModule>, CliError> {
+    compile: impl Fn(Source<'_>) -> Result<T, CompileError>,
+) -> Result<Vec<T>, CliError> {
     let mut modules = Vec::with_capacity(inputs.len());
     for (stage, name) in inputs {
-        let text =
-            fs::read_to_string(name).map_err(|e| CliError::Read(name.clone(), e.to_string()))?;
+        let text = read_source(name)?;
         let source = Source {
             stage: *stage,
             text: &text,
         };
-        let module = compiler
-            .compile(source)
-            .map_err(|e| CliError::Compile(name.clone(), e))?;
-        modules.push(module);
+        modules.push(compile(source).map_err(|e| CliError::Compile(name.clone(), e))?);
     }
     Ok(modules)
 }
@@ -149,8 +173,13 @@ fn compile_all(
 /// # Errors
 /// See [`CliError`].
 pub fn build(compiler: &dyn IShaderCompiler, args: &Args) -> Result<(), CliError> {
-    let modules = compile_all(compiler, &args.inputs)?;
-    let bytes = pack(&modules).map_err(CliError::Pack)?;
+    let bytes = match args.backend {
+        Backend::Glsl450 => {
+            pack(&compile_all(&args.inputs, |s| compiler.compile(s))?).map_err(CliError::Pack)?
+        }
+        Backend::SpirV => pack_spirv(&compile_all(&args.inputs, |s| compiler.compile_spirv(s))?)
+            .map_err(CliError::Pack)?,
+    };
     write_atomic(Path::new(&args.output), &bytes)
         .map_err(|why| CliError::Write(args.output.clone(), why))
 }

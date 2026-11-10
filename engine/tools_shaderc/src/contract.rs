@@ -87,10 +87,55 @@ pub fn real(compiler: &dyn IShaderCompiler) {
     assert!(reflection.inputs.is_empty());
 }
 
+/// Rules for the SPIR-V output of every implementation: the same checks on empty text, the same
+/// answer twice, and a binary that is whole words starting with the SPIR-V magic.
+///
+/// # Panics
+/// When a rule is broken; that is the test failing.
+pub fn shared_spirv(compiler: &dyn IShaderCompiler) {
+    assert_eq!(
+        compiler.compile_spirv(vertex("")).err(),
+        Some(CompileError::EmptySource)
+    );
+    assert_eq!(
+        compiler.compile_spirv(vertex("  \n\t ")).err(),
+        Some(CompileError::EmptySource)
+    );
+    let first = compiler.compile_spirv(vertex(SPRITE_VERT));
+    let second = compiler.compile_spirv(vertex(SPRITE_VERT));
+    assert!(first.is_ok(), "a valid vertex shader compiles");
+    assert_eq!(first, second, "compiling twice gives the same result");
+    let module = first.ok();
+    assert!(module.is_some_and(|m| m.stage == Stage::Vertex
+        && m.code.len().is_multiple_of(4)
+        && m.code.starts_with(&0x0723_0203u32.to_le_bytes())));
+}
+
+/// Rules only a real compiler can meet for the SPIR-V output: broken source is rejected, and the
+/// reflection is the one the GLSL output carries (both come from the same SPIR-V).
+///
+/// # Panics
+/// When a rule is broken; that is the test failing.
+pub fn real_spirv(compiler: &dyn IShaderCompiler) {
+    shared_spirv(compiler);
+    let broken = compiler.compile_spirv(Source {
+        stage: Stage::Fragment,
+        text: BROKEN_FRAG,
+    });
+    assert!(matches!(broken, Err(CompileError::Diagnostics { .. })));
+    for (stage, text) in [(Stage::Vertex, SPRITE_VERT), (Stage::Fragment, SPRITE_FRAG)] {
+        let source = Source { stage, text };
+        let glsl = compiler.compile(source).map(|m| m.reflection);
+        let spirv = compiler.compile_spirv(source).map(|m| m.reflection);
+        assert!(glsl.is_ok(), "{glsl:?}");
+        assert_eq!(glsl, spirv, "one reflection for both outputs ({stage:?})");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::{CompiledModule, Reflection};
+    use crate::compiler::{CompiledModule, CompiledSpirv, Reflection};
     use crate::null::NullCompiler;
 
     /// Accepts everything, including empty text.
@@ -104,12 +149,55 @@ mod tests {
                 reflection: Reflection::default(),
             })
         }
+
+        fn compile_spirv(&self, source: Source<'_>) -> Result<CompiledSpirv, CompileError> {
+            Ok(CompiledSpirv {
+                stage: source.stage,
+                code: source.text.as_bytes().to_vec(),
+                reflection: Reflection::default(),
+            })
+        }
     }
 
     #[test]
     #[should_panic(expected = "assertion")]
     fn shared_rejects_a_compiler_that_accepts_empty_text() {
         shared(&Careless);
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
+    fn shared_spirv_rejects_a_compiler_that_accepts_empty_text() {
+        shared_spirv(&Careless);
+    }
+
+    /// Returns a SPIR-V binary that has the right size but not the magic.
+    struct NoMagic;
+
+    impl IShaderCompiler for NoMagic {
+        fn compile(&self, source: Source<'_>) -> Result<CompiledModule, CompileError> {
+            NullCompiler.compile(source)
+        }
+
+        fn compile_spirv(&self, source: Source<'_>) -> Result<CompiledSpirv, CompileError> {
+            let good = NullCompiler.compile_spirv(source)?;
+            Ok(CompiledSpirv {
+                code: vec![0; good.code.len()],
+                ..good
+            })
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
+    fn shared_spirv_rejects_a_binary_without_the_magic() {
+        shared_spirv(&NoMagic);
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion")]
+    fn real_spirv_rejects_a_compiler_that_accepts_broken_source() {
+        real_spirv(&NullCompiler);
     }
 
     #[test]
