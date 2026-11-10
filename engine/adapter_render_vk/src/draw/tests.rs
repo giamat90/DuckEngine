@@ -251,3 +251,19 @@ fn the_state_and_draw_commands_reach_the_driver_as_given() {
         ]
     );
 }
+
+/// The same factors as the OpenGL adapter's `glBlendFuncSeparate`: the colour blends by the source
+/// alpha, the alpha channel keeps the source (a blended pixel of an opaque target stays opaque).
+#[test]
+fn alpha_blending_has_the_factors_of_the_opengl_adapter() {
+    let alpha = blend_attachment(true);
+    assert_eq!(alpha.blend_enable, 1);
+    assert_eq!(alpha.src_color_blend_factor, vd::BLEND_SRC_ALPHA);
+    assert_eq!(alpha.dst_color_blend_factor, vd::BLEND_ONE_MINUS_SRC_ALPHA);
+    assert_eq!(alpha.src_alpha_blend_factor, vd::BLEND_ONE);
+    assert_eq!(alpha.dst_alpha_blend_factor, vd::BLEND_ONE_MINUS_SRC_ALPHA);
+    let opaque = blend_attachment(false);
+    assert_eq!(opaque.blend_enable, 0);
+    assert_eq!(opaque.src_color_blend_factor, vd::BLEND_ONE);
+    assert_eq!(opaque.dst_alpha_blend_factor, vd::BLEND_ZERO);
+}

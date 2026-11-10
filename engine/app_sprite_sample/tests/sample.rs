@@ -2,7 +2,7 @@
 //! sprites are valid command streams (the Null device checks handles, pipeline, bindings and index
 //! ranges), and an asset that does not match the sprite vertex layout is refused. No GPU needed.
 
-use app_sprite_sample::{GOLDEN_SHADER, Sample, SampleError, Scene};
+use app_sprite_sample::{GOLDEN_SHADER, GOLDEN_SPIRV, Sample, SampleError, Scene};
 use assets::dshd::{ModuleSpec, Program, Stage, UniformBlock, VertexInput};
 use render::desc::SurfaceDesc;
 use render::device::IRenderDevice;
@@ -36,6 +36,17 @@ fn draws(device: &mut NullDevice, sample: &mut Sample, frame: u32, scene: Scene)
     let stats = sample.draw(device, frame, scene);
     assert_eq!(stats.as_ref().err(), None);
     stats.map_or(0, |s| s.draws)
+}
+
+#[test]
+fn the_spirv_asset_draws_the_same_streams_as_the_glsl_one() {
+    let (mut device, surface) = device_and_surface();
+    let program = Program::parse(GOLDEN_SPIRV).unwrap_or_else(|_| unreachable!());
+    let built = Sample::new(&mut device, &program, surface, SIZE);
+    assert_eq!(built.as_ref().err(), None);
+    let mut sample = built.unwrap_or_else(|_| unreachable!());
+    assert_eq!(draws(&mut device, &mut sample, 0, Scene::Triangle), 1);
+    assert_eq!(draws(&mut device, &mut sample, 1, Scene::Sprites), 2);
 }
 
 #[test]

@@ -661,19 +661,25 @@ fn depth_state(spec: &PipelineSpec<'_>) -> PipelineDepthStencil {
     }
 }
 
-/// Opaque replaces the target; alpha blends by the source alpha (the colour rule of the port).
+/// Opaque replaces the target; alpha blends the colour by the source alpha and keeps the alpha
+/// channel like `glBlendFuncSeparate(SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ONE, ONE_MINUS_SRC_ALPHA)` of
+/// the OpenGL adapter (a blended pixel of an opaque target stays opaque).
 fn blend_attachment(alpha: bool) -> ColorBlendAttachment {
-    let (src, dst) = if alpha {
-        (vd::BLEND_SRC_ALPHA, vd::BLEND_ONE_MINUS_SRC_ALPHA)
+    let (src_color, dst, src_alpha) = if alpha {
+        (
+            vd::BLEND_SRC_ALPHA,
+            vd::BLEND_ONE_MINUS_SRC_ALPHA,
+            vd::BLEND_ONE,
+        )
     } else {
-        (vd::BLEND_ONE, vd::BLEND_ZERO)
+        (vd::BLEND_ONE, vd::BLEND_ZERO, vd::BLEND_ONE)
     };
     ColorBlendAttachment {
         blend_enable: u32::from(alpha),
-        src_color_blend_factor: src,
+        src_color_blend_factor: src_color,
         dst_color_blend_factor: dst,
         color_blend_op: vd::BLEND_OP_ADD,
-        src_alpha_blend_factor: src,
+        src_alpha_blend_factor: src_alpha,
         dst_alpha_blend_factor: dst,
         alpha_blend_op: vd::BLEND_OP_ADD,
         color_write_mask: vd::COLOR_WRITE_ALL,

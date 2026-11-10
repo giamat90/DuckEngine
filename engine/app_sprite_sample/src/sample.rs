@@ -30,6 +30,9 @@ use std::fmt;
 /// as data (the sample links no shader compiler).
 pub const GOLDEN_SHADER: &[u8] = include_bytes!("../../tools_shaderc/golden/sprite.dshd");
 
+/// The same shaders compiled to SPIR-V (dshd backend 1), for the Vulkan device (card 6-10).
+pub const GOLDEN_SPIRV: &[u8] = include_bytes!("../../tools_shaderc/golden/sprite.spv.dshd");
+
 /// Sprites one frame can hold.
 const SPRITE_CAPACITY: usize = 64;
 /// Vertices of one sprite.
@@ -137,7 +140,8 @@ fn create_shader(
 ) -> Result<ShaderId, RenderError> {
     device.create_shader(ShaderDesc {
         stage,
-        code: module.code().as_bytes(),
+        // A SPIR-V module carries a binary and no text; a GLSL module the other way round.
+        code: module.spirv().unwrap_or_else(|| module.code().as_bytes()),
         entry: "main",
     })
 }

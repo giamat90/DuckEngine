@@ -21,6 +21,10 @@ use render::ids::{BufferId, PipelineId, SamplerId, TextureId};
 use render::stream::CommandStream;
 use std::sync::{Mutex, PoisonError};
 
+/// The sprite image scene and its reference picture, shared with the OpenGL adapter's image test.
+#[path = "../../render/tests/support/sprite_image.rs"]
+mod scene;
+
 /// GLFW is one library with global state: one test at a time uses it.
 static GLFW_IN_USE: Mutex<()> = Mutex::new(());
 
@@ -464,6 +468,38 @@ fn the_sprite_shaders_draw_into_the_backbuffer_many_frames_in_a_row() {
         must(rig.device.submit(frame, &indexed), "submit indexed");
         must(rig.device.end_frame(frame), "end_frame");
     }
+    rig.device.destroy_surface(surface);
+    rig.assert_quiet();
+}
+
+/// The image test of card 6-10: the scene of the OpenGL image test (six sprites through the sprite
+/// batcher, the camera, the render graph and the SPIR-V sprite shaders) gives the same reference
+/// picture on the Vulkan device, row 0 at the bottom.
+#[test]
+fn a_sprite_scene_renders_the_expected_pixels_on_the_vulkan_device() {
+    let mut rig = match Rig::start() {
+        Ok(rig) => rig,
+        Err(reason) => return not_run(&reason),
+    };
+    let surface = must(rig.device.create_surface(rig.surface), "making the surface");
+    let target = must(
+        rig.device.create_texture(TextureDesc {
+            width: scene::SIDE,
+            height: scene::SIDE,
+            mip_count: 1,
+            format: TextureFormat::Rgba8,
+        }),
+        "making the target",
+    );
+    let codes = scene::stage_codes(SPRITE_SPIRV);
+    let stream = scene::record_scene(&mut rig.device, target, codes);
+    let frame = must(rig.device.begin_frame(surface), "begin_frame");
+    let stats = must(rig.device.submit(frame, &stream), "submit");
+    must(rig.device.end_frame(frame), "end_frame");
+    assert_eq!(stats.draws, scene::DRAWS);
+    let mut pixels = vec![0_u8; usize::try_from(scene::SIDE * scene::SIDE * 4).unwrap_or(0)];
+    must(rig.device.read_back(target, &mut pixels), "read_back");
+    scene::assert_reference(&pixels);
     rig.device.destroy_surface(surface);
     rig.assert_quiet();
 }

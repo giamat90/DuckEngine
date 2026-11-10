@@ -33,6 +33,41 @@ fn an_unknown_argument_exits_two() {
 }
 
 #[test]
+fn an_unknown_backend_exits_two_with_the_usage() {
+    let output = run(&["--backend", "metal"]);
+    assert_eq!(output.status.code(), Some(EXIT_USAGE));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("`--backend metal`"), "{stderr}");
+    assert!(stderr.contains("--backend gl|vulkan"), "{stderr}");
+}
+
+/// Three frames on the Vulkan device where one exists: `DUCK_REQUIRE_VK=1` or `DUCK_REQUIRE_GLFW=1`
+/// makes a missing device a failure. A validation message is a failure of the run (exit 1).
+#[test]
+fn three_frames_are_drawn_on_vulkan_where_a_device_exists() {
+    let output = run(&["--frames", "3", "--backend", "vulkan"]);
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    match output.status.code() {
+        Some(0) => assert_eq!(stdout.trim(), "drew 3 frames", "{stderr}"),
+        Some(EXIT_NO_DEVICE) => {
+            assert!(
+                !required("DUCK_REQUIRE_VK") && !required("DUCK_REQUIRE_GLFW"),
+                "a Vulkan device is required here but is not set up: {stderr}"
+            );
+            assert!(
+                stderr.starts_with("not run: device not set up ("),
+                "{stderr}"
+            );
+            eprintln!("{}", stderr.trim());
+        }
+        other => panic!("exit code {other:?}: {stdout} {stderr}"),
+    }
+}
+
+#[test]
 fn three_frames_are_drawn_where_a_device_exists() {
     let output = run(&["--frames", "3"]);
     let (stdout, stderr) = (
