@@ -11,7 +11,8 @@ use crate::version::ApiVersion;
 use crate::vk::{
     GetInstanceProcAddr, InstanceCreateInfo, InstanceHandle, LayerProperties, SUCCESS, VkResult,
 };
-use core::ffi::{CStr, c_void};
+use crate::vk_present::ExtensionProperties;
+use core::ffi::{CStr, c_char, c_void};
 
 /// The loader's file name: found in the application directory and System32 on Windows, by the
 /// dynamic linker on Linux.
@@ -22,6 +23,8 @@ const LOADER: &str = "libvulkan.so.1";
 
 /// More layers than any system has; a larger count from the loader is cut here.
 const MAX_LAYERS: u32 = 1024;
+/// More extensions than any loader lists; a larger count is cut here.
+const MAX_EXTENSIONS: u32 = 4096;
 
 type EnumerateInstanceVersion = unsafe extern "system" fn(*mut u32) -> VkResult;
 
@@ -30,7 +33,15 @@ function_table! {
     struct GlobalFns {
         create_instance: unsafe extern "system" fn(*const InstanceCreateInfo, *const c_void, *mut InstanceHandle) -> VkResult = c"vkCreateInstance",
         enumerate_layers: unsafe extern "system" fn(*mut u32, *mut LayerProperties) -> VkResult = c"vkEnumerateInstanceLayerProperties",
+        enumerate_extensions: unsafe extern "system" fn(*const c_char, *mut u32, *mut ExtensionProperties) -> VkResult = c"vkEnumerateInstanceExtensionProperties",
     }
+}
+
+/// Whether the NUL-terminated name in a driver's fixed-size field is `wanted`.
+pub fn name_is(raw: &[c_char], wanted: &CStr) -> bool {
+    let text = raw.iter().take_while(|byte| **byte != 0);
+    text.map(|byte| byte.cast_unsigned())
+        .eq(wanted.to_bytes().iter().copied())
 }
 
 /// The error for a function the loader lacks.
@@ -180,10 +191,52 @@ impl Entry {
             return Err(VulkanError::Call { call, result });
         }
         let written = usize::try_from(count).unwrap_or(0).min(room);
-        Ok(layers.iter().take(written).any(|layer| {
-            let text = layer.layer_name.iter().take_while(|byte| **byte != 0);
-            text.map(|byte| byte.cast_unsigned())
-                .eq(name.to_bytes().iter().copied())
+        Ok(layers
+            .iter()
+            .take(written)
+            .any(|layer| name_is(&layer.layer_name, name)))
+    }
+
+    /// Whether the loader offers every instance extension in `names`.
+    ///
+    /// # Errors
+    /// [`VulkanError::Call`] when the loader fails to list the extensions.
+    pub fn has_extensions(&self, names: &[&CStr]) -> Result<bool, VulkanError> {
+        let call = "vkEnumerateInstanceExtensionProperties";
+        let mut count = 0_u32;
+        // SAFETY: a null layer name asks for the loader's own extensions; a null array asks for
+        // the count only.
+        let result = unsafe {
+            (self.global.enumerate_extensions)(
+                core::ptr::null(),
+                &raw mut count,
+                core::ptr::null_mut(),
+            )
+        };
+        if result != SUCCESS {
+            return Err(VulkanError::Call { call, result });
+        }
+        count = count.min(MAX_EXTENSIONS);
+        let room = usize::try_from(count).unwrap_or(0);
+        let mut listed = vec![ExtensionProperties::zeroed(); room];
+        // SAFETY: `listed` holds `count` records, which the loader fills (and lowers `count` to
+        // how many it wrote).
+        let result = unsafe {
+            (self.global.enumerate_extensions)(
+                core::ptr::null(),
+                &raw mut count,
+                listed.as_mut_ptr(),
+            )
+        };
+        if result < SUCCESS {
+            return Err(VulkanError::Call { call, result });
+        }
+        let written = usize::try_from(count).unwrap_or(0).min(room);
+        let offered = &listed[..written];
+        Ok(names.iter().all(|wanted| {
+            offered
+                .iter()
+                .any(|extension| name_is(&extension.extension_name, wanted))
         }))
     }
 

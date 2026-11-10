@@ -34,7 +34,7 @@ macro_rules! function_table {
         $(#[$meta])*
         #[derive(Clone, Copy)]
         $vis struct $name {
-            $($field: $ty,)+
+            $($vis $field: $ty,)+
         }
 
         impl $name {

@@ -6,9 +6,10 @@
 )]
 
 use crate::debug::{ValidationLog, ValidationReport, callback};
-use crate::entry::{Entry, destroy_found, missing};
+use crate::entry::{Entry, destroy_found, missing, name_is};
 use crate::error::{VulkanError, check_created};
 use crate::select::{Candidate, DeviceType};
+use crate::surface::{SURFACE_EXTENSIONS, SurfaceFns};
 use crate::version::{ApiVersion, BASELINE};
 use crate::vk::{
     ApplicationInfo, CORE_FEATURE_COUNT, DebugMessengerCreateInfo, DeviceCreateInfo, DeviceHandle,
@@ -19,6 +20,7 @@ use crate::vk::{
     SEVERITY_WARNING, STYPE_APPLICATION_INFO, STYPE_DEBUG_MESSENGER_CREATE_INFO, STYPE_FEATURES_2,
     STYPE_INSTANCE_CREATE_INFO, STYPE_VULKAN_1_3_FEATURES, SUCCESS, VkResult, Vulkan13Features,
 };
+use crate::vk_present::{EXT_SWAPCHAIN, ExtensionProperties, PhysicalDeviceMemoryProperties};
 use core::ffi::{CStr, c_char, c_void};
 use std::sync::Arc;
 
@@ -28,6 +30,8 @@ const ENGINE_NAME: &CStr = c"DuckEngine";
 
 /// More devices or queue families than any system has; a larger count is cut here.
 const MAX_ENUMERATED: u32 = 1024;
+/// More extensions than any device lists; a larger count is cut here.
+const MAX_EXTENSIONS: u32 = 4096;
 
 function_table! {
     /// The instance-level functions the adapter calls.
@@ -39,6 +43,8 @@ function_table! {
         get_features2: unsafe extern "system" fn(PhysicalDeviceHandle, *mut PhysicalDeviceFeatures2) = c"vkGetPhysicalDeviceFeatures2",
         create_device: unsafe extern "system" fn(PhysicalDeviceHandle, *const DeviceCreateInfo, *const c_void, *mut DeviceHandle) -> VkResult = c"vkCreateDevice",
         get_device_proc_addr: unsafe extern "system" fn(DeviceHandle, *const c_char) -> *mut c_void = c"vkGetDeviceProcAddr",
+        enumerate_device_extensions: unsafe extern "system" fn(PhysicalDeviceHandle, *const c_char, *mut u32, *mut ExtensionProperties) -> VkResult = c"vkEnumerateDeviceExtensionProperties",
+        get_memory_properties: unsafe extern "system" fn(PhysicalDeviceHandle, *mut PhysicalDeviceMemoryProperties) = c"vkGetPhysicalDeviceMemoryProperties",
     }
 }
 
@@ -59,6 +65,8 @@ pub struct PhysicalDevice {
     pub vendor_id: u32,
     pub device_id: u32,
     pub candidate: Candidate,
+    /// Whether the device offers `VK_KHR_swapchain`.
+    pub swapchain_extension: bool,
 }
 
 /// A Vulkan instance.
@@ -68,6 +76,8 @@ pub struct Instance {
     handle: InstanceHandle,
     fns: InstanceFns,
     messenger: Option<(DebugFns, MessengerHandle)>,
+    /// The surface functions, when the instance was made with the surface extensions.
+    surface: Option<SurfaceFns>,
     /// Where the validation callback writes. Shared with the C side by pointer, so it must live
     /// until the messenger is destroyed (see `Drop`).
     log: Arc<ValidationLog>,
@@ -97,7 +107,15 @@ impl Instance {
             api_version: BASELINE.raw(),
         };
         let layers = [VALIDATION_LAYER.as_ptr()];
-        let extensions = [DEBUG_UTILS.as_ptr()];
+        // Surface extensions are optional: without them the context runs, it just cannot present.
+        let surfaces = entry.has_extensions(&SURFACE_EXTENSIONS).unwrap_or(false);
+        let mut extensions: Vec<*const c_char> = Vec::new();
+        if validation {
+            extensions.push(DEBUG_UTILS.as_ptr());
+        }
+        if surfaces {
+            extensions.extend(SURFACE_EXTENSIONS.iter().map(|name| name.as_ptr()));
+        }
         let enabled = u32::from(validation);
         let info = InstanceCreateInfo {
             s_type: STYPE_INSTANCE_CREATE_INFO,
@@ -106,7 +124,7 @@ impl Instance {
             application_info: &raw const application,
             enabled_layer_count: enabled,
             enabled_layer_names: layers.as_ptr(),
-            enabled_extension_count: enabled,
+            enabled_extension_count: u32::try_from(extensions.len()).unwrap_or(0),
             enabled_extension_names: extensions.as_ptr(),
         };
         // SAFETY: `info` and everything it points to (`application`, the name arrays and the
@@ -125,10 +143,19 @@ impl Instance {
                 return Err(missing(name));
             }
         };
+        // A surface table that does not load (an advertised extension without its functions)
+        // only costs the ability to present.
+        let surface = if surfaces {
+            // SAFETY: the loader returns functions with the declared signatures for these names.
+            unsafe { SurfaceFns::load(lookup) }.ok()
+        } else {
+            None
+        };
         let mut instance = Self {
             handle,
             fns,
             messenger: None,
+            surface,
             log: Arc::new(ValidationLog::default()),
         };
         if validation {
@@ -172,6 +199,16 @@ impl Instance {
         }
         self.messenger = Some((fns, messenger));
         Ok(())
+    }
+
+    /// The surface functions, when the instance can make surfaces.
+    pub fn surface_fns(&self) -> Option<&SurfaceFns> {
+        self.surface.as_ref()
+    }
+
+    /// The raw instance handle, for the calls that take it.
+    pub fn handle(&self) -> InstanceHandle {
+        self.handle
     }
 
     /// Whether the validation layer is on.
@@ -246,6 +283,7 @@ impl Instance {
             driver_version: properties.driver_version,
             vendor_id: properties.vendor_id,
             device_id: properties.device_id,
+            swapchain_extension: self.device_has_extension(handle, EXT_SWAPCHAIN),
             candidate: Candidate {
                 api_version,
                 device_type: DeviceType::from_raw(properties.device_type),
@@ -255,6 +293,51 @@ impl Instance {
                 sampler_anisotropy,
             },
         }
+    }
+
+    /// Whether the device offers the device extension `name`; false when it cannot be listed.
+    fn device_has_extension(&self, handle: PhysicalDeviceHandle, name: &CStr) -> bool {
+        let mut count = 0_u32;
+        // SAFETY: a null layer name asks for the device's own extensions; a null array asks for
+        // the count only.
+        let result = unsafe {
+            (self.fns.enumerate_device_extensions)(
+                handle,
+                core::ptr::null(),
+                &raw mut count,
+                core::ptr::null_mut(),
+            )
+        };
+        if result != SUCCESS {
+            return false;
+        }
+        count = count.min(MAX_EXTENSIONS);
+        let room = usize::try_from(count).unwrap_or(0);
+        let mut listed = vec![ExtensionProperties::zeroed(); room];
+        // SAFETY: `listed` holds `count` records, which the driver fills (and lowers `count` to
+        // how many it wrote).
+        let result = unsafe {
+            (self.fns.enumerate_device_extensions)(
+                handle,
+                core::ptr::null(),
+                &raw mut count,
+                listed.as_mut_ptr(),
+            )
+        };
+        let written = usize::try_from(count).unwrap_or(0).min(room);
+        result >= SUCCESS
+            && listed
+                .iter()
+                .take(written)
+                .any(|extension| name_is(&extension.extension_name, name))
+    }
+
+    /// The memory types and heaps of the device.
+    pub fn memory_properties(&self, gpu: PhysicalDeviceHandle) -> PhysicalDeviceMemoryProperties {
+        let mut properties = PhysicalDeviceMemoryProperties::zeroed();
+        // SAFETY: `gpu` was listed by this instance; `properties` is a valid output.
+        unsafe { (self.fns.get_memory_properties)(gpu, &raw mut properties) };
+        properties
     }
 
     /// The first queue family with graphics, if any.

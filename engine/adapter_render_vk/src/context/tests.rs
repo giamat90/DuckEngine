@@ -265,9 +265,13 @@ fn validation_is_turned_on_when_asked_for_and_present() {
     fake::install(script);
     let context = started_with(VulkanOptions { validation: true });
     assert!(context.info().validation_active);
+    // The debug-utils extension, plus the surface extensions of this platform.
+    let (layers, extensions) =
+        fake::with(|script| (script.layers_requested, script.extensions_requested));
+    assert_eq!(layers, 1);
     assert_eq!(
-        fake::with(|script| (script.layers_requested, script.extensions_requested)),
-        (1, 1)
+        usize::try_from(extensions),
+        Ok(1 + crate::surface::SURFACE_EXTENSIONS.len())
     );
     assert_eq!(
         calls(&[

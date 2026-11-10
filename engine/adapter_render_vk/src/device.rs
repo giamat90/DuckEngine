@@ -14,7 +14,8 @@ use crate::vk::{
     QueueHandle, STYPE_DEVICE_CREATE_INFO, STYPE_DEVICE_QUEUE_CREATE_INFO, STYPE_FEATURES_2,
     STYPE_VULKAN_1_3_FEATURES, SUCCESS, VkResult, Vulkan13Features,
 };
-use core::ffi::c_void;
+use crate::vk_present::EXT_SWAPCHAIN;
+use core::ffi::{CStr, c_char, c_void};
 
 function_table! {
     /// The device-level functions the adapter calls.
@@ -70,6 +71,7 @@ impl Device {
             p_next: (&raw mut v13).cast::<c_void>(),
             features: core_features,
         };
+        let extensions = enabled_extensions(gpu);
         let info = DeviceCreateInfo {
             s_type: STYPE_DEVICE_CREATE_INFO,
             // The features go in the chain; `enabled_features` stays null (Vulkan forbids both).
@@ -79,8 +81,8 @@ impl Device {
             queue_create_infos: &raw const queue_info,
             enabled_layer_count: 0,
             enabled_layer_names: core::ptr::null(),
-            enabled_extension_count: 0,
-            enabled_extension_names: core::ptr::null(),
+            enabled_extension_count: u32::try_from(extensions.len()).unwrap_or(0),
+            enabled_extension_names: extensions.as_ptr(),
             enabled_features: core::ptr::null(),
         };
         // SAFETY: `gpu` was listed by `instance`; `info` and the structures it points to live
@@ -113,6 +115,11 @@ impl Device {
         Ok((device, queue))
     }
 
+    /// The raw device handle, for the calls that take it.
+    pub fn handle(&self) -> DeviceHandle {
+        self.handle
+    }
+
     /// Waits until the device has finished all submitted work.
     ///
     /// # Errors
@@ -140,4 +147,15 @@ impl Drop for Device {
         // destroyed first.
         unsafe { (self.fns.destroy_device)(self.handle, core::ptr::null()) };
     }
+}
+
+/// The device extensions to enable. Presenting needs the swapchain extension; a device without
+/// it still works headless.
+fn enabled_extensions(gpu: &PhysicalDevice) -> Vec<*const c_char> {
+    let wanted: &[&CStr] = if gpu.swapchain_extension {
+        &[EXT_SWAPCHAIN]
+    } else {
+        &[]
+    };
+    wanted.iter().map(|name| name.as_ptr()).collect()
 }
