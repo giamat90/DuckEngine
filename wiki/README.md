@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v1.30 (2026-11-10).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v1.31 (2026-11-10).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.31** - Vulkan availability spike (card 6-5, Class 1 documentation; spike, no engine code): new page [spikes/vulkan-availability-spike](spikes/vulkan-availability-spike.md), what the hosted runner images offer: lavapipe on Linux after an `apt install` (Ubuntu 24.04, 26.04 = `ubuntu-latest`, 22.04), no Vulkan device on Windows; recommendation for O6; the two open items of [architecture/vulkan-and-mesh-v0](architecture/vulkan-and-mesh-v0.md) are measured.
 > - **v1.30** - SPIR-V output of the shader tool (card 6-4, Class 2: the engine's own asset format and a build tool, not a port revision and not a governance file; ordinary card into `develop`): `dshd` backend byte `1` (SPIR-V) with the reader's hostile-input checks (magic, whole words, minimum size), `IShaderCompiler::compile_spirv`, `shaderc --backend spirv`, the golden `sprite.spv.dshd`; see [render-port-v0](architecture/render-port-v0.md) section 15. Engine-side preparation before the swap-diff range of phase 6.
 > - **v1.29** - Mesh frontend (card 6-3, Class 2: public API in `base` and `render`; ordinary card into `develop`): `Mat4::perspective_rh` and `Mat4::look_at_rh`, `PerspectiveCamera`, `MeshVertex` with its 32-byte layout, the unit cube, `record_mesh`, a golden stream of the mesh scene, tests on the Null device and an image test with depth on OpenGL; see [render-port-v0](architecture/render-port-v0.md) section 14. Engine-side preparation before the swap-diff range of phase 6.
 > - **v1.28** - Render port revision 1 (card 6-2, Class 2: public port API; ordinary card into `develop`): `PassDesc.depth`, `PipelineDesc.depth_format` and `ResourceState::DepthTarget`; streams without depth keep their bytes (a depth pass is 38 payload bytes instead of 30); the Null device validates and clears depth, the OpenGL adapter draws colour plus depth through one shared framebuffer, the contract suite gains `depth_contract`; see [render-port-v0](architecture/render-port-v0.md) section 13. The one revision counted by the phase 6 swap-diff plan.
@@ -186,6 +187,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 38 | [architecture/examples](architecture/examples.md) | Runnable examples (card 3-16): the window examples and the benchmarks, how to run them, how the interactive example is built |
 | 39 | [spikes/phase4-milestone-review](spikes/phase4-milestone-review.md) | Phase 4 milestone review (card 4-25): exit criteria, cards and releases, metrics (per-card vs whole-phase), hosted CI evidence, open findings, process lessons and the recommendation for the owner |
 | 40 | [spikes/phase5-milestone-review](spikes/phase5-milestone-review.md) | Phase 5 milestone review (card 5-9): exit criteria, cards and pull requests, metrics (per-card vs whole-phase), open findings, process lessons and the recommendation for the owner |
+| 41 | [spikes/vulkan-availability-spike](spikes/vulkan-availability-spike.md) | Vulkan availability spike (card 6-5): what hosted Linux and Windows runners offer (lavapipe versions, no Windows device), recommendation for O6 |
 
 ## Confidence legend used in this wiki
 
