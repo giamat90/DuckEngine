@@ -1,4 +1,4 @@
-# Vulkan adapter v0: loader, device, swapchain, memory and resources (cards 6-6, 6-7 and 6-8, parts 1 to 3)
+# Vulkan adapter v0: loader, device, swapchain, memory, resources and the render device (cards 6-6 to 6-9, parts 1 to 4a)
 
 Status: parts 1 to 3 of 4 of `adapter_render_vk` (part 2 is section 5, part 3 is section 6), the second real render backend of phase 6 ([vulkan-and-mesh-v0](vulkan-and-mesh-v0.md) sections 2, 3 and 8). This page grows with each part (6-7 swapchain, 6-8 memory and resources, 6-9 shaders, pipelines and draw). Part 1 draws nothing: it starts Vulkan, chooses a device, makes the logical device and its graphics queue, and proves the start-up and the tear-down order without a GPU.
 
@@ -165,3 +165,57 @@ flowchart LR
 - Read-back staging uses uncached host-coherent memory; a `HOST_CACHED` placement would read faster.
 - An id carries nothing that ties it to the `Resources` that made it; an id from a second `Resources` with the same index and generation would be accepted.
 - The presenter's capture buffer still uses a direct `vkAllocateMemory`; moving it onto the manager is left for a later card.
+
+## 7. Part 4a: the render device, frames, passes and barriers (card 6-9, first half)
+
+`VulkanDevice` is the `IRenderDevice` of the port on Vulkan 1.3. Card 6-9 is delivered in two pull requests: this one (4a) holds the device, the frame loop, passes, barriers and the resource calls, and passes the render contract suite; the next card (6-14, 4b) adds shaders, pipelines, descriptors and draw calls. `create_shader` and `create_pipeline` answer `Unsupported` until then, and the stream commands that need a pipeline (set pipeline, viewport, binds, draws) are accepted and do nothing, which cannot be seen because no pipeline exists and the bookkeeping device refuses a draw without one.
+
+The adapter now depends on `base` and `render` (as the GL adapter does). A bookkeeping `NullDevice` inside the device issues the handles and checks every call and every stream, so the rules exist once; the Vulkan side acts only after it agrees, and gives the handle back when Vulkan then fails. The port's descriptions are mapped onto the adapter's own resource types by pure functions (`render_device/convert.rs`), and an adapter error onto the port's `RenderError` (memory failures are `OutOfMemory`, a lost device or surface is `SurfaceLost`, other driver failures `Unsupported`).
+
+```mermaid
+sequenceDiagram
+  participant App
+  participant Dev as VulkanDevice
+  participant Shadow as NullDevice (bookkeeping)
+  participant Pres as Presenter
+  participant Exec as Exec (render_device/exec.rs)
+  participant GPU as Vulkan queue
+  App->>Dev: begin_frame(surface)
+  Dev->>Shadow: begin_frame (one frame at a time)
+  Dev->>Pres: begin_frame: wait fence, acquire image, reset pool, open buffer
+  Note over Pres: out of date: rebuild, try once more; no area: frame executes nothing
+  App->>Dev: submit(frame, stream)
+  Dev->>Shadow: validate the whole stream
+  Dev->>Exec: run(stream) on the open buffer
+  Exec->>Exec: pass: image to attachment layout, begin rendering, clear or load
+  Exec->>Exec: barrier: image to the layout of the named state
+  App->>Dev: end_frame(frame)
+  Dev->>Exec: backbuffer to present layout
+  Dev->>Pres: end_frame: close buffer, submit (wait acquire, signal render-done), present
+  Pres->>GPU: vkQueueSubmit2, vkQueuePresentKHR
+```
+
+**Layouts are tracked by the device, not read from the stream.** The backbuffer's layout lives in the frame (it starts undefined after every acquire); a texture's layout lives in `Resources` (`note_layout`), where uploads and read-back already keep it. A pass moves its colour target, and its depth target if it has one, to the attachment layouts first, so a stream that skips a barrier still draws, as on GL. A `Barrier` command moves the named image to the layout of the named state (`sync::state_access`, one pure function with a test per state: layout, stage, access). The `from` state of the command is not trusted. The barrier is also recorded when the layout does not change, because two passes that write the same attachment need the order; its source side waits for everything before it, which is correct and leaves a tighter source as an optimisation for a measured need. A texture cannot be moved to the present layout (refused), and a move to `Undefined` does nothing (the contents are given up, the layout stays). A depth attachment must cover the colour attachment, else the pass is refused.
+
+**Frame rules.**
+
+- One command buffer per frame in flight, reset with its pool at `begin_frame`; every `submit` of the frame appends to it; `end_frame` closes it, submits once and presents once, whatever the number of streams.
+- A swapchain that is out of date at the acquire is rebuilt and the acquire tried once more; a window without area gives a frame that executes nothing (texture passes included) and ends without presenting; a lost surface is `SurfaceLost`, and the bookkeeping frame is closed so the next `begin_frame` can try again.
+- One live surface per window: the Vulkan surface of a window can exist once, and each surface owns a presenter.
+
+**How part 4a is tested.**
+
+| Level | What | Needs a GPU |
+|---|---|---|
+| Unit | `state_access` (5 tests), port-to-adapter conversions and the error map (2), the handle table (5) | no |
+| Fake driver | `Presenter::begin_frame/end_frame` (6 tests: order of calls, the two frames in flight, out of date, no area, failed submit); `VulkanDevice` (21 tests: caps, surfaces and their swapchains, resource calls and clean-up, destroy waits for the device, the layout path of a backbuffer clear, many streams in one frame, load or clear, texture passes with the fake checking each old layout, barrier commands, depth passes, refused streams record nothing, minimised windows, one frame at a time, lost surface, failed submit, everything freed on drop) | no |
+| Real device | `tests/device.rs`: the generic render contract suite (caps, buffers, textures, surfaces, clear passes read back, depth passes, stream rules), and eight frames on the backbuffer | yes; "not run: device not set up" otherwise, a failure when `DUCK_REQUIRE_VK=1` |
+
+**Limits of part 4a (all in the code comments of `render_device.rs` too):**
+
+- Writes and `read_back` run at once on their own queue submission, so they see the frames already ended and not the commands recorded in the open frame. `write_texture` and `read_back` are therefore refused (`Unsupported`) while the open frame holds recorded commands: write before the `submit` that uses the data, read back after `end_frame`. `write_buffer` is not refused (a buffer has no layout), but it is seen by every draw of the frame, whatever the order of the calls. A per-frame upload ring would lift this; it comes with the first sample that needs it.
+- Destroying a resource waits for the device to be idle first (a stall, but a frame in flight may use it). When the open frame holds recorded commands, which may name the resource, the destroy is kept and runs after `end_frame` has put the frame on the queue.
+- A failed submit at `end_frame` drops the surface's presenter (its frame fence would stay unsignalled and the next `begin_frame` would wait for it for ever); the surface answers `SurfaceLost` from then on and is made again. A failure between the acquire and the first command (reset of the pool, start of the buffer) is not handled the same way yet; it is listed in the review as an open minor.
+- Not sampleable: the backbuffer and depth textures are created without sampling usage, so a barrier to `ShaderRead` on them, and a depth texture as the colour target of a pass, are refused (`Unsupported`) although the bookkeeping device accepts them.
+- The device uses the uniform alignment of the port (256), which Vulkan guarantees as an upper bound, and not the device's own value.
+- The validation layer is not installed on the development machine, so the real-device tests ran without it (each prints a note). A job with the layer must run them before the milestone.

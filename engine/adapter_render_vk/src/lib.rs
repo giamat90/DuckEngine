@@ -6,7 +6,7 @@
 //! dependency), an instance and a physical device are chosen, a logical device and its graphics
 //! queue are made. Part 2 adds the [`Presenter`]: a window surface made from the platform's native
 //! token, a Bgra8 swapchain, two frames in flight and a clear colour, which a test can read back
-//! from the image. Memory and resources (6-8) and the `IRenderDevice` implementation (6-9) follow.
+//! from the image. Memory and resources (6-8) and the `IRenderDevice` implementation `VulkanDevice` (6-9: frames, passes, barriers; shaders and draws follow in 6-14) follow.
 //!
 //! Without a Vulkan loader, or on a machine whose devices lack Vulkan 1.3 with dynamic rendering
 //! and synchronization2, every call that starts things returns an error value
@@ -33,15 +33,19 @@ mod instance;
 mod memory;
 mod plan;
 mod presenter;
+mod render_device;
 mod resources;
 mod select;
 mod slab;
 mod suballoc;
 mod surface;
 mod swapchain;
+mod sync;
+mod table;
 mod upload;
 mod version;
 mod vk;
+mod vk_draw;
 mod vk_present;
 mod vk_resource;
 
@@ -49,6 +53,7 @@ pub use context::{DeviceInfo, VulkanContext, VulkanOptions};
 pub use debug::ValidationReport;
 pub use error::VulkanError;
 pub use presenter::{FrameOutcome, Presenter};
+pub use render_device::VulkanDevice;
 pub use resources::{
     AddressMode, BufferDesc, BufferId, BufferUsage, Filter, Region, Resources, SamplerDesc,
     SamplerId, TextureDesc, TextureFormat, TextureHandles, TextureId,

@@ -13,17 +13,18 @@
 use crate::capture::Capture;
 use crate::context::{Core, VulkanContext};
 use crate::error::VulkanError;
-use crate::frame::{FRAMES_IN_FLIGHT, Frame, Target, record_clear};
+use crate::frame::{FRAMES_IN_FLIGHT, Frame, Target, begin_commands, end_commands, record_clear};
 use crate::gear::{Gear, ok};
 use crate::plan::make_plan;
 use crate::surface::Surface;
 use crate::swapchain::Swapchain;
 use crate::vk::SUCCESS;
 use crate::vk_present::{
-    CommandBufferSubmitInfo, ERROR_OUT_OF_DATE, ERROR_SURFACE_LOST, EXTENT_FOLLOWS_SWAPCHAIN,
-    FOREVER, IMAGE_USAGE_TRANSFER_SRC, PresentInfo, STAGE_ALL_COMMANDS,
-    STAGE_COLOR_ATTACHMENT_OUTPUT, STYPE_COMMAND_BUFFER_SUBMIT_INFO, STYPE_PRESENT_INFO,
-    STYPE_SEMAPHORE_SUBMIT_INFO, STYPE_SUBMIT_INFO_2, SUBOPTIMAL, SemaphoreSubmitInfo, SubmitInfo2,
+    CommandBufferHandle, CommandBufferSubmitInfo, ERROR_OUT_OF_DATE, ERROR_SURFACE_LOST,
+    EXTENT_FOLLOWS_SWAPCHAIN, Extent2D, FOREVER, IMAGE_USAGE_TRANSFER_SRC, ImageHandle,
+    ImageViewHandle, PresentInfo, STAGE_ALL_COMMANDS, STAGE_COLOR_ATTACHMENT_OUTPUT,
+    STYPE_COMMAND_BUFFER_SUBMIT_INFO, STYPE_PRESENT_INFO, STYPE_SEMAPHORE_SUBMIT_INFO,
+    STYPE_SUBMIT_INFO_2, SUBOPTIMAL, SemaphoreSubmitInfo, SubmitInfo2,
 };
 use platform::window::NativeToken;
 use std::rc::Rc;
@@ -40,6 +41,26 @@ pub enum FrameOutcome {
     Recreated,
     /// The window has no area (it is minimised), so nothing was drawn.
     Minimized,
+}
+
+/// The image a device frame draws into, and the open command buffer to draw with.
+#[derive(Clone, Copy, Debug)]
+pub struct Backbuffer {
+    pub image: ImageHandle,
+    pub view: ImageViewHandle,
+    pub extent: Extent2D,
+    pub cmd: CommandBufferHandle,
+    index: u32,
+    stale: bool,
+}
+
+/// What starting a device frame gave.
+#[derive(Debug)]
+pub enum Begin {
+    /// An image was acquired and the command buffer is recording.
+    Ready(Backbuffer),
+    /// There is nothing to draw into this time; the outcome says why.
+    Skipped(FrameOutcome),
 }
 
 /// What acquiring an image gave.
@@ -219,7 +240,7 @@ impl Presenter {
         }
         let frame = self.frames[self.frame_index];
         self.wait_for(frame.fence)?;
-        let (index, mut stale) = match self.acquire(&frame)? {
+        let (index, stale) = match self.acquire(&frame)? {
             Acquired::Image { index, suboptimal } => (index, suboptimal),
             Acquired::OutOfDate => {
                 self.rebuild()?;
@@ -227,6 +248,11 @@ impl Presenter {
             }
         };
         self.draw(&frame, index, color)?;
+        self.show(index, stale)
+    }
+
+    /// Queues the submitted frame for display and moves on to the next frame in flight.
+    fn show(&mut self, index: u32, mut stale: bool) -> Result<FrameOutcome, VulkanError> {
         self.frame_index = (self.frame_index + 1) % FRAMES_IN_FLIGHT;
         match self.present(index)? {
             SUCCESS => {}
@@ -240,6 +266,69 @@ impl Presenter {
             self.rebuild()?;
         }
         Ok(FrameOutcome::Presented)
+    }
+
+    /// The functions and handles of the device, for the code that records into a frame.
+    pub(crate) fn gear(&self) -> &Gear {
+        &self.gear
+    }
+
+    /// Starts a frame for the device: waits for the frame's turn, acquires an image, and opens the
+    /// frame's command buffer. The caller records, then calls [`Presenter::end_frame`].
+    ///
+    /// # Errors
+    /// [`VulkanError::SurfaceLost`] when the surface is gone; [`VulkanError::Call`] when the
+    /// driver fails.
+    pub(crate) fn begin_frame(&mut self) -> Result<Begin, VulkanError> {
+        if !self.ensure_swapchain()? {
+            return Ok(Begin::Skipped(FrameOutcome::Minimized));
+        }
+        let frame = self.frames[self.frame_index];
+        self.wait_for(frame.fence)?;
+        let (index, stale) = match self.acquire(&frame)? {
+            Acquired::Image { index, suboptimal } => (index, suboptimal),
+            Acquired::OutOfDate => {
+                self.rebuild()?;
+                return Ok(Begin::Skipped(FrameOutcome::Recreated));
+            }
+        };
+        let slot = usize::try_from(index).unwrap_or(usize::MAX);
+        let Some(swapchain) = &self.swapchain else {
+            return Err(VulkanError::Unsupported("the swapchain went away"));
+        };
+        let (Some(image), Some(view)) = (swapchain.images.get(slot).copied(), swapchain.view(slot))
+        else {
+            return Err(VulkanError::Unsupported("the acquired image has no view"));
+        };
+        let extent = swapchain.extent;
+        frame.reset(&self.gear)?;
+        begin_commands(&self.gear, frame.cmd)?;
+        Ok(Begin::Ready(Backbuffer {
+            image,
+            view,
+            extent,
+            cmd: frame.cmd,
+            index,
+            stale,
+        }))
+    }
+
+    /// Closes the command buffer opened by [`Presenter::begin_frame`], submits it and presents the
+    /// image. The image must be in the present layout by then.
+    ///
+    /// # Errors
+    /// [`VulkanError::Call`] when the driver fails; after a failed submit drop the presenter.
+    pub(crate) fn end_frame(&mut self, back: Backbuffer) -> Result<FrameOutcome, VulkanError> {
+        end_commands(&self.gear, back.cmd)?;
+        let frame = self.frames[self.frame_index];
+        let done = usize::try_from(back.index)
+            .ok()
+            .and_then(|slot| self.swapchain.as_ref()?.render_done(slot))
+            .ok_or(VulkanError::Unsupported(
+                "the acquired image does not exist",
+            ))?;
+        self.submit(&frame, done)?;
+        self.show(back.index, back.stale)
     }
 
     fn wait_for(&self, fence: u64) -> Result<(), VulkanError> {

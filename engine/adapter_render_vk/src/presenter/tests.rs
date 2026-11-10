@@ -588,3 +588,126 @@ fn the_device_outlives_a_presenter_whose_context_was_dropped_first() {
     );
     assert!(fake::live_objects().is_empty());
 }
+
+fn ready(presenter: &mut Presenter) -> Backbuffer {
+    match presenter.begin_frame() {
+        Ok(Begin::Ready(back)) => back,
+        Ok(Begin::Skipped(outcome)) => panic!("expected a frame, it was skipped: {outcome:?}"),
+        Err(error) => panic!("expected a frame, got: {error}"),
+    }
+}
+
+#[test]
+fn a_device_frame_waits_and_acquires_then_leaves_the_buffer_open_for_commands() {
+    let (_context, mut presenter) = presenter();
+    fake::clear_log();
+    let back = ready(&mut presenter);
+    assert_eq!((back.extent.width, back.extent.height), (800, 600));
+    assert_ne!(back.image, 0);
+    assert_ne!(back.view, 0);
+    assert_eq!(
+        only(
+            &fake::log(),
+            &[
+                "vkWaitForFences",
+                "vkAcquireNextImageKHR",
+                "vkResetCommandPool",
+                "vkBeginCommandBuffer",
+                "vkEndCommandBuffer",
+                "vkQueueSubmit2",
+                "vkQueuePresentKHR",
+            ]
+        ),
+        [
+            "vkWaitForFences",
+            "vkAcquireNextImageKHR",
+            "vkResetCommandPool",
+            "vkBeginCommandBuffer",
+        ]
+    );
+}
+
+#[test]
+fn ending_a_device_frame_closes_the_buffer_submits_and_presents() {
+    let (_context, mut presenter) = presenter();
+    let back = ready(&mut presenter);
+    fake::clear_log();
+    assert_eq!(presenter.end_frame(back), Ok(FrameOutcome::Presented));
+    assert_eq!(
+        only(
+            &fake::log(),
+            &[
+                "vkEndCommandBuffer",
+                "vkResetFences",
+                "vkQueueSubmit2",
+                "vkQueuePresentKHR"
+            ]
+        ),
+        [
+            "vkEndCommandBuffer",
+            "vkResetFences",
+            "vkQueueSubmit2",
+            "vkQueuePresentKHR"
+        ]
+    );
+    let submits = fake::with(|s| s.submits.clone());
+    assert_eq!(submits.len(), 1);
+    assert_eq!(submits[0].wait_stage, STAGE_COLOR_ATTACHMENT_OUTPUT);
+}
+
+#[test]
+fn device_frames_take_turns_between_the_two_frames_in_flight() {
+    let (_context, mut presenter) = presenter();
+    let mut fences = Vec::new();
+    for _ in 0..4 {
+        let back = ready(&mut presenter);
+        assert_eq!(presenter.end_frame(back), Ok(FrameOutcome::Presented));
+        fences.push(fake::with(|s| s.submits.last().map(|r| r.fence)));
+    }
+    assert_eq!(fences[0], fences[2]);
+    assert_eq!(fences[1], fences[3]);
+    assert_ne!(fences[0], fences[1]);
+}
+
+#[test]
+fn a_device_frame_on_an_out_of_date_swapchain_is_skipped_and_the_swapchain_rebuilt() {
+    let (_context, mut presenter) = presenter();
+    fake::with(|s| s.acquire_results.push_back(ERROR_OUT_OF_DATE));
+    assert!(matches!(
+        presenter.begin_frame(),
+        Ok(Begin::Skipped(FrameOutcome::Recreated))
+    ));
+    assert!(!fake::log().contains(&"vkBeginCommandBuffer"));
+    let back = ready(&mut presenter);
+    assert_eq!(presenter.end_frame(back), Ok(FrameOutcome::Presented));
+}
+
+#[test]
+fn a_device_frame_on_a_window_without_area_is_skipped() {
+    let (_context, mut presenter) = presenter();
+    assert!(presenter.resize(0, 0).is_ok());
+    the_window_is_resized_to(0, 0);
+    assert!(presenter.resize(0, 0).is_ok());
+    fake::clear_log();
+    assert!(matches!(
+        presenter.begin_frame(),
+        Ok(Begin::Skipped(FrameOutcome::Minimized))
+    ));
+    assert!(!fake::log().contains(&"vkAcquireNextImageKHR"));
+}
+
+#[test]
+fn a_failed_submit_of_a_device_frame_is_an_error_and_nothing_is_presented() {
+    let (_context, mut presenter) = presenter();
+    let back = ready(&mut presenter);
+    fake::with(|s| s.submit_result = -4);
+    fake::clear_log();
+    assert!(matches!(
+        presenter.end_frame(back),
+        Err(VulkanError::Call {
+            call: "vkQueueSubmit2",
+            ..
+        })
+    ));
+    assert!(!fake::log().contains(&"vkQueuePresentKHR"));
+}

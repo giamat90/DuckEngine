@@ -21,7 +21,8 @@ use crate::vk::{
 pub mod present;
 pub mod resource;
 
-pub use present::{PresentRecord, SubmitRecord, SwapchainRequest};
+pub use present::{PresentRecord, RenderingRecord, SubmitRecord, SwapchainRequest};
+pub use resource::ImageBarrierRecord;
 
 use crate::vk_present::{Extent2D, SurfaceCapabilities, SurfaceFormat};
 use core::ffi::{CStr, c_char, c_void};
@@ -109,6 +110,10 @@ pub struct Script {
     pub presents: Vec<PresentRecord>,
     pub barriers: Vec<(u32, u32)>,
     pub clears: Vec<[f32; 4]>,
+    /// Each `vkCmdBeginRendering`, in order.
+    pub renderings: Vec<RenderingRecord>,
+    /// Each image barrier, in order.
+    pub image_barriers: Vec<ImageBarrierRecord>,
     pub live: Vec<(&'static str, u64)>,
     pub next_handle: u64,
     pub next_image: u32,
@@ -154,6 +159,8 @@ impl Script {
             presents: Vec::new(),
             barriers: Vec::new(),
             clears: Vec::new(),
+            renderings: Vec::new(),
+            image_barriers: Vec::new(),
             live: Vec::new(),
             next_handle: 0,
             next_image: 0,
