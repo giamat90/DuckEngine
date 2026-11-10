@@ -140,12 +140,13 @@ fn make_pool(gear: &Gear, family: u32) -> Result<CommandPoolHandle, VulkanError>
     Ok(pool)
 }
 
-/// One layout change of a colour image: the layouts and the stage and access on each side.
-struct Transition {
-    old_layout: u32,
-    new_layout: u32,
-    src: (u64, u64),
-    dst: (u64, u64),
+/// One layout change of an image: the layouts and the stage and access on each side.
+pub struct Transition {
+    pub range: SubresourceRange,
+    pub old_layout: u32,
+    pub new_layout: u32,
+    pub src: (u64, u64),
+    pub dst: (u64, u64),
 }
 
 /// What a clear-and-present frame draws into.
@@ -166,16 +167,7 @@ pub fn record_clear(
     cmd: CommandBufferHandle,
     target: &Target,
 ) -> Result<(), VulkanError> {
-    let begin = CommandBufferBeginInfo {
-        s_type: STYPE_COMMAND_BUFFER_BEGIN_INFO,
-        p_next: core::ptr::null(),
-        flags: COMMAND_BUFFER_ONE_TIME_SUBMIT,
-        inheritance_info: core::ptr::null(),
-    };
-    // SAFETY: the pool was reset, so the buffer is in the initial state; `begin` is valid.
-    ok("vkBeginCommandBuffer", unsafe {
-        (gear.fns.begin_command_buffer)(cmd, &raw const begin)
-    })?;
+    begin_commands(gear, cmd)?;
     // The acquire semaphore is waited at the colour-attachment-output stage, so that is the
     // stage the first transition waits for.
     barrier(
@@ -183,6 +175,7 @@ pub fn record_clear(
         cmd,
         target.image,
         &Transition {
+            range: SubresourceRange::COLOR,
             old_layout: LAYOUT_UNDEFINED,
             new_layout: LAYOUT_COLOR_ATTACHMENT,
             src: (STAGE_COLOR_ATTACHMENT_OUTPUT, ACCESS_NONE),
@@ -199,6 +192,7 @@ pub fn record_clear(
                 cmd,
                 target.image,
                 &Transition {
+                    range: SubresourceRange::COLOR,
                     old_layout: LAYOUT_COLOR_ATTACHMENT,
                     new_layout: LAYOUT_TRANSFER_SRC,
                     src: written,
@@ -215,6 +209,7 @@ pub fn record_clear(
         cmd,
         target.image,
         &Transition {
+            range: SubresourceRange::COLOR,
             old_layout: if target.capture.is_some() {
                 LAYOUT_TRANSFER_SRC
             } else {
@@ -225,13 +220,39 @@ pub fn record_clear(
             dst: (STAGE_NONE, ACCESS_NONE),
         },
     );
+    end_commands(gear, cmd)
+}
+
+/// Opens `cmd` for one recording; its pool was reset, so it is in the initial state.
+///
+/// # Errors
+/// [`VulkanError::Call`] with the driver's result.
+pub fn begin_commands(gear: &Gear, cmd: CommandBufferHandle) -> Result<(), VulkanError> {
+    let begin = CommandBufferBeginInfo {
+        s_type: STYPE_COMMAND_BUFFER_BEGIN_INFO,
+        p_next: core::ptr::null(),
+        flags: COMMAND_BUFFER_ONE_TIME_SUBMIT,
+        inheritance_info: core::ptr::null(),
+    };
+    // SAFETY: the pool was reset, so the buffer is in the initial state; `begin` is valid.
+    ok("vkBeginCommandBuffer", unsafe {
+        (gear.fns.begin_command_buffer)(cmd, &raw const begin)
+    })
+}
+
+/// Closes `cmd`.
+///
+/// # Errors
+/// [`VulkanError::Call`] with the driver's result.
+pub fn end_commands(gear: &Gear, cmd: CommandBufferHandle) -> Result<(), VulkanError> {
     // SAFETY: the buffer is in the recording state.
     ok("vkEndCommandBuffer", unsafe {
         (gear.fns.end_command_buffer)(cmd)
     })
 }
 
-fn barrier(gear: &Gear, cmd: CommandBufferHandle, image: ImageHandle, change: &Transition) {
+/// Records the layout change `change` of `image`.
+pub fn barrier(gear: &Gear, cmd: CommandBufferHandle, image: ImageHandle, change: &Transition) {
     let barrier = ImageMemoryBarrier2 {
         s_type: STYPE_IMAGE_MEMORY_BARRIER_2,
         p_next: core::ptr::null(),
@@ -244,7 +265,7 @@ fn barrier(gear: &Gear, cmd: CommandBufferHandle, image: ImageHandle, change: &T
         src_queue_family_index: QUEUE_FAMILY_IGNORED,
         dst_queue_family_index: QUEUE_FAMILY_IGNORED,
         image,
-        subresource_range: SubresourceRange::COLOR,
+        subresource_range: change.range,
     };
     let dependency = DependencyInfo {
         s_type: STYPE_DEPENDENCY_INFO,

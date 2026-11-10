@@ -68,6 +68,18 @@ pub enum Op {
     ImageToBuffer { image: u64, width: u32, height: u32 },
 }
 
+/// One image barrier as the driver saw it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageBarrierRecord {
+    pub image: u64,
+    pub aspect: u32,
+    pub old: u32,
+    pub new: u32,
+    pub src_stage: u64,
+    pub dst_stage: u64,
+    pub dst_access: u64,
+}
+
 /// The state of the resource half.
 pub struct World {
     pub memories: HashMap<u64, FakeMemory>,
@@ -819,6 +831,15 @@ fn apply_image_barrier(script: &mut super::Script, barrier: &ImageMemoryBarrier2
     script
         .barriers
         .push((barrier.old_layout, barrier.new_layout));
+    script.image_barriers.push(ImageBarrierRecord {
+        image: barrier.image,
+        aspect: barrier.subresource_range.aspect_mask,
+        old: barrier.old_layout,
+        new: barrier.new_layout,
+        src_stage: barrier.src_stage_mask,
+        dst_stage: barrier.dst_stage_mask,
+        dst_access: barrier.dst_access_mask,
+    });
     let Some(entry) = script.world.images.get_mut(&barrier.image) else {
         return;
     };

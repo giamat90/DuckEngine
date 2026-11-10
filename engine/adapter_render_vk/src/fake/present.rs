@@ -34,6 +34,26 @@ pub struct SubmitRecord {
     pub fence: u64,
 }
 
+/// The depth attachment of one `vkCmdBeginRendering`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DepthRecord {
+    pub view: u64,
+    pub layout: u32,
+    pub load_op: u32,
+    pub clear: f32,
+}
+
+/// What one `vkCmdBeginRendering` carried.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderingRecord {
+    pub view: u64,
+    pub layout: u32,
+    pub extent: (u32, u32),
+    pub load_op: u32,
+    pub clear: [f32; 4],
+    pub depth: Option<DepthRecord>,
+}
+
 /// What one `vkQueuePresentKHR` carried.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PresentRecord {
@@ -556,11 +576,34 @@ unsafe extern "system" fn cmd_begin_rendering(
     info: *const RenderingInfo,
 ) {
     note("vkCmdBeginRendering");
-    unsafe {
-        let attachment = &*(*info).color_attachments;
-        assert_eq!(attachment.load_op, vp::LOAD_OP_CLEAR);
-        with(|script| script.clears.push(attachment.clear_value.float32));
-    }
+    let record = unsafe {
+        let info = &*info;
+        assert_eq!(info.color_attachment_count, 1);
+        let color = &*info.color_attachments;
+        let depth = info.depth_attachment.as_ref().map(|depth| DepthRecord {
+            view: depth.image_view,
+            layout: depth.image_layout,
+            load_op: depth.load_op,
+            clear: depth.clear_value.float32[0],
+        });
+        RenderingRecord {
+            view: color.image_view,
+            layout: color.image_layout,
+            extent: (
+                info.render_area.extent.width,
+                info.render_area.extent.height,
+            ),
+            load_op: color.load_op,
+            clear: color.clear_value.float32,
+            depth,
+        }
+    };
+    with(|script| {
+        if record.load_op == vp::LOAD_OP_CLEAR {
+            script.clears.push(record.clear);
+        }
+        script.renderings.push(record);
+    });
 }
 
 unsafe extern "system" fn cmd_end_rendering(_cmd: CommandBufferHandle) {
