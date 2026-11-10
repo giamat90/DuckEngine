@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v1.35 (2026-11-10).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v1.36 (2026-11-10).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.36** - Vulkan adapter part 4b (card 6-14, Class 2; public API of an adapter, `unsafe`, concurrency of frames in flight): [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md) gains section 8, shaders from SPIR-V with the adapter's own descriptor-set numbering, two pipelines per description (one per target format), per-frame descriptor pools, the viewport flip for the backbuffer only, binds and draw calls, with a flow view and how it is tested.
 > - **v1.35** - Vulkan adapter part 4a (card 6-9, Class 2; public API of an adapter, `unsafe`, concurrency of frames in flight): [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md) gains section 7, the `VulkanDevice` render device with frames, passes with dynamic rendering and barriers over tracked layouts, with a sequence view and how it is tested; shaders, pipelines and draws move to card 6-14.
 > - **v1.34** - Vulkan adapter part 3 (card 6-8, Class 2; `unsafe`, allocators): [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md) gains section 6, the own memory sub-allocator, buffers, textures, samplers and staged uploads with layout transitions, with a flow view and how it is tested.
 > - **v1.33** - Vulkan adapter part 2 (card 6-7, Class 2; `unsafe`, window system, swapchain): [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md) gains section 5, the surface from the native window token, the Bgra8 swapchain, two frames in flight, the clear colour and the one-pixel readback, with a sequence view and how it is tested.

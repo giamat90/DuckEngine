@@ -50,6 +50,8 @@ pub struct Backbuffer {
     pub view: ImageViewHandle,
     pub extent: Extent2D,
     pub cmd: CommandBufferHandle,
+    /// The frame-in-flight slot the frame uses: what is per frame (descriptor pools) is indexed by it.
+    pub slot: usize,
     index: u32,
     stale: bool,
 }
@@ -308,6 +310,7 @@ impl Presenter {
             view,
             extent,
             cmd: frame.cmd,
+            slot: self.frame_index,
             index,
             stale,
         }))

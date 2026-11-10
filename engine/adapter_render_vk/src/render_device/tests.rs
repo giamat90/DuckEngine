@@ -2,7 +2,9 @@
 //! image barrier starts from the layout the image is in, so a wrong layout track fails here.
 
 use super::*;
+use crate::fake::draw::DrawCommand;
 use crate::fake::{self, FakeGpu, Script};
+use crate::vk_draw::Viewport;
 use crate::vk_draw::{
     STAGE_EARLY_FRAGMENT_TESTS, STAGE_FRAGMENT_SHADER, STAGE_LATE_FRAGMENT_TESTS,
 };
@@ -12,7 +14,8 @@ use crate::vk_present::{
 };
 use crate::vk_resource::{ASPECT_DEPTH, LAYOUT_DEPTH_ATTACHMENT, LAYOUT_SHADER_READ};
 use render::desc::{
-    AddressMode, BufferUsage, Filter, PassDesc, RenderTarget, ResourceState, ShaderStage,
+    AddressMode, BlendMode, BufferUsage, DepthState, Filter, IndexType, PassDesc, RenderTarget,
+    ResourceState, ShaderStage, VertexAttribute, VertexFormat,
 };
 
 const TOKEN: NativeToken = NativeToken(0x5EED);
@@ -155,20 +158,6 @@ fn resizing_a_surface_rebuilds_its_swapchain() {
     assert_eq!(
         device.resize_surface(id, 0, 480),
         Err(RenderError::InvalidDescription)
-    );
-}
-
-#[test]
-fn shaders_and_pipelines_are_not_there_yet() {
-    let mut device = device();
-    let shader = ShaderDesc {
-        stage: ShaderStage::Vertex,
-        code: &[0; 8],
-        entry: "main",
-    };
-    assert_eq!(
-        device.create_shader(shader).map(|_| ()),
-        Err(RenderError::Unsupported)
     );
 }
 
@@ -635,4 +624,502 @@ fn a_depth_texture_cannot_be_the_colour_target_of_a_pass() {
         run(&mut device, id, &stream).map(|_| ()),
         Err(RenderError::Unsupported)
     );
+}
+
+// ----- shaders, pipelines, binds and draws (card 6-14) -----
+
+/// A SPIR-V module with a header and nothing else: it passes the adapter's checks.
+fn spirv_bytes() -> Vec<u8> {
+    [0x0723_0203_u32, 0x0001_0600, 0, 1, 0]
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .collect()
+}
+
+fn shader(device: &mut VulkanDevice, stage: ShaderStage) -> ShaderId {
+    let code = spirv_bytes();
+    let desc = ShaderDesc {
+        stage,
+        code: &code,
+        entry: "main",
+    };
+    match device.create_shader(desc) {
+        Ok(id) => id,
+        Err(error) => panic!("expected a shader, got: {error:?}"),
+    }
+}
+
+fn pipeline(device: &mut VulkanDevice) -> PipelineId {
+    let vertex_shader = shader(device, ShaderStage::Vertex);
+    let fragment_shader = shader(device, ShaderStage::Fragment);
+    let attributes = [VertexAttribute {
+        location: 0,
+        format: VertexFormat::Float2,
+        offset: 0,
+    }];
+    let desc = PipelineDesc {
+        vertex_shader,
+        fragment_shader,
+        vertex_stride: 8,
+        attributes: &attributes,
+        blend: BlendMode::Alpha,
+        depth: DepthState {
+            test: false,
+            write: false,
+        },
+        color_format: TextureFormat::Rgba8,
+        depth_format: None,
+    };
+    match device.create_pipeline(desc) {
+        Ok(id) => id,
+        Err(error) => panic!("expected a pipeline, got: {error:?}"),
+    }
+}
+
+fn buffer(device: &mut VulkanDevice, usage: BufferUsage) -> BufferId {
+    match device.create_buffer(BufferDesc { size: 64, usage }) {
+        Ok(id) => id,
+        Err(error) => panic!("expected a buffer, got: {error:?}"),
+    }
+}
+
+fn sampler(device: &mut VulkanDevice) -> SamplerId {
+    let desc = SamplerDesc {
+        min_filter: Filter::Linear,
+        mag_filter: Filter::Linear,
+        address: AddressMode::Clamp,
+    };
+    match device.create_sampler(desc) {
+        Ok(id) => id,
+        Err(error) => panic!("expected a sampler, got: {error:?}"),
+    }
+}
+
+/// A stream that draws three vertices to the backbuffer with `pipeline`.
+fn triangle(pipeline: PipelineId, vertices: BufferId) -> CommandStream {
+    let mut stream = CommandStream::new();
+    stream.begin_pass(pass(RenderTarget::Backbuffer, Some([0.0; 4])));
+    stream.set_pipeline(pipeline);
+    stream.bind_vertex_buffer(0, vertices, 16);
+    stream.draw(3, 1);
+    stream.end_pass();
+    stream
+}
+
+#[test]
+fn a_shader_that_is_not_spirv_or_has_another_entry_is_refused_and_leaves_no_handle() {
+    let mut device = device();
+    let bad = [
+        (vec![0_u8; 8], "main"),
+        (spirv_bytes()[..7].to_vec(), "main"),
+        (spirv_bytes(), "other"),
+    ];
+    for (code, entry) in &bad {
+        let desc = ShaderDesc {
+            stage: ShaderStage::Vertex,
+            code,
+            entry,
+        };
+        assert_eq!(
+            device.create_shader(desc).map(|_| ()),
+            Err(RenderError::InvalidDescription),
+            "{entry} {code:?}"
+        );
+    }
+    assert_eq!(fake::with(|s| s.draw.modules.len()), 0);
+    let good = shader(&mut device, ShaderStage::Vertex);
+    device.destroy_shader(good);
+    assert_eq!(fake::with(|s| s.draw.modules.len()), 0);
+}
+
+#[test]
+fn a_storage_buffer_in_a_shader_is_unsupported() {
+    let mut device = device();
+    // OpVariable (id 5, class StorageBuffer) and OpDecorate DescriptorSet on it.
+    let words = [
+        0x0723_0203_u32,
+        0x0001_0600,
+        0,
+        6,
+        0,
+        0x0004_003B,
+        1,
+        5,
+        12,
+        0x0004_0047,
+        5,
+        34,
+        0,
+    ];
+    let code: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
+    let desc = ShaderDesc {
+        stage: ShaderStage::Fragment,
+        code: &code,
+        entry: "main",
+    };
+    assert_eq!(
+        device.create_shader(desc).map(|_| ()),
+        Err(RenderError::Unsupported)
+    );
+}
+
+#[test]
+fn a_pipeline_is_made_for_each_target_format_and_destroyed_with_its_handle() {
+    let mut device = device();
+    let id = pipeline(&mut device);
+    let formats = fake::with(|s| {
+        let mut formats: Vec<u32> = s.draw.pipelines.values().map(|p| p.color_format).collect();
+        formats.sort_unstable();
+        formats
+    });
+    assert_eq!(formats, [37, 44]);
+    device.destroy_pipeline(id);
+    assert_eq!(fake::with(|s| s.draw.pipelines.len()), 0);
+}
+
+#[test]
+fn a_refused_pipeline_leaves_nothing_behind_and_the_handle_goes_back() {
+    let mut device = device();
+    let vertex_shader = shader(&mut device, ShaderStage::Vertex);
+    let fragment_shader = shader(&mut device, ShaderStage::Fragment);
+    let attributes = [VertexAttribute {
+        location: 0,
+        format: VertexFormat::Float2,
+        offset: 0,
+    }];
+    let desc = PipelineDesc {
+        vertex_shader,
+        fragment_shader,
+        vertex_stride: 8,
+        attributes: &attributes,
+        blend: BlendMode::Opaque,
+        depth: DepthState {
+            test: false,
+            write: false,
+        },
+        color_format: TextureFormat::Rgba8,
+        depth_format: None,
+    };
+    fake::with(|s| s.fail_call = Some("vkCreateGraphicsPipelines"));
+    assert_eq!(
+        device.create_pipeline(desc).map(|_| ()),
+        Err(RenderError::OutOfMemory)
+    );
+    assert_eq!(fake::with(|s| s.draw.pipelines.len()), 0);
+    fake::with(|s| s.fail_call = None);
+    assert!(device.create_pipeline(desc).is_ok());
+}
+
+#[test]
+fn a_draw_binds_the_variant_for_the_target_sets_the_whole_target_and_draws() {
+    let mut device = device();
+    let id = surface(&mut device);
+    let pipe = pipeline(&mut device);
+    let vertices = buffer(&mut device, BufferUsage::Vertex);
+    assert_eq!(
+        run(&mut device, id, &triangle(pipe, vertices)).map(|_| ()),
+        Ok(())
+    );
+    let commands = fake::with(|s| s.draw.commands.clone());
+    let bgra = fake::with(|s| {
+        s.draw
+            .pipelines
+            .iter()
+            .find(|(_, p)| p.color_format == 44)
+            .map(|(handle, _)| *handle)
+    });
+    let Some(bgra) = bgra else {
+        panic!("a BGRA variant");
+    };
+    let whole = Viewport {
+        x: 0.0,
+        y: 600.0,
+        width: 800.0,
+        height: -600.0,
+        min_depth: 0.0,
+        max_depth: 1.0,
+    };
+    assert_eq!(commands[0], DrawCommand::Viewport(whole));
+    assert!(matches!(commands[1], DrawCommand::Scissor(_)));
+    assert_eq!(commands[2], DrawCommand::BindPipeline(bgra));
+    assert!(matches!(
+        commands[3],
+        DrawCommand::BindVertex { offset: 16, .. }
+    ));
+    assert!(matches!(
+        commands[4],
+        DrawCommand::BindSets { first: 0, .. }
+    ));
+    assert_eq!(
+        commands[5],
+        DrawCommand::Draw {
+            vertices: 3,
+            instances: 1
+        }
+    );
+}
+
+#[test]
+fn the_sets_are_made_again_only_when_a_bind_changed_them() {
+    let mut device = device();
+    let id = surface(&mut device);
+    let pipe = pipeline(&mut device);
+    let vertices = buffer(&mut device, BufferUsage::Vertex);
+    let uniforms = buffer(&mut device, BufferUsage::Uniform);
+    let mut stream = CommandStream::new();
+    stream.begin_pass(pass(RenderTarget::Backbuffer, None));
+    stream.set_pipeline(pipe);
+    stream.bind_vertex_buffer(0, vertices, 0);
+    stream.bind_uniforms(0, uniforms);
+    stream.draw(3, 1);
+    stream.draw(3, 1);
+    stream.bind_uniforms(1, uniforms);
+    stream.draw(3, 1);
+    stream.end_pass();
+    assert!(run(&mut device, id, &stream).is_ok());
+    let sets = fake::with(|s| {
+        s.draw
+            .commands
+            .iter()
+            .filter(|c| matches!(c, DrawCommand::BindSets { .. }))
+            .count()
+    });
+    assert_eq!(sets, 2);
+    let written = fake::with(|s| s.draw.writes.iter().map(|w| w.binding).collect::<Vec<_>>());
+    assert_eq!(written, [0, 0, 1]);
+}
+
+#[test]
+fn a_viewport_command_is_flipped_for_vulkan() {
+    let mut device = device();
+    let id = surface(&mut device);
+    let mut stream = CommandStream::new();
+    stream.begin_pass(pass(RenderTarget::Backbuffer, None));
+    stream.set_viewport(Rect {
+        x: 10,
+        y: 20,
+        width: 100,
+        height: 50,
+    });
+    stream.end_pass();
+    assert!(run(&mut device, id, &stream).is_ok());
+    let viewports: Vec<Viewport> = fake::with(|s| {
+        s.draw
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                DrawCommand::Viewport(v) => Some(*v),
+                _ => None,
+            })
+            .collect()
+    });
+    assert_eq!(viewports.len(), 2);
+    assert_eq!(
+        (viewports[1].x, viewports[1].y, viewports[1].height),
+        (10.0, 580.0, -50.0)
+    );
+}
+
+#[test]
+fn an_index_buffer_is_bound_with_its_width() {
+    let mut device = device();
+    let id = surface(&mut device);
+    let pipe = pipeline(&mut device);
+    let vertices = buffer(&mut device, BufferUsage::Vertex);
+    let indices = buffer(&mut device, BufferUsage::Index);
+    let mut stream = CommandStream::new();
+    stream.begin_pass(pass(RenderTarget::Backbuffer, None));
+    stream.set_pipeline(pipe);
+    stream.bind_vertex_buffer(0, vertices, 0);
+    stream.bind_index_buffer(indices, 4, IndexType::U32);
+    stream.draw_indexed(6, 2);
+    stream.end_pass();
+    assert!(run(&mut device, id, &stream).is_ok());
+    let commands = fake::with(|s| s.draw.commands.clone());
+    assert!(commands.iter().any(|c| matches!(
+        c,
+        DrawCommand::BindIndex {
+            offset: 4,
+            index_type: 1,
+            ..
+        }
+    )));
+    assert!(commands.contains(&DrawCommand::DrawIndexed {
+        indices: 6,
+        instances: 2
+    }));
+}
+
+#[test]
+fn a_texture_bound_for_a_draw_must_be_readable_by_a_shader_already() {
+    let mut device = device();
+    let id = surface(&mut device);
+    let pipe = pipeline(&mut device);
+    let vertices = buffer(&mut device, BufferUsage::Vertex);
+    let tex = texture(&mut device, TextureFormat::Rgba8);
+    let samp = sampler(&mut device);
+    let draw_with = |stream: &mut CommandStream| {
+        stream.begin_pass(pass(RenderTarget::Backbuffer, None));
+        stream.set_pipeline(pipe);
+        stream.bind_vertex_buffer(0, vertices, 0);
+        stream.bind_texture(0, tex, samp);
+        stream.draw(3, 1);
+        stream.end_pass();
+    };
+    // A written texture is readable by a shader without any barrier.
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 16,
+        height: 16,
+    };
+    assert_eq!(device.write_texture(tex, area, &[0; 16 * 16 * 4]), Ok(()));
+    let mut ready = CommandStream::new();
+    draw_with(&mut ready);
+    assert!(run(&mut device, id, &ready).is_ok());
+    let writes = fake::with(|s| s.draw.writes.clone());
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].layout, LAYOUT_SHADER_READ);
+}
+
+#[test]
+fn a_texture_in_another_layout_is_refused_and_the_rendering_scope_is_closed() {
+    let mut device = device();
+    let id = surface(&mut device);
+    let pipe = pipeline(&mut device);
+    let vertices = buffer(&mut device, BufferUsage::Vertex);
+    let tex = texture(&mut device, TextureFormat::Rgba8);
+    let samp = sampler(&mut device);
+    // The texture is a colour target now, so a shader cannot read it.
+    let mut target = CommandStream::new();
+    target.begin_pass(pass(RenderTarget::Texture(tex), Some([1.0; 4])));
+    target.end_pass();
+    let mut stream = CommandStream::new();
+    stream.begin_pass(pass(RenderTarget::Backbuffer, None));
+    stream.set_pipeline(pipe);
+    stream.bind_vertex_buffer(0, vertices, 0);
+    stream.bind_texture(0, tex, samp);
+    stream.draw(3, 1);
+    stream.end_pass();
+    assert!(run(&mut device, id, &target).is_ok());
+    fake::clear_log();
+    assert_eq!(
+        run(&mut device, id, &stream).map(|_| ()),
+        Err(RenderError::InvalidDescription)
+    );
+    // The scope opened by the failed stream was closed, so the buffer could be ended.
+    assert_eq!(
+        log_of(&[
+            "vkCmdBeginRendering",
+            "vkCmdEndRendering",
+            "vkEndCommandBuffer"
+        ]),
+        [
+            "vkCmdBeginRendering",
+            "vkCmdEndRendering",
+            "vkEndCommandBuffer"
+        ]
+    );
+    assert!(
+        run(
+            &mut device,
+            id,
+            &clear_stream(RenderTarget::Backbuffer, [0.0; 4])
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn a_frame_resets_the_pool_of_its_slot_and_a_full_pool_is_out_of_memory() {
+    let mut device = device();
+    let id = surface(&mut device);
+    let pipe = pipeline(&mut device);
+    let vertices = buffer(&mut device, BufferUsage::Vertex);
+    let uniforms = buffer(&mut device, BufferUsage::Uniform);
+    assert!(
+        run(
+            &mut device,
+            id,
+            &clear_stream(RenderTarget::Backbuffer, [0.0; 4])
+        )
+        .is_ok()
+    );
+    assert_eq!(fake::with(|s| s.draw.pool_resets), 1);
+    let mut stream = CommandStream::new();
+    stream.begin_pass(pass(RenderTarget::Backbuffer, None));
+    stream.set_pipeline(pipe);
+    stream.bind_vertex_buffer(0, vertices, 0);
+    for _ in 0..1030 {
+        stream.bind_uniforms(0, uniforms);
+        stream.draw(3, 1);
+    }
+    stream.end_pass();
+    assert_eq!(
+        run(&mut device, id, &stream).map(|_| ()),
+        Err(RenderError::OutOfMemory)
+    );
+    // The next frame on the same slot has its pool back.
+    let calm = triangle(pipe, vertices);
+    assert!(run(&mut device, id, &calm).is_ok());
+    assert!(run(&mut device, id, &calm).is_ok());
+}
+
+#[test]
+fn a_pipeline_destroyed_in_a_frame_that_recorded_it_is_freed_after_the_frame_is_on_the_queue() {
+    let mut device = device();
+    let id = surface(&mut device);
+    let pipe = pipeline(&mut device);
+    let vertices = buffer(&mut device, BufferUsage::Vertex);
+    let Ok(frame) = device.begin_frame(id) else {
+        panic!("a frame");
+    };
+    assert!(device.submit(frame, &triangle(pipe, vertices)).is_ok());
+    fake::clear_log();
+    device.destroy_pipeline(pipe);
+    assert!(log_of(&["vkDestroyPipeline"]).is_empty(), "freed too early");
+    assert_eq!(device.end_frame(frame), Ok(()));
+    let calls = log_of(&["vkQueueSubmit2", "vkDestroyPipeline"]);
+    assert_eq!(calls.first(), Some(&"vkQueueSubmit2"));
+    assert_eq!(
+        calls.iter().filter(|c| **c == "vkDestroyPipeline").count(),
+        2
+    );
+}
+
+#[test]
+fn the_pools_of_a_surface_go_with_it_and_everything_is_freed_with_the_device() {
+    let mut device = device();
+    let id = surface(&mut device);
+    assert_eq!(fake::with(|s| s.draw.pools.len()), 2);
+    device.destroy_surface(id);
+    assert_eq!(fake::with(|s| s.draw.pools.len()), 0);
+    let again = surface(&mut device);
+    let pipe = pipeline(&mut device);
+    let _ = (again, pipe);
+    drop(device);
+    let left: Vec<_> = fake::live_objects().into_iter().map(|o| o.0).collect();
+    assert!(left.is_empty(), "left behind: {left:?}");
+}
+
+#[test]
+fn a_pass_into_a_texture_is_not_flipped_and_one_into_the_backbuffer_is() {
+    let mut device = device();
+    let id = surface(&mut device);
+    let target = texture(&mut device, TextureFormat::Rgba8);
+    for (render_target, expected_y, expected_height) in [
+        (RenderTarget::Texture(target), 0.0, 16.0),
+        (RenderTarget::Backbuffer, 600.0, -600.0),
+    ] {
+        fake::with(|s| s.draw.commands.clear());
+        let mut stream = CommandStream::new();
+        stream.begin_pass(pass(render_target, None));
+        stream.end_pass();
+        assert!(run(&mut device, id, &stream).is_ok());
+        let first = fake::with(|s| s.draw.commands.first().copied());
+        let Some(DrawCommand::Viewport(viewport)) = first else {
+            panic!("a pass sets its viewport first");
+        };
+        assert_eq!((viewport.y, viewport.height), (expected_y, expected_height));
+    }
 }

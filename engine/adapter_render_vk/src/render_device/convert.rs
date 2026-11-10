@@ -1,10 +1,14 @@
 //! Port types to the adapter's own resource types, and the adapter's errors to port errors.
 //! Pure functions, so each mapping is a table that is tested on its own.
 
+use crate::draw::Attribute;
 use crate::error::VulkanError;
 use crate::resources::{
     AddressMode, BufferDesc, BufferUsage, Filter, Region, SamplerDesc, TextureDesc, TextureFormat,
 };
+use crate::spirv::SpirvError;
+use crate::vk_draw as vd;
+use crate::vk_resource::FORMAT_D32_SFLOAT;
 use render::desc as port;
 use render::error::RenderError;
 
@@ -14,6 +18,8 @@ const OUT_OF_HOST_MEMORY: i32 = -1;
 const OUT_OF_DEVICE_MEMORY: i32 = -2;
 /// `VK_ERROR_DEVICE_LOST`.
 const DEVICE_LOST: i32 = -4;
+/// `VK_ERROR_OUT_OF_POOL_MEMORY`: a frame asked for more descriptor sets than its pool holds.
+const OUT_OF_POOL_MEMORY: i32 = -1_000_069_000;
 
 /// The port error for an adapter error. A call that fails for memory is `OutOfMemory`; a lost
 /// device or surface is `SurfaceLost` (the app recreates its surface or its device); the rest
@@ -25,7 +31,9 @@ pub fn render_error(error: &VulkanError) -> RenderError {
         VulkanError::InvalidHandle => RenderError::InvalidHandle,
         VulkanError::Invalid(_) => RenderError::InvalidDescription,
         VulkanError::Call { result, .. } => match *result {
-            OUT_OF_HOST_MEMORY | OUT_OF_DEVICE_MEMORY => RenderError::OutOfMemory,
+            OUT_OF_HOST_MEMORY | OUT_OF_DEVICE_MEMORY | OUT_OF_POOL_MEMORY => {
+                RenderError::OutOfMemory
+            }
             DEVICE_LOST => RenderError::SurfaceLost,
             _ => RenderError::Unsupported,
         },
@@ -34,6 +42,39 @@ pub fn render_error(error: &VulkanError) -> RenderError {
         | VulkanError::InstanceTooOld(_)
         | VulkanError::NoSuitableDevice
         | VulkanError::Unsupported(_) => RenderError::Unsupported,
+    }
+}
+
+/// The port error for a shader blob the adapter cannot take.
+#[must_use]
+pub fn spirv_error(error: SpirvError) -> RenderError {
+    match error {
+        SpirvError::UnsupportedResource => RenderError::Unsupported,
+        _ => RenderError::InvalidDescription,
+    }
+}
+
+/// A vertex attribute in Vulkan terms.
+#[must_use]
+pub fn attribute(attribute: port::VertexAttribute) -> Attribute {
+    Attribute {
+        location: attribute.location,
+        format: match attribute.format {
+            port::VertexFormat::Float2 => vd::FORMAT_R32G32_SFLOAT,
+            port::VertexFormat::Float3 => vd::FORMAT_R32G32B32_SFLOAT,
+            port::VertexFormat::Float4 => vd::FORMAT_R32G32B32A32_SFLOAT,
+            port::VertexFormat::Unorm8x4 => crate::vk_resource::FORMAT_R8G8B8A8_UNORM,
+        },
+        offset: attribute.offset,
+    }
+}
+
+/// The depth attachment format of a pipeline, `FORMAT_UNDEFINED` for a pass without depth.
+#[must_use]
+pub fn depth_format(format: Option<port::TextureFormat>) -> u32 {
+    match format {
+        Some(_) => FORMAT_D32_SFLOAT,
+        None => vd::FORMAT_UNDEFINED,
     }
 }
 
@@ -113,6 +154,10 @@ mod tests {
         assert_eq!(render_error(&call(-4)), RenderError::SurfaceLost);
         assert_eq!(render_error(&call(-3)), RenderError::Unsupported);
         assert_eq!(
+            render_error(&call(-1_000_069_000)),
+            RenderError::OutOfMemory
+        );
+        assert_eq!(
             render_error(&VulkanError::SurfaceLost),
             RenderError::SurfaceLost
         );
@@ -132,6 +177,34 @@ mod tests {
             render_error(&VulkanError::NoLoader),
             RenderError::Unsupported
         );
+    }
+
+    #[test]
+    fn shader_and_vertex_descriptions_have_their_vulkan_terms() {
+        assert_eq!(
+            spirv_error(SpirvError::UnsupportedResource),
+            RenderError::Unsupported
+        );
+        assert_eq!(
+            spirv_error(SpirvError::BadMagic),
+            RenderError::InvalidDescription
+        );
+        let formats = [
+            (port::VertexFormat::Float2, 103),
+            (port::VertexFormat::Float3, 106),
+            (port::VertexFormat::Float4, 109),
+            (port::VertexFormat::Unorm8x4, 37),
+        ];
+        for (format, expected) in formats {
+            let made = attribute(port::VertexAttribute {
+                location: 2,
+                format,
+                offset: 8,
+            });
+            assert_eq!((made.location, made.format, made.offset), (2, expected, 8));
+        }
+        assert_eq!(depth_format(None), 0);
+        assert_eq!(depth_format(Some(port::TextureFormat::Depth32F)), 126);
     }
 
     #[test]

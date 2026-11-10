@@ -11,9 +11,16 @@
 //! present layout, submits the buffer and presents. Images are moved between layouts by the
 //! device as passes need them; a `Barrier` command moves one on request ([`exec`]).
 //!
+//! Shaders and pipelines (card 6-14): a shader blob is SPIR-V (backend byte 1 of the `dshd` file),
+//! checked and renumbered into the adapter's fixed binding scheme ([`crate::spirv`]); a pipeline
+//! is made twice, for an `R8G8B8A8` and for a `B8G8R8A8` target, because the port does not tie a
+//! pipeline to the target it is used with and Vulkan does. Each surface has a descriptor pool per
+//! frame in flight, reset when the frame's turn comes round.
+//!
 //! Known limits of this part:
-//! - Shaders and pipelines are refused (`Unsupported`) until the next part of the card; the
-//!   commands that need a pipeline are accepted and do nothing.
+//! - A shader has the entry point `main`, binds at most 8 uniform buffers and 8 textures, and has
+//!   no storage buffer (`Unsupported`); a frame draws at most 1024 times with changed bindings
+//!   (`OutOfMemory` after that, until the next frame).
 //! - One live surface per window: the Vulkan surface of a window can exist once.
 //! - Writes (`write_buffer`, `write_texture`) and `read_back` run at once on their own queue
 //!   submission, so they see the work of the frames already ended and not the commands recorded
@@ -28,18 +35,25 @@
 //!   reports `SurfaceLost`, and the surface is made again.
 //! - A frame on a window without area (minimised) executes nothing, texture passes included.
 
+use crate::draw::{Draw, PipelineSpec, Stage};
 use crate::error::VulkanError;
+use crate::frame::FRAMES_IN_FLIGHT;
 use crate::presenter::{Begin, FrameOutcome, Presenter};
 use crate::resources::TextureId as OwnTexture;
 use crate::resources::{BufferId as OwnBuffer, Resources, SamplerId as OwnSampler};
+use crate::spirv;
 use crate::table::Table;
+use crate::vk_draw::Handle;
+use crate::vk_present::FORMAT_B8G8R8A8_UNORM;
+use crate::vk_resource::FORMAT_R8G8B8A8_UNORM;
 use crate::{ValidationReport, VulkanContext, VulkanOptions};
-use exec::{Exec, FrameState, present_layout};
+use core::ffi::CStr;
+use exec::{Exec, FrameState, Objects, present_layout};
 use platform::window::NativeToken;
 use render::caps::RenderCaps;
 use render::desc::{
-    BufferDesc, PipelineDesc, Rect, SamplerDesc, ShaderDesc, SubmitStats, SurfaceDesc, TextureDesc,
-    TextureFormat,
+    BlendMode, BufferDesc, PipelineDesc, Rect, SamplerDesc, ShaderDesc, SubmitStats, SurfaceDesc,
+    TextureDesc, TextureFormat,
 };
 use render::device::IRenderDevice;
 use render::error::RenderError;
@@ -52,12 +66,18 @@ mod exec;
 #[cfg(test)]
 mod tests;
 
-use convert::{buffer_desc, region, render_error, sampler_desc, texture_desc};
+use convert::{
+    attribute, buffer_desc, depth_format, region, render_error, sampler_desc, spirv_error,
+    texture_desc,
+};
 
 /// Resources of each kind the device can hold (the bookkeeping device keeps no bytes, so this
 /// costs a few bytes per slot).
 const CAPACITY: u32 = 1024;
 const DEVICE_NAME: &str = "Vulkan 1.3";
+/// The entry point every shader has (the shader compiler writes `main`).
+const ENTRY: &str = "main";
+const ENTRY_C: &CStr = c"main";
 
 /// What the device remembers about a texture besides its Vulkan objects.
 pub struct TextureRec {
@@ -65,6 +85,8 @@ pub struct TextureRec {
     pub width: u32,
     pub height: u32,
     pub depth: bool,
+    /// `B8G8R8A8` (else `R8G8B8A8` or depth): picks the pipeline variant of a pass.
+    pub bgra: bool,
 }
 
 /// The frame between `begin_frame` and `end_frame`.
@@ -82,6 +104,7 @@ enum Pending {
     Buffer(OwnBuffer),
     Texture(OwnTexture),
     Sampler(OwnSampler),
+    Pipeline([Handle; 2]),
 }
 
 /// The render device on a Vulkan 1.3 device and queue.
@@ -96,9 +119,15 @@ pub struct VulkanDevice {
     textures: Table<TextureRec>,
     samplers: Table<OwnSampler>,
     surfaces: Table<Presenter>,
+    shaders: Table<Handle>,
+    pipelines: Table<[Handle; 2]>,
+    /// The descriptor pool of each frame in flight, per surface.
+    pools: Table<[Handle; FRAMES_IN_FLIGHT]>,
     open: Option<OpenFrame>,
     pending: Vec<Pending>,
-    // After the tables: the resources and the context outlive what uses them.
+    // After the tables (the presenters wait for the device when they go): the draw objects, the
+    // resources and the context outlive what uses them.
+    draw: Draw,
     resources: Resources,
     context: VulkanContext,
 }
@@ -123,6 +152,7 @@ impl VulkanDevice {
         token: NativeToken,
     ) -> Result<Self, VulkanError> {
         let resources = context.create_resources()?;
+        let draw = Draw::new(context.core())?;
         let shadow = NullDevice::bookkeeping_only(CAPACITY);
         let port = shadow.caps();
         let caps = RenderCaps {
@@ -138,8 +168,12 @@ impl VulkanDevice {
             textures: Table::new(),
             samplers: Table::new(),
             surfaces: Table::new(),
+            shaders: Table::new(),
+            pipelines: Table::new(),
+            pools: Table::new(),
             open: None,
             pending: Vec::new(),
+            draw,
             resources,
             context,
         })
@@ -195,6 +229,7 @@ impl VulkanDevice {
             width: desc.width,
             height: desc.height,
             depth: desc.format == TextureFormat::Depth32F,
+            bgra: desc.format == TextureFormat::Bgra8,
         };
         if let Err((error, record)) = self.textures.insert(id, record) {
             self.resources.destroy_texture(record.id);
@@ -227,10 +262,134 @@ impl VulkanDevice {
         if matches!(outcome, Begin::Skipped(FrameOutcome::Recreated)) {
             outcome = presenter.begin_frame()?;
         }
-        Ok(match outcome {
-            Begin::Ready(back) => Some(FrameState::new(back)),
-            Begin::Skipped(_) => None,
-        })
+        match outcome {
+            Begin::Ready(back) => {
+                self.reset_pool(surface, back.slot)?;
+                Ok(Some(FrameState::new(back)))
+            }
+            Begin::Skipped(_) => Ok(None),
+        }
+    }
+
+    /// Gives back the sets of the frame slot that just came round (its fence was waited for).
+    fn reset_pool(&self, surface: SurfaceId, slot: usize) -> Result<(), VulkanError> {
+        let pool = self
+            .pools
+            .get(surface)
+            .and_then(|pools| pools.get(slot))
+            .ok_or(VulkanError::SurfaceLost)?;
+        self.draw.reset_pool(*pool)
+    }
+
+    /// The pools of a surface that is being made; what was made is destroyed on a failure.
+    fn make_pools(&mut self) -> Result<[Handle; FRAMES_IN_FLIGHT], RenderError> {
+        let mut made = Vec::with_capacity(FRAMES_IN_FLIGHT);
+        let result = (0..FRAMES_IN_FLIGHT).try_for_each(|_| {
+            made.push(self.draw.create_pool()?);
+            Ok::<(), VulkanError>(())
+        });
+        if let Err(error) = result {
+            self.destroy_pools(made);
+            return Err(render_error(&error));
+        }
+        made.try_into().map_err(|_| RenderError::Unsupported)
+    }
+
+    fn destroy_pools(&mut self, pools: impl IntoIterator<Item = Handle>) {
+        for pool in pools {
+            self.draw.destroy_pool(pool);
+        }
+    }
+
+    fn destroy_pipelines(&mut self, pipelines: impl IntoIterator<Item = Handle>) {
+        for pipeline in pipelines {
+            self.draw.destroy_pipeline(pipeline);
+        }
+    }
+
+    fn file_pools(&mut self, surface: SurfaceId) -> Result<(), RenderError> {
+        let pools = self.make_pools()?;
+        if let Err((error, pools)) = self.pools.insert(surface, pools) {
+            self.destroy_pools(pools);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Destroys the pools of a surface that is gone (after the device has finished with them).
+    fn drop_pools(&mut self, surface: SurfaceId) {
+        if let Some(pools) = self.pools.remove(surface) {
+            self.settle();
+            self.destroy_pools(pools);
+        }
+    }
+
+    fn make_shader(&mut self, id: ShaderId, desc: ShaderDesc<'_>) -> Result<(), RenderError> {
+        if desc.entry != ENTRY {
+            return Err(RenderError::InvalidDescription);
+        }
+        let mut words = spirv::words(desc.code).map_err(spirv_error)?;
+        spirv::retarget(&mut words).map_err(spirv_error)?;
+        let module = self
+            .draw
+            .create_shader(&words)
+            .map_err(|error| render_error(&error))?;
+        if let Err((error, module)) = self.shaders.insert(id, module) {
+            self.draw.destroy_shader(module);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Makes both variants of the pipeline (one per target format) and files them under `id`.
+    fn make_pipeline(
+        &mut self,
+        id: PipelineId,
+        desc: &PipelineDesc<'_>,
+    ) -> Result<(), RenderError> {
+        let vertex = *self
+            .shaders
+            .get(desc.vertex_shader)
+            .ok_or(RenderError::InvalidHandle)?;
+        let fragment = *self
+            .shaders
+            .get(desc.fragment_shader)
+            .ok_or(RenderError::InvalidHandle)?;
+        let attributes: Vec<_> = desc.attributes.iter().copied().map(attribute).collect();
+        let spec = |color_format| PipelineSpec {
+            vertex: Stage {
+                module: vertex,
+                entry: ENTRY_C,
+            },
+            fragment: Stage {
+                module: fragment,
+                entry: ENTRY_C,
+            },
+            stride: desc.vertex_stride,
+            attributes: &attributes,
+            blend: desc.blend == BlendMode::Alpha,
+            depth_test: desc.depth.test,
+            depth_write: desc.depth.write,
+            color_format,
+            depth_format: depth_format(desc.depth_format),
+        };
+        let rgba = self
+            .draw
+            .create_pipeline(&spec(FORMAT_R8G8B8A8_UNORM))
+            .map_err(|error| render_error(&error))?;
+        let bgra = match self.draw.create_pipeline(&spec(FORMAT_B8G8R8A8_UNORM)) {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                self.draw.destroy_pipeline(rgba);
+                return Err(render_error(&error));
+            }
+        };
+        // The index of a variant is `usize::from(target is bgra)`.
+        if let Err((error, variants)) = self.pipelines.insert(id, [rgba, bgra]) {
+            self.destroy_pipelines(variants);
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn frame_error<T>() -> Result<T, RenderError> {
@@ -263,6 +422,7 @@ impl VulkanDevice {
             Pending::Buffer(own) => self.resources.destroy_buffer(*own),
             Pending::Texture(own) => self.resources.destroy_texture(*own),
             Pending::Sampler(own) => self.resources.destroy_sampler(*own),
+            Pending::Pipeline(variants) => self.destroy_pipelines(*variants),
         }
     }
 
@@ -289,7 +449,9 @@ impl IRenderDevice for VulkanDevice {
                 .insert(id, presenter)
                 .map_err(|(error, _)| error)
         });
+        let made = made.and_then(|()| self.file_pools(id));
         if made.is_err() {
+            self.surfaces.remove(id);
             self.shadow.destroy_surface(id);
         }
         made.map(|()| id)
@@ -321,6 +483,7 @@ impl IRenderDevice for VulkanDevice {
             self.open = None;
         }
         self.surfaces.remove(surface);
+        self.drop_pools(surface);
         self.flush_pending();
     }
 
@@ -351,12 +514,22 @@ impl IRenderDevice for VulkanDevice {
         made.map(|()| id)
     }
 
-    fn create_shader(&mut self, _desc: ShaderDesc<'_>) -> Result<ShaderId, RenderError> {
-        Err(RenderError::Unsupported)
+    fn create_shader(&mut self, desc: ShaderDesc<'_>) -> Result<ShaderId, RenderError> {
+        let id = self.shadow.create_shader(desc)?;
+        let made = self.make_shader(id, desc);
+        if made.is_err() {
+            self.shadow.destroy_shader(id);
+        }
+        made.map(|()| id)
     }
 
-    fn create_pipeline(&mut self, _desc: PipelineDesc<'_>) -> Result<PipelineId, RenderError> {
-        Err(RenderError::Unsupported)
+    fn create_pipeline(&mut self, desc: PipelineDesc<'_>) -> Result<PipelineId, RenderError> {
+        let id = self.shadow.create_pipeline(desc)?;
+        let made = self.make_pipeline(id, &desc);
+        if made.is_err() {
+            self.shadow.destroy_pipeline(id);
+        }
+        made.map(|()| id)
     }
 
     fn write_buffer(
@@ -405,7 +578,13 @@ impl IRenderDevice for VulkanDevice {
         }
     }
 
-    fn destroy_shader(&mut self, _shader: ShaderId) {}
+    fn destroy_shader(&mut self, shader: ShaderId) {
+        self.shadow.destroy_shader(shader);
+        // A pipeline keeps its own copy of the code, so the module can go at once.
+        if let Some(module) = self.shaders.remove(shader) {
+            self.draw.destroy_shader(module);
+        }
+    }
 
     fn destroy_sampler(&mut self, sampler: SamplerId) {
         self.shadow.destroy_sampler(sampler);
@@ -414,7 +593,12 @@ impl IRenderDevice for VulkanDevice {
         }
     }
 
-    fn destroy_pipeline(&mut self, _pipeline: PipelineId) {}
+    fn destroy_pipeline(&mut self, pipeline: PipelineId) {
+        self.shadow.destroy_pipeline(pipeline);
+        if let Some(variants) = self.pipelines.remove(pipeline) {
+            self.retire(Pending::Pipeline(variants));
+        }
+    }
 
     fn begin_frame(&mut self, surface: SurfaceId) -> Result<FrameId, RenderError> {
         let frame = self.shadow.begin_frame(surface)?;
@@ -452,12 +636,24 @@ impl IRenderDevice for VulkanDevice {
             .surfaces
             .get(open.surface)
             .ok_or(RenderError::SurfaceLost)?;
+        let pool = self
+            .pools
+            .get(open.surface)
+            .and_then(|pools| pools.get(image.back.slot))
+            .ok_or(RenderError::SurfaceLost)?;
         let mut run = Exec {
             gear: presenter.gear(),
             cmd: image.back.cmd,
             textures: &self.textures,
             resources: &mut self.resources,
             state: image,
+            draw: &self.draw,
+            pool: *pool,
+            objects: Objects {
+                pipelines: &self.pipelines,
+                buffers: &self.buffers,
+                samplers: &self.samplers,
+            },
         };
         run.run(stream).map(|()| stats)
     }
@@ -480,6 +676,7 @@ impl IRenderDevice for VulkanDevice {
             // A failed submit leaves the frame's fence unsignalled, so the next frame on this
             // presenter would wait for it forever: the surface is lost, and made again.
             self.surfaces.remove(open.surface);
+            self.drop_pools(open.surface);
         }
         self.flush_pending();
         ended.map(|_| ()).map_err(|error| render_error(&error))

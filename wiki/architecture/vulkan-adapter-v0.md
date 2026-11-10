@@ -168,7 +168,7 @@ flowchart LR
 
 ## 7. Part 4a: the render device, frames, passes and barriers (card 6-9, first half)
 
-`VulkanDevice` is the `IRenderDevice` of the port on Vulkan 1.3. Card 6-9 is delivered in two pull requests: this one (4a) holds the device, the frame loop, passes, barriers and the resource calls, and passes the render contract suite; the next card (6-14, 4b) adds shaders, pipelines, descriptors and draw calls. `create_shader` and `create_pipeline` answer `Unsupported` until then, and the stream commands that need a pipeline (set pipeline, viewport, binds, draws) are accepted and do nothing, which cannot be seen because no pipeline exists and the bookkeeping device refuses a draw without one.
+`VulkanDevice` is the `IRenderDevice` of the port on Vulkan 1.3. Card 6-9 is delivered in two pull requests: this one (4a) holds the device, the frame loop, passes, barriers and the resource calls, and passes the render contract suite; the next card (6-14, 4b, section 8) adds shaders, pipelines, descriptors and draw calls. In this part `create_shader` and `create_pipeline` answered `Unsupported`, and the stream commands that needed a pipeline (set pipeline, viewport, binds, draws) were accepted and did nothing; section 8 replaces that.
 
 The adapter now depends on `base` and `render` (as the GL adapter does). A bookkeeping `NullDevice` inside the device issues the handles and checks every call and every stream, so the rules exist once; the Vulkan side acts only after it agrees, and gives the handle back when Vulkan then fails. The port's descriptions are mapped onto the adapter's own resource types by pure functions (`render_device/convert.rs`), and an adapter error onto the port's `RenderError` (memory failures are `OutOfMemory`, a lost device or surface is `SurfaceLost`, other driver failures `Unsupported`).
 
@@ -219,3 +219,52 @@ sequenceDiagram
 - Not sampleable: the backbuffer and depth textures are created without sampling usage, so a barrier to `ShaderRead` on them, and a depth texture as the colour target of a pass, are refused (`Unsupported`) although the bookkeeping device accepts them.
 - The device uses the uniform alignment of the port (256), which Vulkan guarantees as an upper bound, and not the device's own value.
 - The validation layer is not installed on the development machine, so the real-device tests ran without it (each prints a note). A job with the layer must run them before the milestone.
+
+## 8. Part 4b: shaders, pipelines, descriptors, viewport, binds and draws (card 6-14)
+
+With this part `VulkanDevice` draws: `create_shader`, `create_pipeline`, the viewport command, the bind commands and `Draw` / `DrawIndexed` are real. The render contract suite still passes unchanged on the GPU (no new contract case), and the sprite shaders of the engine draw a picture that a real-device test reads back.
+
+```mermaid
+flowchart TB
+  subgraph create["creation (device calls)"]
+    blob["ShaderDesc.code: SPIR-V bytes (dshd backend 1)"] --> check["spirv::words + retarget: magic, length, sets renumbered"]
+    check --> mod["VkShaderModule"]
+    mod --> pipes["create_pipeline: 2 VkPipelines, one per target format (R8G8B8A8, B8G8R8A8)"]
+  end
+  subgraph frame["per frame in flight (per surface)"]
+    pool["descriptor pool, reset when the frame's turn comes round (begin_frame)"]
+  end
+  subgraph run["Exec: one stream"]
+    bp["BeginPass: full viewport + scissor, bindings cleared"] --> sp["SetPipeline: bind the variant for the pass target"]
+    sp --> bind["BindUniforms / BindTexture: note the slot, mark dirty"]
+    bind --> draw["Draw / DrawIndexed: if dirty, take 2 sets from the pool, write the bound slots, bind them; then draw"]
+  end
+  pipes --> sp
+  pool --> draw
+```
+
+**The fixed binding scheme.** One pipeline layout serves every pipeline: set 0 holds 8 uniform buffers, set 1 holds 8 combined image samplers, both visible to the vertex and the fragment stage; the binding number is the slot the stream binds (the port has 8 slots of each kind). The shader files carry the sets their GLSL source declared, and the engine's sprite sources put the uniform block and the texture both at `set = 0, binding = 0` (two namespaces in OpenGL, a clash in one Vulkan set). The adapter therefore owns the set numbers: `spirv::retarget` reads the instruction list of a private copy of the module and rewrites the `DescriptorSet` decoration of each variable by its storage class (uniform block to set 0, sampled texture to set 1); a binding of 8 or more, or a storage buffer, is refused (`Unsupported`). The asset is never changed. Entry point is `main` (what the shader compiler writes); a blob that is not whole words, is shorter than a header or has the wrong magic is `InvalidDescription`.
+
+**Pipelines.** A pipeline is made for dynamic rendering (the colour and depth formats go in the create info's `VkPipelineRenderingCreateInfo`), triangle lists, filled, no culling (as GL here), viewport and scissor dynamic, depth compare `<=` when the test is on, blend `Opaque` = replace and `Alpha` = source alpha / one minus source alpha. The port ties a pipeline to a colour format only on paper (the bookkeeping device does not compare it with the pass), whereas Vulkan needs the formats to match at the draw, and the swapchain is always `B8G8R8A8`: the device therefore makes **two** pipelines per `create_pipeline` (for `R8G8B8A8` and `B8G8R8A8` targets) and `SetPipeline` binds the one for the pass's target. Pipeline creation costs twice as much and nothing is made later, so a failure is reported by `create_pipeline`, never by a draw.
+
+**Descriptor sets.** Each surface has one descriptor pool per frame in flight, made with the surface and reset at `begin_frame` (after the frame's fence was waited for, so the sets of two frames ago are certainly not in use). A bind only notes the slot; the first draw after a bind takes two sets from the frame's pool, writes the bound slots (one `vkUpdateDescriptorSets` call per descriptor, no allocation) and binds both, and the next draw reuses them until another bind. A pool holds 1024 pairs; the 1025th changed binding in one frame fails with `VK_ERROR_OUT_OF_POOL_MEMORY`, which is `OutOfMemory`, and the next frame has its pool back. A texture bound for a draw must already be in the shader-read layout (a barrier cannot be recorded inside a rendering scope), else the stream fails with `InvalidDescription`.
+
+**Viewport.** The port's viewport has its origin at the bottom left. Into the **backbuffer** the device sets a viewport with a negative height (`y = H - rect.y`, `height = -rect.height`), so one projection gives one picture in the window on both adapters; the scissor, which cannot be flipped, is converted by hand and clamped to the target. Into a **texture** nothing is flipped, because the port says row 0 of a texture is its bottom row (GL order): clip space `y = -1` lands on row 0, a texture holds the same rows on both adapters and a later pass samples it the same way. Every pass starts with the whole target as viewport and scissor and with nothing bound (the bookkeeping device resets the bindings at each pass too).
+
+**Destroying.** A shader module is destroyed at once (a pipeline keeps its own copy of the code). A pipeline may be named by the open frame's recorded commands, so it follows the rule of the other resources: waited for and freed at once, or kept until `end_frame` has put the frame on the queue. The pools go with their surface. A failure inside a stream closes the open rendering scope, so the command buffer can still be ended and presented (a test covers it).
+
+**How part 4b is tested.**
+
+| Level | What | Needs a GPU |
+|---|---|---|
+| Unit | SPIR-V check and retarget (8 tests: header errors, sets by storage class, binding limit, storage buffer, instruction walk); viewport and scissor maths, flipped and not, clamped, empty (5); vertex format, depth format and error maps (2); struct sizes against the headers (3) | no |
+| Fake driver | `Draw` (10 tests: layouts, objects freed on drop, a failed layout, module words, destroy once, the pipeline record, a refused pipeline, bound slots written, a full pool then a reset, state and draw commands); `VulkanDevice` (refused blobs, storage buffer, two variants per pipeline, a refused pipeline, the commands of a draw in order, sets made again only after a bind, flipped and unflipped viewports, index buffer width, a texture in another layout refused and the scope closed, pool reset per frame and a full pool, pipeline destroyed inside a frame, pools freed with the surface) | no |
+| Real device | `tests/device.rs`: the contract suite (unchanged), the sprite SPIR-V from the shader compiler's golden file drawing a quad into a texture (row 0 at the bottom), a viewport rectangle, six frames of plain and indexed draws into the backbuffer | yes; "not run" otherwise, a failure when `DUCK_REQUIRE_VK=1` |
+
+**Limits of part 4b:**
+
+- The Khronos validation layer is still not installed on the development machine; the real-device runs were not validated by it (each prints a note). The fake driver checks the shapes it can (formats, dynamic states, pool capacity, live objects), not the Vulkan rules as a whole.
+- One vertex buffer (slot 0), 8 + 8 binding slots, triangle lists, no culling, no stencil, no multisampling: what the port describes today.
+- A shader has the entry point `main`, no storage buffers, no binding of 8 or more, and its descriptor sets are renumbered as above; a second shader convention would need a second scheme.
+- A frame draws at most 1024 times with changed bindings.
+- The per-frame pools are sized for that bound; they are never grown.
