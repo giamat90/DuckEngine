@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v1.33 (2026-11-10).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v1.34 (2026-11-10).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.34** - Vulkan adapter part 3 (card 6-8, Class 2; `unsafe`, allocators): [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md) gains section 6, the own memory sub-allocator, buffers, textures, samplers and staged uploads with layout transitions, with a flow view and how it is tested.
 > - **v1.33** - Vulkan adapter part 2 (card 6-7, Class 2; `unsafe`, window system, swapchain): [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md) gains section 5, the surface from the native window token, the Bgra8 swapchain, two frames in flight, the clear colour and the one-pixel readback, with a sequence view and how it is tested.
 > - **v1.32** - Vulkan adapter part 1 (card 6-6, Class 2; new adapter, `unsafe`): new page [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md), the loader, instance, device choice, device and graphics queue of the new `adapter_render_vk` crate, its tear-down order and how it is tested without a GPU.
 > - **v1.31** - Vulkan availability spike (card 6-5, Class 1 documentation; spike, no engine code): new page [spikes/vulkan-availability-spike](spikes/vulkan-availability-spike.md), what the hosted runner images offer: lavapipe on Linux after an `apt install` (Ubuntu 24.04, 26.04 = `ubuntu-latest`, 22.04), no Vulkan device on Windows; recommendation for O6; the two open items of [architecture/vulkan-and-mesh-v0](architecture/vulkan-and-mesh-v0.md) are measured.
@@ -190,7 +191,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 39 | [spikes/phase4-milestone-review](spikes/phase4-milestone-review.md) | Phase 4 milestone review (card 4-25): exit criteria, cards and releases, metrics (per-card vs whole-phase), hosted CI evidence, open findings, process lessons and the recommendation for the owner |
 | 40 | [spikes/phase5-milestone-review](spikes/phase5-milestone-review.md) | Phase 5 milestone review (card 5-9): exit criteria, cards and pull requests, metrics (per-card vs whole-phase), open findings, process lessons and the recommendation for the owner |
 | 41 | [spikes/vulkan-availability-spike](spikes/vulkan-availability-spike.md) | Vulkan availability spike (card 6-5): what hosted Linux and Windows runners offer (lavapipe versions, no Windows device), recommendation for O6 |
-| 42 | [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md) | Vulkan adapter (cards 6-6 onwards): loader, instance, device, queue, surface, swapchain, clear colour; ownership and tear-down; tests |
+| 42 | [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md) | Vulkan adapter (cards 6-6 onwards): loader, instance, device, queue, surface, swapchain, clear colour, memory sub-allocator, buffers, textures, samplers, uploads; ownership and tear-down; tests |
 
 ## Confidence legend used in this wiki
 

@@ -22,6 +22,10 @@ pub enum VulkanError {
     Unsupported(&'static str),
     /// The window's surface is gone (`VK_ERROR_SURFACE_LOST_KHR`).
     SurfaceLost,
+    /// A handle that names nothing: never made, or already destroyed.
+    InvalidHandle,
+    /// An argument the adapter refuses (a zero size, a region outside a texture, a wrong length).
+    Invalid(&'static str),
     /// A Vulkan call returned an error code.
     Call {
         /// The Vulkan function.
@@ -92,6 +96,8 @@ impl fmt::Display for VulkanError {
             ),
             Self::Unsupported(what) => write!(f, "not supported: {what}"),
             Self::SurfaceLost => f.write_str("the window surface was lost"),
+            Self::InvalidHandle => f.write_str("the handle names no live resource"),
+            Self::Invalid(what) => write!(f, "invalid argument: {what}"),
             Self::Call { call, result } => {
                 write!(f, "{call} failed: {} ({result})", result_name(*result))
             }
@@ -115,6 +121,8 @@ mod tests {
             VulkanError::NoSuitableDevice,
             VulkanError::Unsupported("a thing"),
             VulkanError::SurfaceLost,
+            VulkanError::InvalidHandle,
+            VulkanError::Invalid("a size of zero"),
             VulkanError::Call {
                 call: "vkCreateInstance",
                 result: -9,
@@ -128,7 +136,8 @@ mod tests {
         assert!(texts[1].contains("vkCreateDevice"));
         assert!(texts[2].contains("1.1.0"));
         assert!(texts[4].contains("a thing"));
-        assert!(texts[6].contains("vkCreateInstance") && texts[6].contains("-9"));
+        assert!(texts[7].contains("a size of zero"));
+        assert!(texts[8].contains("vkCreateInstance") && texts[8].contains("-9"));
     }
 
     #[test]

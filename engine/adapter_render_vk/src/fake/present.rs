@@ -5,14 +5,12 @@
 use super::{note, with};
 use crate::vk::{self, Bool32, DeviceHandle, InstanceHandle, PhysicalDeviceHandle, QueueHandle};
 use crate::vk_present::{
-    self as vp, BufferCreateInfo, BufferImageCopy, CommandBufferAllocateInfo,
-    CommandBufferBeginInfo, CommandBufferHandle, CommandPoolCreateInfo, DependencyInfo,
-    ExtensionProperties, ImageMemoryBarrier2, MemoryAllocateInfo, MemoryRequirements,
-    PhysicalDeviceMemoryProperties, PresentInfo, RenderingInfo, SubmitInfo2, SurfaceCapabilities,
-    SurfaceFormat, SwapchainCreateInfo, SyncCreateInfo,
+    self as vp, CommandBufferAllocateInfo, CommandBufferBeginInfo, CommandBufferHandle,
+    CommandPoolCreateInfo, DependencyInfo, ExtensionProperties, PhysicalDeviceMemoryProperties,
+    PresentInfo, RenderingInfo, SubmitInfo2, SurfaceCapabilities, SurfaceFormat,
+    SwapchainCreateInfo, SyncCreateInfo,
 };
 use core::ffi::{c_char, c_void};
-use std::cell::RefCell;
 
 /// What `vkCreateSwapchainKHR` was asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,11 +41,6 @@ pub struct PresentRecord {
     pub wait_semaphore: u64,
 }
 
-thread_local! {
-    /// The fake mapped memory of the readback buffer.
-    static MAPPED: RefCell<[u8; 16]> = const { RefCell::new([0; 16]) };
-}
-
 /// `VK_ERROR_OUT_OF_HOST_MEMORY`.
 const OUT_OF_HOST_MEMORY: i32 = -1;
 
@@ -56,7 +49,7 @@ fn refused(call: &str) -> bool {
     with(|script| script.fail_call == Some(call))
 }
 
-fn alloc(kind: &'static str) -> u64 {
+pub fn alloc(kind: &'static str) -> u64 {
     with(|script| {
         script.next_handle += 1;
         let handle = 0x10_000 + script.next_handle;
@@ -65,7 +58,7 @@ fn alloc(kind: &'static str) -> u64 {
     })
 }
 
-fn release(kind: &'static str, handle: u64) {
+pub fn release(kind: &'static str, handle: u64) {
     with(|script| {
         let position = script
             .live
@@ -169,24 +162,7 @@ fn lookup_commands(name: &str) -> *mut c_void {
         "vkCmdBeginRendering" => address!(cmd_begin_rendering as unsafe extern "system" fn(_, _)),
         "vkCmdEndRendering" => address!(cmd_end_rendering as unsafe extern "system" fn(_)),
         "vkQueueSubmit2" => address!(queue_submit2 as unsafe extern "system" fn(_, _, _, _) -> _),
-        "vkCreateBuffer" => address!(create_buffer as unsafe extern "system" fn(_, _, _, _) -> _),
-        "vkDestroyBuffer" => address!(destroy_buffer as unsafe extern "system" fn(_, _, _)),
-        "vkGetBufferMemoryRequirements" => {
-            address!(buffer_requirements as unsafe extern "system" fn(_, _, _))
-        }
-        "vkAllocateMemory" => {
-            address!(allocate_memory as unsafe extern "system" fn(_, _, _, _) -> _)
-        }
-        "vkFreeMemory" => address!(free_memory as unsafe extern "system" fn(_, _, _)),
-        "vkBindBufferMemory" => {
-            address!(bind_buffer_memory as unsafe extern "system" fn(_, _, _, _) -> _)
-        }
-        "vkMapMemory" => address!(map_memory as unsafe extern "system" fn(_, _, _, _, _, _) -> _),
-        "vkUnmapMemory" => address!(unmap_memory as unsafe extern "system" fn(_, _)),
-        "vkCmdCopyImageToBuffer" => {
-            address!(cmd_copy_image_to_buffer as unsafe extern "system" fn(_, _, _, _, _, _))
-        }
-        _ => core::ptr::null_mut(),
+        _ => super::resource::lookup(name),
     }
 }
 
@@ -237,11 +213,7 @@ unsafe extern "system" fn memory_properties(
     out: *mut PhysicalDeviceMemoryProperties,
 ) {
     note("vkGetPhysicalDeviceMemoryProperties");
-    let mut properties = PhysicalDeviceMemoryProperties::zeroed();
-    properties.memory_type_count = 2;
-    properties.memory_types[0].property_flags = 1; // device local only
-    properties.memory_types[1].property_flags = vp::MEMORY_HOST_VISIBLE | vp::MEMORY_HOST_COHERENT;
-    unsafe { out.write(properties) };
+    unsafe { out.write(super::resource::memory_properties()) };
 }
 
 unsafe extern "system" fn create_surface(
@@ -469,6 +441,9 @@ unsafe extern "system" fn wait_for_fences(
     _timeout: u64,
 ) -> i32 {
     note("vkWaitForFences");
+    if refused("vkWaitForFences") {
+        return -1;
+    }
     vk::SUCCESS
 }
 
@@ -573,16 +548,7 @@ unsafe extern "system" fn destroy_image_view(
 
 unsafe extern "system" fn cmd_barrier(_cmd: CommandBufferHandle, info: *const DependencyInfo) {
     note("vkCmdPipelineBarrier2");
-    unsafe {
-        assert_eq!((*info).image_memory_barrier_count, 1);
-        let barrier: &ImageMemoryBarrier2 = &*(*info).image_memory_barriers;
-        assert_eq!(barrier.s_type, vp::STYPE_IMAGE_MEMORY_BARRIER_2);
-        with(|script| {
-            script
-                .barriers
-                .push((barrier.old_layout, barrier.new_layout));
-        });
-    }
+    unsafe { super::resource::record_barrier(info) };
 }
 
 unsafe extern "system" fn cmd_begin_rendering(
@@ -611,144 +577,24 @@ unsafe extern "system" fn queue_submit2(
     assert_eq!(count, 1);
     let record = unsafe {
         let info = &*info;
+        let (wait_semaphore, wait_stage) = if info.wait_semaphore_info_count > 0 {
+            let wait = &*info.wait_semaphore_infos;
+            (wait.semaphore, wait.stage_mask)
+        } else {
+            (0, 0)
+        };
+        let signal_semaphore = if info.signal_semaphore_info_count > 0 {
+            (*info.signal_semaphore_infos).semaphore
+        } else {
+            0
+        };
         SubmitRecord {
-            wait_semaphore: (*info.wait_semaphore_infos).semaphore,
-            wait_stage: (*info.wait_semaphore_infos).stage_mask,
-            signal_semaphore: (*info.signal_semaphore_infos).semaphore,
+            wait_semaphore,
+            wait_stage,
+            signal_semaphore,
             fence,
         }
     };
     with(|script| script.submits.push(record));
     with(|script| script.submit_result)
-}
-
-unsafe extern "system" fn create_buffer(
-    _device: DeviceHandle,
-    info: *const BufferCreateInfo,
-    _allocator: *const c_void,
-    out: *mut u64,
-) -> i32 {
-    note("vkCreateBuffer");
-    if refused("vkCreateBuffer") {
-        return OUT_OF_HOST_MEMORY;
-    }
-    assert_eq!(unsafe { (*info).usage }, vp::BUFFER_USAGE_TRANSFER_DST);
-    unsafe { *out = alloc("buffer") };
-    vk::SUCCESS
-}
-
-unsafe extern "system" fn destroy_buffer(
-    _device: DeviceHandle,
-    buffer: u64,
-    _allocator: *const c_void,
-) {
-    note("vkDestroyBuffer");
-    release("buffer", buffer);
-}
-
-unsafe extern "system" fn buffer_requirements(
-    _device: DeviceHandle,
-    _buffer: u64,
-    out: *mut MemoryRequirements,
-) {
-    note("vkGetBufferMemoryRequirements");
-    unsafe {
-        out.write(MemoryRequirements {
-            size: 64,
-            alignment: 16,
-            memory_type_bits: 0b11,
-        });
-    }
-}
-
-unsafe extern "system" fn allocate_memory(
-    _device: DeviceHandle,
-    info: *const MemoryAllocateInfo,
-    _allocator: *const c_void,
-    out: *mut u64,
-) -> i32 {
-    note("vkAllocateMemory");
-    if refused("vkAllocateMemory") {
-        return OUT_OF_HOST_MEMORY;
-    }
-    assert_eq!(
-        unsafe { (*info).memory_type_index },
-        1,
-        "the host-visible type"
-    );
-    unsafe { *out = alloc("memory") };
-    vk::SUCCESS
-}
-
-unsafe extern "system" fn free_memory(
-    _device: DeviceHandle,
-    memory: u64,
-    _allocator: *const c_void,
-) {
-    note("vkFreeMemory");
-    release("memory", memory);
-}
-
-unsafe extern "system" fn bind_buffer_memory(
-    _device: DeviceHandle,
-    _buffer: u64,
-    _memory: u64,
-    _offset: u64,
-) -> i32 {
-    note("vkBindBufferMemory");
-    if refused("vkBindBufferMemory") {
-        return OUT_OF_HOST_MEMORY;
-    }
-    vk::SUCCESS
-}
-
-unsafe extern "system" fn map_memory(
-    _device: DeviceHandle,
-    _memory: u64,
-    _offset: u64,
-    _size: u64,
-    _flags: u32,
-    out: *mut *mut c_void,
-) -> i32 {
-    note("vkMapMemory");
-    if refused("vkMapMemory") {
-        return OUT_OF_HOST_MEMORY;
-    }
-    unsafe { *out = MAPPED.with(|mapped| mapped.as_ptr().cast::<c_void>()) };
-    vk::SUCCESS
-}
-
-unsafe extern "system" fn unmap_memory(_device: DeviceHandle, _memory: u64) {
-    note("vkUnmapMemory");
-}
-
-unsafe extern "system" fn cmd_copy_image_to_buffer(
-    _cmd: CommandBufferHandle,
-    _image: u64,
-    _layout: u32,
-    _buffer: u64,
-    _count: u32,
-    region: *const BufferImageCopy,
-) {
-    note("vkCmdCopyImageToBuffer");
-    assert_eq!(unsafe { (*region).image_extent }, [1, 1, 1], "one pixel");
-    let clear = with(|script| script.clears.last().copied()).unwrap_or([0.0; 4]);
-    // Bgra8: blue, green, red, alpha.
-    let bgra = [
-        byte(clear[2]),
-        byte(clear[1]),
-        byte(clear[0]),
-        byte(clear[3]),
-    ];
-    MAPPED.with(|mapped| mapped.borrow_mut()[..4].copy_from_slice(&bgra));
-}
-
-/// A colour channel from 0 to 1 as a byte.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "the value is clamped to 0..=255 first"
-)]
-fn byte(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }

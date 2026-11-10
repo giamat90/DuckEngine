@@ -6,7 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 license-file.workspace = true
-description = "Layer 3 adapter: Vulkan 1.3 instance, device and queue (card 6-6), window surface, swapchain and clear colour (card 6-7), loaded at run time."
+description = "Layer 3 adapter: Vulkan 1.3 instance, device and queue (card 6-6), window surface, swapchain and clear colour (card 6-7), device memory sub-allocator, buffers, textures, samplers and staged uploads (card 6-8), loaded at run time."
 
 [dependencies]
 platform = { path = "../platform", version = "0.1.0" }
@@ -16,7 +16,7 @@ adapter_window_glfw = { path = "../adapter_window_glfw", version = "0.1.0" }
 
 # Not `workspace = true`: the workspace forbids unsafe code. This adapter denies it instead and
 # allows it in its FFI modules (`dynlib`, `lookup`, `entry`, `instance`, `device`, `debug`, `surface`,
-# `gear`, `swapchain`, `frame`, `capture`, `presenter`), where
+# `gear`, `swapchain`, `frame`, `capture`, `presenter`, `memory`, `upload`, `resources`), where
 # every block is documented. The rest repeats the workspace lints.
 [lints.rust]
 unsafe_code = "deny"

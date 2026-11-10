@@ -18,7 +18,8 @@ use crate::vk::{
     InstanceHandle, LayerProperties, PhysicalDeviceFeatures2, PhysicalDeviceHandle,
     PhysicalDeviceProperties, QueueFamilyProperties, QueueHandle, VkResult, Vulkan13Features,
 };
-mod present;
+pub mod present;
+pub mod resource;
 
 pub use present::{PresentRecord, SubmitRecord, SwapchainRequest};
 
@@ -114,6 +115,8 @@ pub struct Script {
     pub swapchain_images: Vec<(u64, Vec<u64>)>,
     pub support_queries: Vec<u32>,
     pub surface_window: Option<usize>,
+    /// Memory, buffers, images and samplers (card 6-8).
+    pub world: resource::World,
 }
 
 impl Script {
@@ -157,6 +160,7 @@ impl Script {
             swapchain_images: Vec::new(),
             support_queries: Vec::new(),
             surface_window: None,
+            world: resource::World::new(),
         }
     }
 }
@@ -444,6 +448,8 @@ unsafe extern "system" fn get_properties(
     props.vendor_id = 0x10DE;
     props.device_id = 0x2500;
     props.device_type = gpu.device_type;
+    let max = with(|script| script.world.max_extent);
+    props.limits[0] = (u64::from(max) << 32) | u64::from(max);
     for (slot, byte) in props.device_name.iter_mut().zip(gpu.name.bytes()) {
         *slot = c_char::try_from(byte).unwrap_or(0);
     }
