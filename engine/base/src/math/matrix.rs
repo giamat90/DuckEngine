@@ -1232,6 +1232,9 @@ mod tests {
             (FRAC_PI_2, 1.0, 10.0, 1.0),
             (Scalar::NAN, 1.0, 1.0, 10.0),
             (FRAC_PI_2, 1.0, 1.0, Scalar::INFINITY),
+            // Finite inputs whose matrix overflows.
+            (1.0e-39, 1.0, 1.0, 10.0),
+            (FRAC_PI_2, 1.0, 1.0e30, 3.0e38),
         ] {
             assert_eq!(Mat4::perspective_rh(fov, aspect, near, far), None);
         }
@@ -1256,12 +1259,13 @@ mod tests {
 
     #[test]
     fn look_at_keeps_up_up_and_the_right_hand_on_the_right() {
-        let m = Mat4::look_at_rh(
+        let made = Mat4::look_at_rh(
             Vec3::new(0.0, 0.0, 5.0),
             Vec3::ZERO,
             Vec3::new(0.0, 1.0, 0.0),
-        )
-        .unwrap_or(Mat4::IDENTITY);
+        );
+        assert!(made.is_some());
+        let m = made.unwrap_or(Mat4::IDENTITY);
         assert_close(
             &m.transform_vector3(Vec3::new(0.0, 1.0, 0.0)).to_array(),
             &[0.0, 1.0, 0.0],
@@ -1301,6 +1305,12 @@ mod tests {
             (Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), Vec3::ZERO),
             (nan, Vec3::new(0.0, 0.0, -1.0), up),
             (Vec3::ZERO, nan, up),
+            // Finite points so far apart that the direction overflows.
+            (
+                Vec3::new(-3.0e38, 0.0, 0.0),
+                Vec3::new(3.0e38, 0.0, 0.0),
+                up,
+            ),
         ] {
             assert_eq!(Mat4::look_at_rh(eye, target, up), None);
         }

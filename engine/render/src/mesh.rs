@@ -2,17 +2,22 @@
 //!
 //! The 3D counterpart of the sprite batcher, with the same split: plain data in, bytes and
 //! commands out, no new port call. A [`MeshVertex`] is position, normal and uv in one interleaved
-//! vertex buffer (slot 0, [`MESH_VERTEX_STRIDE`] bytes, [`mesh_vertex_attributes`]); the model-view-projection
-//! matrix is a uniform buffer written from [`crate::camera::matrix_bytes`]; [`record_mesh`] writes
-//! the bindings and one `draw_indexed`. [`cube_vertices`] and [`cube_indices`] are the one built-in mesh.
+//! vertex buffer (slot 0, [`MESH_VERTEX_STRIDE`] bytes, [`mesh_vertex_attributes`]); the
+//! model-view-projection matrix is a uniform buffer written from
+//! [`crate::camera::matrix_bytes`]; [`record_mesh`] writes the bindings and one `draw_indexed`.
+//! [`cube_vertices`] and [`cube_indices`] are the one built-in mesh.
 //! Nothing here allocates.
 
 use crate::desc::{IndexType, VertexAttribute, VertexFormat};
 use crate::ids::{BufferId, PipelineId, SamplerId, TextureId};
 use crate::stream::CommandStream;
 
+/// Bytes of a position or a normal (three floats).
+const VECTOR_BYTES: u32 = 12;
+/// Bytes of a texture coordinate (two floats).
+const UV_BYTES: u32 = 8;
 /// Bytes of one [`MeshVertex`] as the shader reads it.
-pub const MESH_VERTEX_STRIDE: u32 = 32;
+pub const MESH_VERTEX_STRIDE: u32 = 2 * VECTOR_BYTES + UV_BYTES;
 /// Vertices of [`cube_vertices`]: four per face, so that each face has its own normal and uv.
 pub const CUBE_VERTEX_COUNT: usize = 24;
 /// Indices of [`cube_indices`]: two triangles per face.
@@ -22,6 +27,8 @@ const FACES: usize = 6;
 const VERTICES_PER_FACE: usize = 4;
 const INDICES_PER_FACE: usize = 6;
 const HALF: f32 = 0.5;
+/// The two triangles of a face, as corners of its quad: 0 1 2 and 2 1 3.
+const QUAD_CORNERS: [u16; INDICES_PER_FACE] = [0, 1, 2, 2, 1, 3];
 
 /// A vertex as staged for the GPU: 32 bytes, see [`mesh_vertex_attributes`] and
 /// [`encode_mesh_vertices`].
@@ -47,12 +54,12 @@ pub fn mesh_vertex_attributes() -> [VertexAttribute; 3] {
         VertexAttribute {
             location: 1,
             format: VertexFormat::Float3,
-            offset: 12,
+            offset: VECTOR_BYTES,
         },
         VertexAttribute {
             location: 2,
             format: VertexFormat::Float2,
-            offset: 24,
+            offset: 2 * VECTOR_BYTES,
         },
     ]
 }
@@ -116,7 +123,7 @@ pub fn cube_vertices() -> [MeshVertex; CUBE_VERTEX_COUNT] {
 pub fn cube_indices() -> [u16; CUBE_INDEX_COUNT as usize] {
     std::array::from_fn(|i| {
         let face = u16::try_from(i / INDICES_PER_FACE * VERTICES_PER_FACE).unwrap_or(u16::MAX);
-        let corner = [0, 1, 2, 2, 1, 3][i % INDICES_PER_FACE];
+        let corner = QUAD_CORNERS[i % INDICES_PER_FACE];
         face.saturating_add(corner)
     })
 }

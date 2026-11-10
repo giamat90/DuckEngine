@@ -126,9 +126,9 @@ fn clip(m: &Mat4, p: Vec3) -> [f32; 4] {
 
 #[test]
 fn the_point_a_perspective_camera_looks_at_is_in_the_middle_of_the_view() {
-    let matrix = perspective(Vec3::new(0.0, 0.0, 5.0))
-        .view_projection()
-        .unwrap_or(Mat4::IDENTITY);
+    let made = perspective(Vec3::new(0.0, 0.0, 5.0)).view_projection();
+    assert!(made.is_some());
+    let matrix = made.unwrap_or(Mat4::IDENTITY);
     let centre = clip(&matrix, Vec3::ZERO);
     assert!(
         centre[0].abs() < 1e-5 && centre[1].abs() < 1e-5,
