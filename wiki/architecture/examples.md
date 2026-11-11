@@ -181,3 +181,26 @@ The window is the same (GLFW with no client API; each device makes its own conte
 Tests: the Null device accepts the SPIR-V asset and draws the same streams as with the GLSL one; the command line (the default, both names, any order, an unknown name, a missing name); the built program refuses an unknown backend (exit 2) and draws three frames on Vulkan where a device exists (`DUCK_REQUIRE_VK=1` makes a missing one a failure). The **image test** is one scene (six sprites through the batcher, the camera and the render graph) and one reference picture painted on the CPU, kept in `engine/adapter_render_gl/tests/support/sprite_image.rs` and included by the test of each adapter: `adapter_render_gl/tests/sprite_image.rs` and `adapter_render_vk/tests/device.rs` render it offscreen, read it back and compare (exact for flat areas, 2 per channel for blends). The first run on Vulkan showed that the alpha channel of a blended pixel was 191 instead of 255: the Vulkan pipeline blended alpha by the source alpha, OpenGL keeps the source (`glBlendFuncSeparate`); the pipeline now uses the same factors and a unit test pins them.
 
 Not covered by an automatic test: the picture in the window (checked by running both backends), the Linux run of the Vulkan sample.
+
+## 7. The mesh sample (card 6-11)
+
+`app_mesh_sample [--frames N] [--backend gl|vulkan]` draws one textured cube that turns about two axes, with a depth buffer, through the mesh frontend of the render crate (6-2, 6-3): a perspective camera, one uniform with the model-view-projection matrix, one indexed draw per frame. It is a composition root like the sprite sample: only `app.rs` names a device, and it reuses the sprite sample's window, loop, argument and backend plumbing (`Opened`, `Backend`, `cli::execute`). The picture is a checkerboard texture on every face.
+
+```mermaid
+flowchart LR
+  cli["--backend gl | vulkan"] --> app["app.rs (composition root)"]
+  app -->|gl| glb["GlDevice + mesh.dshd (GLSL)"]
+  app -->|vulkan| vkb["VulkanDevice + mesh.spv.dshd (SPIR-V)"]
+  glb --> ms["mesh_sample.rs: dyn IRenderDevice"]
+  vkb --> ms
+  ms --> pass["one pass on the backbuffer: clear colour and depth, set_viewport, record_mesh"]
+  ms -.->|"resize"| depth["new depth texture of the new size"]
+  shared["mesh_scene.rs: two cubes, probes, control frame"] -.-> gltest["GL image test"]
+  shared -.-> vktest["Vulkan image test"]
+```
+
+The shader sources and both assets live in the crate (`shaders/mesh.vert`, `mesh.frag`, `assets/mesh.dshd`, `assets/mesh.spv.dshd`), so the swap-diff gate sees no change to engine code. `MeshSample::new` refuses an asset that does not match the mesh vertex layout (three inputs of 3, 3 and 2 floats at locations 0 to 2, a 64-byte transform block at binding 0, a texture at unit 0). The depth texture is made at the size of the surface and made again when the window size changes.
+
+Tests: on the Null device both assets are accepted, a frame is one indexed draw into a pass with a depth texture of the right size, a resize makes a new depth texture, a lost surface is an error value, and wrong assets are refused. The image test of 6-3 moved to `adapter_render_gl/tests/support/mesh_scene.rs` and runs on both devices: the near cube stays in front of the far one where they overlap, and a control frame with the depth test off shows the far cube winning there. The two assets are compared with what `shaderc` makes today (skipped without the tools unless `DUCK_REQUIRE_SHADER_TOOLS=1`).
+
+Not covered by an automatic test: the picture in the window (checked by running both backends), the Linux run of the Vulkan sample.

@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v1.37 (2026-11-11).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v1.38 (2026-11-11).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.38** - Mesh sample on GL and Vulkan (card 6-11, Class 2; a new composition root, last card of the measured swap-diff range): [architecture/examples](architecture/examples.md) gains section 7, `app_mesh_sample` with its own shader assets, the two-cube image test shared by the OpenGL and the Vulkan adapter (first real check of depth on Vulkan), a drift check of the assets against `shaderc`.
 > - **v1.37** - Sprite sample on Vulkan (card 6-10, Class 2; backend choice in the composition root of an app): [architecture/examples](architecture/examples.md) gains section 6, `--backend gl|vulkan` for the two sprite examples, the SPIR-V asset on the Null device, the image test shared by the OpenGL and the Vulkan adapter, and the alpha-channel blend factors of the Vulkan pipeline made equal to OpenGL's, with a flow view.
 > - **v1.36** - Vulkan adapter part 4b (card 6-14, Class 2; public API of an adapter, `unsafe`, concurrency of frames in flight): [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md) gains section 8, shaders from SPIR-V with the adapter's own descriptor-set numbering, two pipelines per description (one per target format), per-frame descriptor pools, the viewport flip for the backbuffer only, binds and draw calls, with a flow view and how it is tested.
 > - **v1.35** - Vulkan adapter part 4a (card 6-9, Class 2; public API of an adapter, `unsafe`, concurrency of frames in flight): [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md) gains section 7, the `VulkanDevice` render device with frames, passes with dynamic rendering and barriers over tracked layouts, with a sequence view and how it is tested; shaders, pipelines and draws move to card 6-14.
