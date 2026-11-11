@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v1.39 (2026-11-11).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v1.40 (2026-11-11).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.40** - Phase 6 milestone review (card 6-13, Class 1, documentation only, ordinary card into `develop`): new page [spikes/phase6-milestone-review](spikes/phase6-milestone-review.md), the exit record of phase 6 (summary, exit criteria with the swap-diff measurement engine_game 0, cards and pull requests, metrics recorded against measured, open findings, lessons) and the proposal to promote the render port to `stable` (conditions table, flow view); the status line and ADR-0006 are not edited, they need the owner's decision and a governance task. Evidence file `reviews/6-13.md`. Phase 7 is not started.
 > - **v1.39** - Vulkan in CI (card 6-12, Class 3 governance, to `main` first): new `ci` job `vk_linux` (the Vulkan adapter and the render contract on Linux under xvfb with lavapipe and the validation layer, `DUCK_REQUIRE_VK=1`, "not run" notice while the crate is absent, as `gl_linux`), and a `gates` step that runs `tools/swap-diff` from `main` over the Vulkan range 6-6..6-11 (0 engine or game files); [workflow/ci-diagrams](workflow/ci-diagrams.md) section 2 shows both, [architecture/ports-and-adapters](architecture/ports-and-adapters.md) updated. Tests: `tools/release/test_workflows.py`.
 > - **v1.38** - Mesh sample on GL and Vulkan (card 6-11, Class 2; a new composition root, last card of the measured swap-diff range): [architecture/examples](architecture/examples.md) gains section 7, `app_mesh_sample` with its own shader assets, the two-cube image test shared by the OpenGL and the Vulkan adapter (first real check of depth on Vulkan), a drift check of the assets against `shaderc`.
 > - **v1.37** - Sprite sample on Vulkan (card 6-10, Class 2; backend choice in the composition root of an app): [architecture/examples](architecture/examples.md) gains section 6, `--backend gl|vulkan` for the two sprite examples, the SPIR-V asset on the Null device, the image test shared by the OpenGL and the Vulkan adapter, and the alpha-channel blend factors of the Vulkan pipeline made equal to OpenGL's, with a flow view.
@@ -197,6 +198,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 40 | [spikes/phase5-milestone-review](spikes/phase5-milestone-review.md) | Phase 5 milestone review (card 5-9): exit criteria, cards and pull requests, metrics (per-card vs whole-phase), open findings, process lessons and the recommendation for the owner |
 | 41 | [spikes/vulkan-availability-spike](spikes/vulkan-availability-spike.md) | Vulkan availability spike (card 6-5): what hosted Linux and Windows runners offer (lavapipe versions, no Windows device), recommendation for O6 |
 | 42 | [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md) | Vulkan adapter (cards 6-6 onwards): loader, instance, device, queue, surface, swapchain, clear colour, memory sub-allocator, buffers, textures, samplers, uploads; ownership and tear-down; tests |
+| 43 | [spikes/phase6-milestone-review](spikes/phase6-milestone-review.md) | Phase 6 milestone review (card 6-13): exit criteria, swap diff 0, cards and pull requests, open findings, `stable` promotion proposal for the render port |
 
 ## Confidence legend used in this wiki
 
