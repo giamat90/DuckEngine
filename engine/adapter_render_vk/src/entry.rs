@@ -9,7 +9,8 @@ use crate::dynlib::{Library, cast};
 use crate::error::{VulkanError, check_created};
 use crate::version::ApiVersion;
 use crate::vk::{
-    GetInstanceProcAddr, InstanceCreateInfo, InstanceHandle, LayerProperties, SUCCESS, VkResult,
+    ERROR_INCOMPATIBLE_DRIVER, GetInstanceProcAddr, InstanceCreateInfo, InstanceHandle,
+    LayerProperties, SUCCESS, VkResult,
 };
 use crate::vk_present::ExtensionProperties;
 use core::ffi::{CStr, c_char, c_void};
@@ -243,7 +244,8 @@ impl Entry {
     /// Makes an instance.
     ///
     /// # Errors
-    /// [`VulkanError::Call`] with the driver's result.
+    /// [`VulkanError::NoSuitableDevice`] when the loader finds no driver (`VK_ERROR_INCOMPATIBLE_DRIVER`);
+    /// [`VulkanError::Call`] with the driver's result otherwise.
     ///
     /// # Safety
     /// Every pointer in `info` (and in the structures it points to) must be valid for the call.
@@ -256,6 +258,10 @@ impl Entry {
         // allocator is null (the default).
         let result =
             unsafe { (self.global.create_instance)(info, core::ptr::null(), &raw mut handle) };
+        if result == ERROR_INCOMPATIBLE_DRIVER {
+            // The loader is there and no driver is: the same as "no suitable device" (card 6-15).
+            return Err(VulkanError::NoSuitableDevice);
+        }
         check_created("vkCreateInstance", result, handle.0.is_null())?;
         Ok(handle)
     }
