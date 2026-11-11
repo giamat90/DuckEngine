@@ -41,6 +41,11 @@ const SPIN_Y: f32 = 0.031;
 /// Radians the cube turns about X per frame.
 const SPIN_X: f32 = 0.017;
 /// Distance of the camera from the cube, in cube edges.
+/// Frames after which the angle counter starts again, which keeps the angles small (and exact);
+/// the cube jumps to its start pose once then (about 28 minutes at 60 frames per second).
+const TURN_FRAMES: u32 = 100_000;
+/// Capacity of the command stream: one pass and one draw need far less.
+const STREAM_CAPACITY: usize = 1 << 8;
 const DISTANCE: f32 = 3.0;
 /// Vertical field of view in radians (about 57 degrees).
 const FOV_Y: f32 = 1.0;
@@ -198,10 +203,6 @@ pub fn model_for(frame: u32) -> Mat4 {
     Mat4::from_rotation_y(turns * SPIN_Y) * Mat4::from_rotation_x(turns * SPIN_X)
 }
 
-/// Frames after which the angle counter starts again, which keeps the angles small (and exact);
-/// the cube is symmetric enough that nobody sees the jump at the wrap of a long run.
-const TURN_FRAMES: u32 = 100_000;
-
 /// The sample's state between frames. After `new`, `draw` allocates nothing on its own.
 pub struct MeshSample {
     surface: SurfaceId,
@@ -254,7 +255,7 @@ impl MeshSample {
             camera,
             bindings,
             depth: depth_texture(device, size)?,
-            stream: CommandStream::with_capacity(1 << 8),
+            stream: CommandStream::with_capacity(STREAM_CAPACITY),
         })
     }
 

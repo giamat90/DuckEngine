@@ -6,7 +6,8 @@
 //!
 //! The scene, the probes and the comparison are shared with the Vulkan adapter's image test (card
 //! 6-11) in `support/mesh_scene.rs`. The shaders are the GLSL of the golden `mesh.dshd` of the mesh
-//! sample (the GL device takes GLSL text; the tool chain is not needed). The test needs GLFW, a display and an OpenGL 4.5 driver; without them it prints
+//! sample (the GL device takes GLSL text; the tool chain is not needed). The test needs GLFW, a
+//! display and an OpenGL 4.5 driver; without them it prints
 //! `not run: device not set up (...)` and passes. `DUCK_REQUIRE_GL=1` makes a missing device a
 //! failure.
 

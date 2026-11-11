@@ -152,9 +152,10 @@ fn many_frames_on_the_backbuffer_are_presented_without_a_validation_message() {
 
 // ----- shaders, pipelines and draws (card 6-14) -----
 
+/// The mesh shaders of the mesh sample, compiled to SPIR-V by `shaderc`.
+const MESH_SPIRV: &[u8] = include_bytes!("../../app_mesh_sample/assets/mesh.spv.dshd");
 /// The sprite shaders the engine ships, compiled to SPIR-V by `shaderc` (the golden file of the
 /// shader compiler tests).
-const MESH_SPIRV: &[u8] = include_bytes!("../../app_mesh_sample/assets/mesh.spv.dshd");
 const SPRITE_SPIRV: &[u8] = include_bytes!("../../tools_shaderc/golden/sprite.spv.dshd");
 
 const SIZE: u32 = 16;
