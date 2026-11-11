@@ -122,12 +122,9 @@ fn refusal(bytes: &[u8]) -> Option<MeshError> {
     MeshSample::new(&mut device, &program, surface, SIZE).err()
 }
 
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "reads as a predicate on the result of refusal()"
-)]
-fn is_asset_error(error: Option<MeshError>) -> bool {
-    matches!(error, Some(MeshError::Asset(_)))
+/// Whether making the sample from `bytes` fails with an asset error.
+fn is_asset_error(bytes: &[u8]) -> bool {
+    matches!(refusal(bytes), Some(MeshError::Asset(_)))
 }
 
 #[test]
@@ -137,51 +134,38 @@ fn a_matching_hand_made_asset_is_accepted() {
 
 #[test]
 fn an_asset_with_another_vertex_layout_is_refused() {
-    let short = asset(&INPUTS[..2], Some(TRANSFORM), Some(0));
-    assert!(is_asset_error(refusal(&short)));
+    assert!(is_asset_error(&asset(
+        &INPUTS[..2],
+        Some(TRANSFORM),
+        Some(0)
+    )));
     let mut flat = INPUTS;
     flat[0].components = 2;
-    assert!(is_asset_error(refusal(&asset(
-        &flat,
-        Some(TRANSFORM),
-        Some(0)
-    ))));
+    assert!(is_asset_error(&asset(&flat, Some(TRANSFORM), Some(0))));
     let mut moved = INPUTS;
     moved[2].location = 5;
-    assert!(is_asset_error(refusal(&asset(
-        &moved,
-        Some(TRANSFORM),
-        Some(0)
-    ))));
+    assert!(is_asset_error(&asset(&moved, Some(TRANSFORM), Some(0))));
 }
 
 #[test]
 fn an_asset_with_the_wrong_transform_block_or_texture_unit_is_refused() {
-    assert!(is_asset_error(refusal(&asset(&INPUTS, None, Some(0)))));
     let small = UniformBlock {
         binding: 0,
         size: 16,
     };
-    assert!(is_asset_error(refusal(&asset(
-        &INPUTS,
-        Some(small),
-        Some(0)
-    ))));
-    assert!(is_asset_error(refusal(&asset(
-        &INPUTS,
-        Some(TRANSFORM),
-        None
-    ))));
-    assert!(is_asset_error(refusal(&asset(
-        &INPUTS,
-        Some(TRANSFORM),
-        Some(1)
-    ))));
+    for (uniform, texture) in [
+        (None, Some(0)),
+        (Some(small), Some(0)),
+        (Some(TRANSFORM), None),
+        (Some(TRANSFORM), Some(1)),
+    ] {
+        assert!(is_asset_error(&asset(&INPUTS, uniform, texture)));
+    }
 }
 
 #[test]
 fn the_sprite_asset_is_not_a_mesh_asset() {
-    assert!(is_asset_error(refusal(app_sprite_sample::GOLDEN_SHADER)));
+    assert!(is_asset_error(app_sprite_sample::GOLDEN_SHADER));
 }
 
 #[test]
