@@ -251,23 +251,46 @@ mod platform {
 #[cfg(target_os = "linux")]
 mod xlib {
     //! The X11 connection a Vulkan Xlib surface needs, opened from `libX11.so.6` at run time.
-    use crate::dynlib::{Library, cast};
-    use core::ffi::{c_char, c_int, c_void};
+    use crate::dynlib::Library;
+    #[cfg(not(test))]
+    use crate::dynlib::cast;
+    #[cfg(not(test))]
+    use core::ffi::c_char;
+    use core::ffi::{c_int, c_void};
     use core::ptr::NonNull;
 
+    #[cfg(not(test))]
     type OpenDisplay = unsafe extern "C" fn(*const c_char) -> *mut c_void;
     type CloseDisplay = unsafe extern "C" fn(*mut c_void) -> c_int;
+
+    /// The `close` of the unit-test stand-in: there is no connection to close.
+    #[cfg(test)]
+    unsafe extern "C" fn close_nothing(_display: *mut c_void) -> c_int {
+        0
+    }
 
     /// An open X connection. Closed when dropped.
     pub struct Display {
         pub(super) pointer: NonNull<c_void>,
         close: CloseDisplay,
-        // Last: `close` points into the library.
-        _library: Library,
+        // Last: `close` points into the library. `None` for the stand-in of the unit tests.
+        _library: Option<Library>,
     }
 
     impl Display {
+        /// A stand-in for the unit tests: the scripted driver never reads the display, so the
+        /// tests do not depend on libX11 or on an X server being reachable (card 6-15).
+        #[cfg(test)]
+        pub fn stand_in() -> Self {
+            Self {
+                pointer: NonNull::dangling(),
+                close: close_nothing,
+                _library: None,
+            }
+        }
+
         /// Opens the default display, or `None` without libX11 or an X server.
+        #[cfg(not(test))]
         pub fn open() -> Option<Self> {
             let library = Library::open("libX11.so.6")?;
             let open = library.symbol(c"XOpenDisplay")?;
@@ -284,7 +307,7 @@ mod xlib {
             Some(Self {
                 pointer,
                 close,
-                _library: library,
+                _library: Some(library),
             })
         }
     }
@@ -318,6 +341,9 @@ mod platform {
     ) -> Result<Made, VulkanError> {
         let window =
             window_id(token).ok_or(VulkanError::Unsupported("no window for this token"))?;
+        #[cfg(test)]
+        let display = xlib::Display::stand_in();
+        #[cfg(not(test))]
         let display = xlib::Display::open().ok_or(VulkanError::Unsupported("no X11 display"))?;
         let info = XlibSurfaceCreateInfo {
             s_type: STYPE_XLIB_SURFACE_CREATE_INFO,
