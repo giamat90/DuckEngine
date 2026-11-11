@@ -114,15 +114,25 @@ fn a_1_0_loader_without_the_version_query_is_too_old() {
 #[test]
 fn a_failed_instance_is_an_error_value_and_nothing_is_destroyed() {
     let mut script = one_gpu();
-    script.create_instance_result = -9;
+    script.create_instance_result = -1;
     let error = refused(script);
     assert_eq!(
         error,
         VulkanError::Call {
             call: "vkCreateInstance",
-            result: -9
+            result: -1
         }
     );
+    assert!(!fake::log().contains(&"vkDestroyInstance"));
+}
+
+#[test]
+fn a_loader_without_any_driver_is_no_suitable_device_not_a_failure() {
+    // Card 6-15: hosted runners have the loader and no driver; the loader then answers
+    // `VK_ERROR_INCOMPATIBLE_DRIVER` (-9): no driver is there to use, so there is no device.
+    let mut script = one_gpu();
+    script.create_instance_result = -9;
+    assert_eq!(refused(script), VulkanError::NoSuitableDevice);
     assert!(!fake::log().contains(&"vkDestroyInstance"));
 }
 
