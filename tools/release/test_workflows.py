@@ -339,6 +339,44 @@ class Ci(unittest.TestCase):
         self.assertIn('>> "$GITHUB_STEP_SUMMARY"', job)
         self.assertEqual(job.count("if: steps.adapter.outputs.present == 'true'"), 3)
 
+    def test_the_vk_linux_job_runs_the_vulkan_adapter_on_lavapipe_and_reports_the_device(self):
+        # Card 6-12 (O6): the Vulkan adapter and the render contract on Linux; a device is required, not optional.
+        job = CI[CI.index("\n  vk_linux:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        job = job[:following.start()] if following else job
+        self.assertIn("runs-on: ubuntu-latest", job)
+        self.assertNotIn("matrix", job)
+        self.assertIn("xvfb libglfw3 libvulkan1 mesa-vulkan-drivers vulkan-tools vulkan-validationlayers", job)
+        self.assertIn('DUCK_REQUIRE_VK: "1"', job)
+        self.assertIn("vulkaninfo --summary", job)
+        self.assertIn("xvfb-run --auto-servernum cargo test -p adapter_render_vk --locked", job)
+        self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
+        self.assertNotIn("continue-on-error", job)
+
+    def test_the_vk_linux_job_says_so_when_the_adapter_is_not_in_the_workspace_yet(self):
+        # `main` may be behind `develop`: a missing crate is reported, never silently green.
+        job = CI[CI.index("\n  vk_linux:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        job = job[:following.start()] if following else job
+        self.assertIn("if [ -d engine/adapter_render_vk ]; then", job)
+        self.assertIn("cargo pkgid -p adapter_render_vk > /dev/null", job)
+        self.assertNotIn("pkgid -p adapter_render_vk > /dev/null 2>&1", job)
+        self.assertIn("::notice::not run: adapter_render_vk is not in this workspace yet", job)
+        self.assertEqual(job.count("if: steps.adapter.outputs.present == 'true'"), 3)
+
+    def test_the_gates_job_runs_the_swap_diff_of_the_vulkan_range_from_main(self):
+        # Card 6-12: the tool and the configuration come from the trusted checkout; the range is two fixed develop commits.
+        job = CI[CI.index("\n  gates:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        job = job[:following.start()] if following else job
+        self.assertIn("python trusted/tools/swap-diff/swap_diff.py --config trusted/gates/swap-diff.toml --repo head", job)
+        self.assertIn("SWAP_BASE: 03f7f47350e07b30c21b8ba7517059afca9d7536", job)
+        self.assertRegex(job, r"SWAP_HEAD: [0-9a-f]{40}\n")
+        self.assertIn("git -C head fetch --quiet origin develop", job)
+        step = job[job.index("- name: Swap-diff of the Vulkan range"):]
+        step = step[:step.index("# Report only")]
+        self.assertNotIn("continue-on-error", step)
+
     def test_the_arm64_job_runs_on_a_hosted_arm_runner_and_proves_the_cpu(self):
         # Card 2-10: a hosted ARM64 runner exists for this repository (probed while it was private, 2026-11-01), so the NEON
         # backend runs on real AArch64 hardware, not under an emulator.

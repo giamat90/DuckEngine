@@ -42,11 +42,11 @@ flowchart LR
 
 ## 2. Jobs of the `ci` workflow
 
-Source: `.github/workflows/ci.yml`. Twelve independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
+Source: `.github/workflows/ci.yml`. Thirteen independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
 
 ```mermaid
 flowchart TB
-  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism & tsan & physics_icount & audio_icount
+  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & vk_linux & arm64 & d2_determinism & tsan & physics_icount & audio_icount
 
   subgraph g1["g1: build, test, fmt, clippy (Windows and Ubuntu)"]
     direction TB
@@ -62,7 +62,8 @@ flowchart TB
     b2 --> b2b["unsafe budget (gate G3)"]
     b2b --> b3["wiki lint"]
     b3 --> b4["digest equals gate configuration"]
-    b4 --> b5["approval report into the run summary<br/>(branches only, report, never fails the job)"]
+    b4 --> b4b["swap-diff over the Vulkan range 6-6..6-11 (card 6-12): 0 engine or game files"]
+    b4b --> b5["approval report into the run summary<br/>(branches only, report, never fails the job)"]
   end
 
   subgraph metrics["metrics (Windows and Ubuntu; skipped on main and on tags)"]
@@ -94,6 +95,12 @@ flowchart TB
     direction TB
     g1x{"adapter_render_gl in the workspace?"} -- no --> g2x["notice: not run, adapter not in this workspace yet"]
     g1x -- yes --> g3x["apt: xvfb, libglfw3, mesa-utils, libgl1-mesa-dri"] --> g4x["glxinfo -B: report renderer and OpenGL version"] --> g5x["xvfb-run cargo test -p adapter_render_gl, DUCK_REQUIRE_GL=1"]
+  end
+
+  subgraph vk_linux["vk_linux (Ubuntu, card 6-12): the Vulkan adapter on lavapipe under a virtual display"]
+    direction TB
+    v1{"adapter_render_vk in the workspace?"} -- no --> v2["notice: not run, adapter not in this workspace yet"]
+    v1 -- yes --> v3["apt: xvfb, libglfw3, libvulkan1, mesa-vulkan-drivers, vulkan-tools, vulkan-validationlayers"] --> v4["vulkaninfo --summary: report device and API version"] --> v5["xvfb-run cargo test -p adapter_render_vk, DUCK_REQUIRE_VK=1"]
   end
 
   subgraph arm64["arm64 (hosted ubuntu-24.04-arm, card 2-10): native AArch64 hardware"]
@@ -156,7 +163,7 @@ flowchart TB
     a5 --> a6["compare, bands from gates.toml of main: warn 5%, fail 10%, same as physics"]
   end
 
-  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & arm64 & d2_determinism & tsan & physics_icount & audio_icount --> done(["all green = the commit may merge"])
+  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & vk_linux & arm64 & d2_determinism & tsan & physics_icount & audio_icount --> done(["all green = the commit may merge"])
 ```
 
 ---

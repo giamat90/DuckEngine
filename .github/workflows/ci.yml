@@ -152,6 +152,17 @@ jobs:
         run: python trusted/tools/wiki-lint/wiki_lint.py --config trusted/gates/wiki-lint.toml --gates trusted/gates/gates.toml --repo head
       - name: Digest matches the gate configuration
         run: python trusted/tools/gate-check/check_digest.py --digest head/wiki/rules-digest.md --config trusted/gates/gates.toml --claude-md head/CLAUDE.md
+      # Card 6-12: adding Vulkan changed no existing engine or game file. The measured range of phase 6 is the cards 6-6
+      # to 6-11: from the commit before the Vulkan adapter (card 6-6, PR #39) to the mesh sample (card 6-11, PR #45),
+      # both commits of `develop`. The tool and its configuration come from main; the push is only data.
+      - name: Swap-diff of the Vulkan range (6-6 to 6-11)
+        env:
+          SWAP_BASE: 03f7f47350e07b30c21b8ba7517059afca9d7536
+          SWAP_HEAD: 86b1120409f99174ae9ec0f09fd3d8e887281c1b
+        run: |
+          set -euo pipefail
+          git -C head fetch --quiet origin develop
+          python trusted/tools/swap-diff/swap_diff.py --config trusted/gates/swap-diff.toml --repo head --base "$SWAP_BASE" --head "$SWAP_HEAD" | tee -a "$GITHUB_STEP_SUMMARY"
       # Report only (the checks above already gate): the owner's metric report for this push.
       - name: Approval report
         if: ${{ !cancelled() && github.ref_type == 'branch' && github.ref != 'refs/heads/main' }}
@@ -424,6 +435,56 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
           DUCK_REQUIRE_GL: "1"
         run: xvfb-run --auto-servernum cargo test -p adapter_render_gl --locked -- --nocapture
+
+  # Card 6-12 (O6): the Vulkan adapter and the render contract on Linux, on lavapipe (Mesa's software Vulkan driver),
+  # under a virtual display. Card 6-5 measured that lavapipe installs on every hosted Linux image with dynamic
+  # rendering, synchronization2, timeline semaphores and D32_SFLOAT. A device is required, not optional. Linux only: the
+  # hosted Windows images have no Vulkan device (card 6-5), the Windows run is the owner's machine.
+  vk_linux:
+    name: Vulkan adapter on Linux (xvfb, lavapipe)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # actions/checkout v7.0.1, pinned by commit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain
+      - name: Find the adapter
+        id: adapter
+        run: |
+          set -euo pipefail
+          # Decided from the tree, not from cargo's exit code (as for the GL job).
+          if [ -d engine/adapter_render_vk ]; then
+            cargo pkgid -p adapter_render_vk > /dev/null
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::not run: adapter_render_vk is not in this workspace yet"
+            echo "### Vulkan on Linux: not run (adapter_render_vk is not in this workspace yet)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Install xvfb, GLFW, the Vulkan loader, lavapipe and the validation layer
+        if: steps.adapter.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb libglfw3 libvulkan1 mesa-vulkan-drivers vulkan-tools vulkan-validationlayers
+          dpkg-query --show libglfw3 libvulkan1 mesa-vulkan-drivers vulkan-validationlayers
+      - name: What the runner offers (lavapipe, Vulkan version)
+        if: steps.adapter.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          xvfb-run --auto-servernum vulkaninfo --summary | tee "$RUNNER_TEMP/vulkaninfo.txt"
+          {
+            echo "### Vulkan on Linux (lavapipe)"
+            grep -E 'deviceName|apiVersion|driverInfo' "$RUNNER_TEMP/vulkaninfo.txt" || echo "no Vulkan device reported"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Test the adapter and the render contract on Vulkan
+        if: steps.adapter.outputs.present == 'true'
+        env:
+          DUCK_REQUIRE_VK: "1"
+        run: xvfb-run --auto-servernum cargo test -p adapter_render_vk --locked -- --nocapture
 
   # Card 2-10: the engine on real AArch64 hardware. A test run on 2026-11-01 showed that GitHub Free gives a
   # hosted ARM64 Linux runner (`ubuntu-24.04-arm`) for this repository (probed while it was private), so the NEON backend of `simd`
