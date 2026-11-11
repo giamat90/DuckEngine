@@ -56,6 +56,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "app_mesh_sample"
+version = "0.1.0"
+dependencies = [
+ "adapter_render_gl",
+ "adapter_render_vk",
+ "app_sprite_sample",
+ "assets",
+ "base",
+ "platform",
+ "render",
+ "tools_shaderc",
+]
+
+[[package]]
 name = "app_physics_sample"
 version = "0.1.0"
 dependencies = [

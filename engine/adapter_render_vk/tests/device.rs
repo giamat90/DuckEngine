@@ -25,6 +25,10 @@ use std::sync::{Mutex, PoisonError};
 #[path = "../../adapter_render_gl/tests/support/sprite_image.rs"]
 mod scene;
 
+/// The mesh image scene (two cubes, a depth texture), shared with the OpenGL adapter's test.
+#[path = "../../adapter_render_gl/tests/support/mesh_scene.rs"]
+mod mesh;
+
 /// GLFW is one library with global state: one test at a time uses it.
 static GLFW_IN_USE: Mutex<()> = Mutex::new(());
 
@@ -150,6 +154,7 @@ fn many_frames_on_the_backbuffer_are_presented_without_a_validation_message() {
 
 /// The sprite shaders the engine ships, compiled to SPIR-V by `shaderc` (the golden file of the
 /// shader compiler tests).
+const MESH_SPIRV: &[u8] = include_bytes!("../../app_mesh_sample/assets/mesh.spv.dshd");
 const SPRITE_SPIRV: &[u8] = include_bytes!("../../tools_shaderc/golden/sprite.spv.dshd");
 
 const SIZE: u32 = 16;
@@ -500,6 +505,25 @@ fn a_sprite_scene_renders_the_expected_pixels_on_the_vulkan_device() {
     let mut pixels = vec![0_u8; usize::try_from(scene::SIDE * scene::SIDE * 4).unwrap_or(0)];
     must(rig.device.read_back(target, &mut pixels), "read_back");
     scene::assert_reference(&pixels);
+    rig.device.destroy_surface(surface);
+    rig.assert_quiet();
+}
+
+/// The image test of card 6-11: the two-cube scene of the OpenGL mesh test (perspective camera,
+/// depth texture, SPIR-V mesh shaders of the mesh sample) gives the same probes on the Vulkan
+/// device, and the control frame without the depth test shows the far cube winning the overlap.
+#[test]
+fn two_cubes_render_with_the_near_one_in_front_on_the_vulkan_device() {
+    let mut rig = match Rig::start() {
+        Ok(rig) => rig,
+        Err(reason) => return not_run(&reason),
+    };
+    let surface = must(rig.device.create_surface(rig.surface), "making the surface");
+    let codes = mesh::stage_codes(MESH_SPIRV);
+    let pixels = mesh::render(&mut rig.device, surface, codes, true);
+    mesh::assert_probes(&pixels);
+    let pixels = mesh::render(&mut rig.device, surface, codes, false);
+    mesh::assert_control(&pixels);
     rig.device.destroy_surface(surface);
     rig.assert_quiet();
 }

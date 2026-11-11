@@ -61,7 +61,7 @@ impl fmt::Display for ArgsError {
 impl std::error::Error for ArgsError {}
 
 /// The usage line, printed after an argument error.
-pub const USAGE: &str = "usage: app_sprite_sample [--frames N] [--backend gl|vulkan]  (app_input_sample takes the same)";
+pub const USAGE: &str = "usage: app_sprite_sample [--frames N] [--backend gl|vulkan]  (app_input_sample and app_mesh_sample take the same)";
 
 /// The value of `--frames`: a whole number in range.
 fn frames_value(value: String) -> Result<u32, ArgsError> {
