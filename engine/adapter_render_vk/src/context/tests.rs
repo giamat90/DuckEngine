@@ -129,7 +129,7 @@ fn a_failed_instance_is_an_error_value_and_nothing_is_destroyed() {
 #[test]
 fn a_loader_without_any_driver_is_no_suitable_device_not_a_failure() {
     // Card 6-15: hosted runners have the loader and no driver; the loader then answers
-    // `VK_ERROR_INCOMPATIBLE_DRIVER` (-9), which means "no device", as `NoSuitableDevice` does.
+    // `VK_ERROR_INCOMPATIBLE_DRIVER` (-9): no driver is there to use, so there is no device.
     let mut script = one_gpu();
     script.create_instance_result = -9;
     assert_eq!(refused(script), VulkanError::NoSuitableDevice);

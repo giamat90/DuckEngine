@@ -314,7 +314,8 @@ mod xlib {
 
     impl Drop for Display {
         fn drop(&mut self) {
-            // SAFETY: the display was opened by `open` and is closed once, here.
+            // SAFETY: `close` is the one that matches how the display was made (`XCloseDisplay` for
+            // `open`, a no-op for the unit-test stand-in); it is called once, here.
             unsafe { (self.close)(self.pointer.as_ptr()) };
         }
     }
