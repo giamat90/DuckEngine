@@ -372,10 +372,13 @@ class Ci(unittest.TestCase):
         self.assertIn("python trusted/tools/swap-diff/swap_diff.py --config trusted/gates/swap-diff.toml --repo head", job)
         self.assertIn("SWAP_BASE: 03f7f47350e07b30c21b8ba7517059afca9d7536", job)
         self.assertRegex(job, r"SWAP_HEAD: [0-9a-f]{40}\n")
-        self.assertIn("git -C head fetch --quiet origin develop", job)
+        self.assertIn("git -C head fetch --quiet origin \"$SWAP_BASE\" \"$SWAP_HEAD\"", job)
         step = job[job.index("- name: Swap-diff of the Vulkan range"):]
         step = step[:step.index("# Report only")]
         self.assertNotIn("continue-on-error", step)
+        self.assertIn("set -euo pipefail", step)
+        base, head = re.findall(r"SWAP_(?:BASE|HEAD): ([0-9a-f]{40})", step)
+        self.assertNotEqual(base, head)
 
     def test_the_arm64_job_runs_on_a_hosted_arm_runner_and_proves_the_cpu(self):
         # Card 2-10: a hosted ARM64 runner exists for this repository (probed while it was private, 2026-11-01), so the NEON

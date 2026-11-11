@@ -62,7 +62,7 @@ flowchart TB
     b2 --> b2b["unsafe budget (gate G3)"]
     b2b --> b3["wiki lint"]
     b3 --> b4["digest equals gate configuration"]
-    b4 --> b4b["swap-diff over the Vulkan range 6-6..6-11 (card 6-12): 0 engine or game files"]
+    b4 --> b4b["record of the Vulkan range 6-6..6-11 (card 6-12, two fixed commits fetched by hash): swap-diff must say 0 engine or game files"]
     b4b --> b5["approval report into the run summary<br/>(branches only, report, never fails the job)"]
   end
 

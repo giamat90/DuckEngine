@@ -161,7 +161,9 @@ jobs:
           SWAP_HEAD: 86b1120409f99174ae9ec0f09fd3d8e887281c1b
         run: |
           set -euo pipefail
-          git -C head fetch --quiet origin develop
+          # The two commits are fetched by hash (the repository is public, so no credential is needed), so the step does not
+          # depend on where `develop` points now. It is a record of the measured range: it cannot go red because of what is pushed.
+          git -C head fetch --quiet origin "$SWAP_BASE" "$SWAP_HEAD"
           python trusted/tools/swap-diff/swap_diff.py --config trusted/gates/swap-diff.toml --repo head --base "$SWAP_BASE" --head "$SWAP_HEAD" | tee -a "$GITHUB_STEP_SUMMARY"
       # Report only (the checks above already gate): the owner's metric report for this push.
       - name: Approval report
@@ -475,6 +477,7 @@ jobs:
         if: steps.adapter.outputs.present == 'true'
         run: |
           set -euo pipefail
+          # Report only: a missing device is not an error here, the test step below fails without one (DUCK_REQUIRE_VK).
           xvfb-run --auto-servernum vulkaninfo --summary | tee "$RUNNER_TEMP/vulkaninfo.txt"
           {
             echo "### Vulkan on Linux (lavapipe)"
