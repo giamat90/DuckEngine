@@ -6,7 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 license-file.workspace = true
-description = "Layer 4 sample: a GLFW window and the OpenGL device draw a triangle, then sprites (card 3-15)."
+description = "Layer 4 sample: a GLFW window and the OpenGL or Vulkan device draw a triangle, then sprites (cards 3-15 and 6-10)."
 
 [dependencies]
 base = { path = "../base", version = "0.1.0" }
@@ -15,6 +15,7 @@ render = { path = "../render", version = "0.1.0" }
 assets = { path = "../assets", version = "0.1.0" }
 adapter_window_glfw = { path = "../adapter_window_glfw", version = "0.1.0" }
 adapter_render_gl = { path = "../adapter_render_gl", version = "0.1.0" }
+adapter_render_vk = { path = "../adapter_render_vk", version = "0.1.0" }
 
 [lints]
 workspace = true

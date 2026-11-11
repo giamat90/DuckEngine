@@ -1,4 +1,4 @@
-# Runnable examples `[P]` (cards 3-16 and 4-24)
+# Runnable examples `[P]` (cards 3-16, 4-24 and 6-10)
 
 The examples that open a window or print a result, and how to run them. They are layer 4 programs: they name adapters, and nothing else in the engine does ([overview](overview.md)). Every example has a pure part that is tested without a display and a thin part that owns the window and the loop.
 
@@ -6,12 +6,12 @@ The examples that open a window or print a result, and how to run them. They are
 
 | Example | Command | What it shows | Needs a display |
 |---|---|---|---|
-| `app_sprite_sample` (card 3-15) | `cargo run -p app_sprite_sample --release -- --frames 1800` | a triangle, then sprites, through the OpenGL 4.5 device | yes |
+| `app_sprite_sample` (cards 3-15, 6-10) | `cargo run -p app_sprite_sample --release -- --frames 1800` (add `--backend vulkan` for Vulkan) | a triangle, then sprites, through the OpenGL 4.5 device or the Vulkan 1.3 device | yes |
 | `app_input_sample` (card 3-16) | `cargo run -p app_sprite_sample --release --bin app_input_sample` | arrow keys or WASD move a checker sprite, the mouse places a small square, a left click changes its colour, Escape ends it | yes |
 | `app_physics_sample` (card 4-24) | `cargo run -p app_physics_sample --release` | boxes and discs fall into a walled arena under the 2D physics world, drawn with the sprite batcher, with the physics debug drawing on top; click drops a body, R resets, D toggles the debug drawing, Escape ends it | yes (`--null --frames N` needs none) |
 | `tools_render_bench`, `tools_simd_bench`, `tools_physics_spike`, `tools_scheduler_spike`, `alloc-bench` | `cargo run -p <name> --release` | benchmarks and spikes that print a table | no |
 
-`--frames N` ends a window example after N drawn frames (1 to 1,000,000); without it the example runs until the window is closed. Exit codes: 0 done, 1 failed, 2 bad arguments, 3 no device (the program prints `not run: device not set up (...)`).
+`--backend gl|vulkan` (the two sprite examples) picks the graphics API, see section 6. `--frames N` ends a window example after N drawn frames (1 to 1,000,000); without it the example runs until the window is closed. Exit codes: 0 done, 1 failed, 2 bad arguments, 3 no device (the program prints `not run: device not set up (...)`).
 
 ## 2. Running a window example on Windows
 
@@ -159,3 +159,25 @@ sequenceDiagram
 Tests (no display): the mapping (metres to pixels, one sprite per body with its pose, thin line and point sprites, the capacity bound and the drop count) and the controls (click to metres, one request per click or press, resize, keys) are unit tests on plain data; the simulation (fixed-step accounting, the stall cap, the stream period and limit, clicks clamped into the arena, a full world, same seed same hash, reset) likewise; `tests/session.rs` runs the frame on the Null device (n bodies are n sprites with the poses, the debug sprites come and go with the key, the same seed gives the same sprite list hash after 150 frames, a click adds exactly one body, reset, resize, a crowded arena of 125 bodies fits the frame); `tests/no_allocation.rs` checks that a warm frame, with a click and a stream spawn in it, makes no allocator call; `tests/binary.rs` starts the built program (bad arguments exit 2, `--null --frames 200` exits 0 with a stable hash, `--frames 3` exits 0 or reports `not run`). The port itself is tested in `engine/physics/tests/debug_draw.rs`.
 
 Not covered by an automatic test: the picture on a real display, the feel of the click, and the Linux key table. Same display-scale limit as section 4.
+
+## 6. Choosing the graphics API (card 6-10)
+
+`app_sprite_sample` and `app_input_sample` take `--backend gl|vulkan` (OpenGL 4.5 is the default, `app_physics_sample` stays on OpenGL). The choice is made in one place, the composition root of the crate: `app.rs` matches the option and `backend.rs` names the two adapter devices. Everything that decides what is drawn (`sample`, `scene`, the sprite batcher, the render graph) sees `&mut dyn IRenderDevice` only and is the same code on both APIs.
+
+```mermaid
+flowchart LR
+  cli["--backend gl | vulkan (args.rs)"] --> app["app.rs: run / run_interactive"]
+  app -->|gl| glb["backend.rs: GlDevice, sprite.dshd (GLSL)"]
+  app -->|vulkan| vkb["backend.rs: VulkanDevice, sprite.spv.dshd (SPIR-V)"]
+  glb --> sample["sample.rs + scene.rs: dyn IRenderDevice"]
+  vkb --> sample
+  sample --> frame["same command streams, same sprites"]
+  glb -.->|"check(): GL error flag"| frame
+  vkb -.->|"check(): validation layer report"| frame
+```
+
+The window is the same (GLFW with no client API; each device makes its own context or swapchain on the native token). The shader asset is the one `tools_shaderc` made for the API: `sprite.dshd` (GLSL) for OpenGL and `sprite.spv.dshd` (SPIR-V, the same sources) for Vulkan; the sample picks the binary or the text from the module. After each frame `check()` looks for what the API kept to itself: the OpenGL error flag, or, on Vulkan, any message of the validation layer (a failure of the run, exit code 1). A machine without Vulkan 1.3 or its loader gives exit code 3, `not run: device not set up (...)`.
+
+Tests: the Null device accepts the SPIR-V asset and draws the same streams as with the GLSL one; the command line (the default, both names, any order, an unknown name, a missing name); the built program refuses an unknown backend (exit 2) and draws three frames on Vulkan where a device exists (`DUCK_REQUIRE_VK=1` makes a missing one a failure). The **image test** is one scene (six sprites through the batcher, the camera and the render graph) and one reference picture painted on the CPU, kept in `engine/adapter_render_gl/tests/support/sprite_image.rs` and included by the test of each adapter: `adapter_render_gl/tests/sprite_image.rs` and `adapter_render_vk/tests/device.rs` render it offscreen, read it back and compare (exact for flat areas, 2 per channel for blends). The first run on Vulkan showed that the alpha channel of a blended pixel was 191 instead of 255: the Vulkan pipeline blended alpha by the source alpha, OpenGL keeps the source (`glBlendFuncSeparate`); the pipeline now uses the same factors and a unit test pins them.
+
+Not covered by an automatic test: the picture in the window (checked by running both backends), the Linux run of the Vulkan sample.

@@ -82,6 +82,7 @@ name = "app_sprite_sample"
 version = "0.1.0"
 dependencies = [
  "adapter_render_gl",
+ "adapter_render_vk",
  "adapter_window_glfw",
  "assets",
  "base",
