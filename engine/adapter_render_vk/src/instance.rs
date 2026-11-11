@@ -284,7 +284,7 @@ impl Instance {
             .device_name
             .iter()
             .take_while(|byte| **byte != 0)
-            .map(|byte| byte.cast_unsigned())
+            .map(|byte| byte.to_ne_bytes()[0])
             .collect();
         let api_version = ApiVersion::from_raw(properties.api_version);
         // The Vulkan 1.3 feature structure only exists for a device that reports 1.3.

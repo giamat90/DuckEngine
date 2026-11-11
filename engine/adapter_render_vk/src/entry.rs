@@ -41,7 +41,7 @@ function_table! {
 /// Whether the NUL-terminated name in a driver's fixed-size field is `wanted`.
 pub fn name_is(raw: &[c_char], wanted: &CStr) -> bool {
     let text = raw.iter().take_while(|byte| **byte != 0);
-    text.map(|byte| byte.cast_unsigned())
+    text.map(|byte| byte.to_ne_bytes()[0])
         .eq(wanted.to_bytes().iter().copied())
 }
 
