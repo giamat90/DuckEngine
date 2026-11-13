@@ -1232,6 +1232,7 @@ mod tests {
             (FRAC_PI_2, 1.0, 10.0, 1.0),
             (Scalar::NAN, 1.0, 1.0, 10.0),
             (FRAC_PI_2, 1.0, 1.0, Scalar::INFINITY),
+            (FRAC_PI_2, Scalar::INFINITY, 1.0, 10.0),
             // Finite inputs whose matrix overflows.
             (1.0e-39, 1.0, 1.0, 10.0),
             (FRAC_PI_2, 1.0, 1.0e30, 3.0e38),
@@ -1293,6 +1294,23 @@ mod tests {
             TOLERANCE,
         );
         assert_close(&[m.determinant()], &[1.0], TOLERANCE);
+    }
+
+    #[test]
+    fn look_at_sends_a_point_ahead_and_above_to_minus_z_by_its_distance() {
+        // The camera at the origin looks up at 45 degrees; the target is 3 forward and 3 up.
+        let m = Mat4::look_at_rh(
+            Vec3::ZERO,
+            Vec3::new(0.0, 3.0, -3.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        )
+        .unwrap_or(Mat4::IDENTITY);
+        let distance = 18.0_f32.sqrt();
+        assert_close(
+            &m.transform_vector3(Vec3::new(0.0, 3.0, -3.0)).to_array(),
+            &[0.0, 0.0, -distance],
+            TOLERANCE,
+        );
     }
 
     #[test]
