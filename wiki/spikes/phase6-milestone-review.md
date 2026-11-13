@@ -1,5 +1,7 @@
 # Phase 6 milestone review `[S]`
 
+> **Update (card 6-16, 2026-11-13):** line coverage of the phase 6 crates was measured afterwards. The result is in [section 10](#10-status-after-the-review-card-6-16); sections 1 to 9 are left as written, so they still say that no coverage figure existed on the day of the review.
+
 Card 6-13, written on 2026-11-11 on branch `agent/6-13-phase6-exit` (cut from `develop` at `c88693d`, which holds cards 6-1 to 6-12 and 6-14; `main` is at the release of phase 5 plus the governance steps). The roadmap asks for this review at the end of each phase ([roadmap](../workflow/roadmap.md) "Milestone reviews", [quality-metrics §4](../workflow/quality-metrics.md)); the design note names card 6-13 as the exit record and the `stable` proposal ([vulkan-and-mesh-v0 §7](../architecture/vulkan-and-mesh-v0.md)). It follows the form of the [phase 5 review](phase5-milestone-review.md). **The go/adjust decision, the `stable` promotion, the ADR-0006 update and whether the phase 6 umbrella card is done are the owner's** (section 8); this page gives evidence and a recommendation, and closes nothing.
 
 **How the numbers were made.** As in earlier phases the release metric report is a placeholder, so there is no whole-phase measurement of coverage or mutation. **Unlike phase 5, no coverage or mutation figure exists for any phase 6 card:** the reviews 6-2 to 6-14 each say coverage, mutation, Miri and benchmarks were not run locally. Other per-card statements are marked *recorded* (taken from the review file, not re-run). What was **computed for this page** is marked *measured here*: the test run of the phase 6 crates, the swap-diff tool over the fixed range, the unsafe-budget tool, the architecture check, git history. Nothing was lowered, skipped or waived, and no governance file was edited.
@@ -141,7 +143,7 @@ All work cards from 6-2 to 6-14 are on `develop`; only 6-12 is on `main`. The Vu
 
 ### 4.1 What the gates measured, and how
 
-**Per-card evidence** (recorded in the reviews, *not re-run here*): Clippy `-D warnings` with `cargo fmt` and `cargo doc -D warnings`, and the workspace tests. **Line coverage and mutation testing were not run for any phase 6 card**, so the digest gates for mutation score on changed L0-L2 code and for line coverage have no phase 6 measurement at all; this is the weakest point of the evidence (F-METRICS). **Whole-phase measurement: none.** The release metric report does not measure these crates.
+**Per-card evidence** (recorded in the reviews, *not re-run here*): Clippy `-D warnings` with `cargo fmt` and `cargo doc -D warnings`, and the workspace tests. **Line coverage and mutation testing were not run for any phase 6 card at the time of the review** (coverage was measured afterwards, section 10), so the digest gates for mutation score on changed L0-L2 code and for line coverage have no phase 6 measurement at all; this is the weakest point of the evidence (F-METRICS). **Whole-phase measurement: none.** The release metric report does not measure these crates.
 
 | Metric | Per-card evidence (recorded) | Whole-phase |
 |---|---|---|
@@ -237,3 +239,34 @@ The owner decides; nothing here moves a card.
 - Any run on ARM64 or on a second GPU.
 - That the `ci` run on `main` will be green: it has not run on the whole phase.
 - Mermaid syntax: read by the author, not rendered.
+
+## 10. Status after the review (card 6-16)
+
+Written on 2026-11-13, documentation only. The owner asked to run coverage ("let's run coverage"), which was finding F-METRICS. Mutation testing was **not** run and is still open.
+
+```mermaid
+flowchart LR
+  f["F-METRICS: no coverage run in phase 6"] --> r["6-16: cargo llvm-cov on 7 crates"]
+  r --> n["line coverage 94.5% to 99.8% per crate, 97.5% in total"]
+  n --> g["gates: L0-L2 line 90% met; new-line 95% and branch 80% not measured"]
+  f --> m["mutation: still not run (open)"]
+```
+
+**How it was measured.** `cargo llvm-cov -p render -p assets -p tools_shaderc -p adapter_render_gl -p adapter_render_vk -p app_mesh_sample -p app_sprite_sample --locked` at `develop` `81b3c11`, on the Windows developer machine, with `DUCK_REQUIRE_GL`, `DUCK_REQUIRE_VK` and `DUCK_REQUIRE_SHADER_TOOLS` set to 1 so the real-device tests ran and could not be skipped. 762 tests passed, 0 failed. Lines are `cargo llvm-cov` line counts of the files under `engine/`.
+
+| Crate | Layer | Lines covered / counted | Line coverage | Region coverage |
+|---|---|---|---|---|
+| `assets` | L2 | 499 / 500 | 99.8% | 96.7% |
+| `render` | L2 | 1,909 / 1,932 | 98.8% | 97.6% |
+| `tools_shaderc` | L4 (tool) | 935 / 961 | 97.3% | 95.2% |
+| `adapter_render_vk` | L3 | 7,727 / 7,881 | 98.0% | 96.6% |
+| `adapter_render_gl` | L3 | 1,498 / 1,568 | 95.5% | 93.3% |
+| `app_mesh_sample` | L4 | 240 / 250 | 96.0% | 88.5% |
+| `app_sprite_sample` | L4 | 1,192 / 1,261 | 94.5% | 92.3% |
+| **All seven** | | 14,000 / 14,353 | **97.5%** | |
+
+**Against the gates.** The L0-L2 line gate is 90% ([gates](../../gates/gates.toml) `coverage.line_min`): `assets` and `render`, the two phase 6 crates in L0-L2, are above it. Two files with 30 or more lines are below that figure, for reference only (the gate applies to L0-L2, and both are L3 or L4): `app_sprite_sample/src/app.rs` 81.1% (33 lines missed) and `adapter_render_gl/src/device.rs` 89.1% (43 lines missed); both are real-device or window code. **Not measured:** the new-line gate (95%, needs a diff against a base), the branch gate (80%) and mutation score on changed L0-L2 code (80%).
+
+**Limits of this measurement.** One machine and one operating system: the Linux code paths (the Xlib surface, the stand-in display) were not run here, so their lines count as the Windows build sees them (not at all). It measures the whole crates, not only the lines changed in phase 6. Line coverage says a line ran, not that a test would notice if it were wrong; that is what the mutation score is for.
+
+**F-METRICS now.** Half closed: line coverage exists and is high. Mutation testing of the changed L0-L2 code (`render`, `assets`, `tools_shaderc`) is still not run, so the 80% mutation gate remains unmeasured for phase 6.
