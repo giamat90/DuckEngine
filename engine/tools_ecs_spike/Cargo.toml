@@ -1,0 +1,30 @@
+[package]
+name = "tools_ecs_spike"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+license-file.workspace = true
+description = "Throw-away harness of the ADR-0003 spike (card 7-2): archetype (safe and type-erased), sparse set and hybrid ECS storages on the sandbox's shape; report only."
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+
+# Not `workspace = true`: the workspace forbids unsafe code. This crate denies it and waives it
+# once, at the crate root, for the type-erased column (module `raw_column`), with every block
+# documented (same pattern as `tools_scheduler_spike`). The rest repeats the workspace lints.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+too_many_lines = "warn"
+too_many_arguments = "deny"
+cognitive_complexity = "deny"
+excessive_nesting = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"
