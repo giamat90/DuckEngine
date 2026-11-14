@@ -2,6 +2,8 @@
 
 > **Update (card 6-16, 2026-11-13):** line coverage of the phase 6 crates was measured afterwards. The result is in [section 10](#10-status-after-the-review-card-6-16); sections 1 to 9 are left as written, so they still say that no coverage figure existed on the day of the review.
 
+> **Update (card 6-17, 2026-11-13):** mutation testing of the changed L0-L2 code was run afterwards, see [section 11](#11-mutation-testing-card-6-17).
+
 Card 6-13, written on 2026-11-11 on branch `agent/6-13-phase6-exit` (cut from `develop` at `c88693d`, which holds cards 6-1 to 6-12 and 6-14; `main` is at the release of phase 5 plus the governance steps). The roadmap asks for this review at the end of each phase ([roadmap](../workflow/roadmap.md) "Milestone reviews", [quality-metrics §4](../workflow/quality-metrics.md)); the design note names card 6-13 as the exit record and the `stable` proposal ([vulkan-and-mesh-v0 §7](../architecture/vulkan-and-mesh-v0.md)). It follows the form of the [phase 5 review](phase5-milestone-review.md). **The go/adjust decision, the `stable` promotion, the ADR-0006 update and whether the phase 6 umbrella card is done are the owner's** (section 8); this page gives evidence and a recommendation, and closes nothing.
 
 **How the numbers were made.** As in earlier phases the release metric report is a placeholder, so there is no whole-phase measurement of coverage or mutation. **Unlike phase 5, no coverage or mutation figure exists for any phase 6 card:** the reviews 6-2 to 6-14 each say coverage, mutation, Miri and benchmarks were not run locally. Other per-card statements are marked *recorded* (taken from the review file, not re-run). What was **computed for this page** is marked *measured here*: the test run of the phase 6 crates, the swap-diff tool over the fixed range, the unsafe-budget tool, the architecture check, git history. Nothing was lowered, skipped or waived, and no governance file was edited.
@@ -270,3 +272,43 @@ flowchart LR
 **Limits of this measurement.** One machine and one operating system: the Linux code paths (the Xlib surface, the stand-in display) were not run here, so their lines count as the Windows build sees them (not at all). It measures the whole crates, not only the lines changed in phase 6. Line coverage says a line ran, not that a test would notice if it were wrong; that is what the mutation score is for.
 
 **F-METRICS now.** Half closed: line coverage exists and is high. Mutation testing of the changed L0-L2 code (`render`, `assets`, `tools_shaderc`) is still not run, so the 80% mutation gate remains unmeasured for phase 6.
+
+## 11. Mutation testing (card 6-17)
+
+Written on 2026-11-13, measurement and documentation only; no code or test was changed. The owner asked to run mutation testing ("run mutation testing"), the other half of finding F-METRICS.
+
+```mermaid
+flowchart LR
+  f["F-METRICS: mutation score unmeasured"] --> r["6-17: cargo-mutants 27.1.0 over the phase 6 diff"]
+  r --> m["253 mutants: 219 caught, 8 missed, 26 unviable"]
+  m --> sc["score 96.5% of viable, gate 80%: met"]
+  m --> miss["8 missed = 4 real test gaps + 4 probably equivalent"]
+  miss --> card["proposed: one card of tests for them (owner picks)"]
+```
+
+**How it was measured.** `cargo mutants -p render -p assets -p tools_shaderc -p base --in-diff <phase 6 diff> --jobs 3` at `develop` `8f1db42`, on the Windows developer machine, with the shader tools available. The diff is `git diff ebdf119 HEAD` over `engine/render/src`, `engine/assets/src`, `engine/tools_shaderc/src` and `engine/base/src`: mutants are made only on lines that phase 6 added or changed. cargo-mutants reported **253 mutants in 8 minutes: 219 caught, 8 missed, 0 timeouts, 26 unviable** (a mutant that does not compile is not counted).
+
+| | Count |
+|---|---|
+| Caught | 219 |
+| Missed | 8 |
+| Timeouts | 0 |
+| Unviable (do not compile) | 26 |
+| **Score** (caught / (caught + missed + timeouts)) | **96.5%** (219 of 227) |
+
+**Against the gate.** The mutation gate on changed L0-L2 code is 80% (digest section 7; `mutation.score_min` in [gates](../../gates/gates.toml)): **met**.
+
+**The eight missed mutants.** Judged by reading the code and the tests (not proved by a run). Four are probably equivalent, because `Mat4::perspective_rh` ends with `matrix.is_finite().then_some(matrix)`: a zero field of view, a zero aspect or a far plane equal to the near plane makes the matrix non-finite, so it is rejected there even when the earlier check is loosened. Four are real test gaps.
+
+| Mutant | Where | Judgement |
+|---|---|---|
+| `>` to `>=` on `fov_y > 0.0`, `aspect > 0.0` and `far > near` (three mutants) | `Mat4::perspective_rh` (`base/src/math/matrix.rs`, lines 291, 293, 295) | probably equivalent: the final finiteness check rejects those inputs anyway. A test with fov 0, aspect 0 and far equal to near would still pin the intent, cheaply |
+| `||` to `&&` between `!near.is_finite()` and `!far.is_finite()` | `matrix.rs:296`, column 63 | probably equivalent: a non-finite near or far plane gives a non-finite matrix, rejected by the final check |
+| `||` to `&&` between `!aspect.is_finite()` and `!near.is_finite()` | `matrix.rs:296`, column 42 | **real gap**: an infinite aspect gives a zero `focal / aspect`, which is finite, so the call would return a matrix; no test passes an infinite aspect |
+| delete `-` in `-forward.y` | `Mat4::look_at_rh`, the view matrix third column (`matrix.rs:321`) | **real gap**: no test looks along a direction with a non-zero vertical part, so the sign is never checked |
+| `||` to `&&` in `desc.depth.test \|\| desc.depth.write` | `validate_pipeline_layout` (`render/src/null.rs:136`) | **real gap**: no test has a pipeline that only tests depth, or only writes it, with no depth format |
+| delete field `backbuffer` | `PassState::begin` (`render/src/null/validate.rs:209`) | **real gap**: `backbuffer` is the surface size `(u32, u32)`, default `(0, 0)`; after the first `begin` a second pass on the backbuffer would be checked against `(0, 0)`. A test needs two passes on the backbuffer in one frame |
+
+**Limits of this measurement.** Windows only. `--in-diff` mutates changed lines only, not the rest of these crates. The L3 adapters and the L4 samples are not mutated (no gate covers them). Mutation score says the tests notice a changed line, not that the tests are good. The survivors above are the evidence of what the tests do not pin; each is cheap to pin.
+
+**F-METRICS now.** Closed as a measurement: coverage (section 10) and mutation (this section) both exist and meet their gates. **New finding F-MUTGAPS:** four real test gaps (infinite aspect, the look-at sign, depth test or write alone, backbuffer size across two passes) and four probably-equivalent misses; proposed as one small card that adds tests for them (class 2, because `base` is public API), if the owner wants it.
