@@ -40,6 +40,31 @@ fn the_real_compiler_meets_the_contract() {
 }
 
 #[test]
+fn the_real_compiler_meets_the_spirv_contract() {
+    if let Some(c) = compiler() {
+        contract::real_spirv(&c);
+    }
+}
+
+#[test]
+fn the_spirv_is_version_one_or_later_and_ends_in_whole_words() {
+    if let Some(c) = compiler() {
+        let module = must(c.compile_spirv(Source {
+            stage: Stage::Fragment,
+            text: contract::SPRITE_FRAG,
+        }));
+        let version = u32::from_le_bytes([
+            module.code[4],
+            module.code[5],
+            module.code[6],
+            module.code[7],
+        ]);
+        assert!(version >= 0x0001_0000, "{version:#x}");
+        assert!(module.code.len() > 20 && module.code.len().is_multiple_of(4));
+    }
+}
+
+#[test]
 fn diagnostics_name_the_problem() {
     if let Some(c) = compiler() {
         let result = c.compile(Source {

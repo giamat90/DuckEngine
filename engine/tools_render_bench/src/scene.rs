@@ -10,7 +10,7 @@ use render::desc::{
 };
 use render::device::IRenderDevice;
 use render::graph::RenderGraph;
-use render::ids::{SurfaceId, TextureId};
+use render::ids::{PipelineId, ShaderId, SurfaceId, TextureId};
 use render::null::NullDevice;
 use render::sprite::{
     Sprite, SpriteBatcher, SpriteBindings, SpriteVertex, UvRect, VERTEX_STRIDE, encode_vertices,
@@ -267,18 +267,13 @@ impl FrameScene {
     }
 }
 
-/// The shaders, pipeline, buffers (camera, vertices, indices) and sampler a sprite frame binds.
-fn create_bindings(device: &mut NullDevice) -> Result<SpriteBindings, String> {
-    let shader = |device: &mut NullDevice, stage| {
-        device.create_shader(ShaderDesc {
-            stage,
-            code: &[0],
-            entry: "main",
-        })
-    };
-    let vertex_shader = shader(device, ShaderStage::Vertex).map_err(text)?;
-    let fragment_shader = shader(device, ShaderStage::Fragment).map_err(text)?;
-    let pipeline = device
+/// The alpha-blended, depth-less pipeline of the sprite frame.
+fn create_sprite_pipeline(
+    device: &mut NullDevice,
+    vertex_shader: ShaderId,
+    fragment_shader: ShaderId,
+) -> Result<PipelineId, String> {
+    device
         .create_pipeline(PipelineDesc {
             vertex_shader,
             fragment_shader,
@@ -290,8 +285,23 @@ fn create_bindings(device: &mut NullDevice) -> Result<SpriteBindings, String> {
                 write: false,
             },
             color_format: TextureFormat::Rgba8,
+            depth_format: None,
         })
-        .map_err(text)?;
+        .map_err(text)
+}
+
+/// The shaders, pipeline, buffers (camera, vertices, indices) and sampler a sprite frame binds.
+fn create_bindings(device: &mut NullDevice) -> Result<SpriteBindings, String> {
+    let shader = |device: &mut NullDevice, stage| {
+        device.create_shader(ShaderDesc {
+            stage,
+            code: &[0],
+            entry: "main",
+        })
+    };
+    let vertex_shader = shader(device, ShaderStage::Vertex).map_err(text)?;
+    let fragment_shader = shader(device, ShaderStage::Fragment).map_err(text)?;
+    let pipeline = create_sprite_pipeline(device, vertex_shader, fragment_shader)?;
     let sampler = device
         .create_sampler(SamplerDesc {
             min_filter: Filter::Nearest,

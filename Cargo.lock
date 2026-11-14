@@ -24,6 +24,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter_render_vk"
+version = "0.1.0"
+dependencies = [
+ "adapter_window_glfw",
+ "assets",
+ "base",
+ "platform",
+ "render",
+]
+
+[[package]]
 name = "adapter_runtime_libs"
 version = "0.1.0"
 
@@ -42,6 +53,20 @@ version = "0.1.0"
 dependencies = [
  "adapter_audio_miniaudio",
  "audio",
+]
+
+[[package]]
+name = "app_mesh_sample"
+version = "0.1.0"
+dependencies = [
+ "adapter_render_gl",
+ "adapter_render_vk",
+ "app_sprite_sample",
+ "assets",
+ "base",
+ "platform",
+ "render",
+ "tools_shaderc",
 ]
 
 [[package]]
@@ -71,6 +96,7 @@ name = "app_sprite_sample"
 version = "0.1.0"
 dependencies = [
  "adapter_render_gl",
+ "adapter_render_vk",
  "adapter_window_glfw",
  "assets",
  "base",

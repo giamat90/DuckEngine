@@ -247,3 +247,88 @@ O1 to O9 were accepted with the recommendations (owner, 2026-11-02, "I accept").
 - **No GPU in CI (new in effect).** Hosted runners have no GPU; the GL path is tested where a device exists. The owner's machine is the only certain one until `llvmpipe` is shown to work.
 - **Stream layout.** The byte layout is fixed in card 3-2; changing it later changes the golden files. The version word is the mitigation.
 - **Not settled here:** the shader language, the compilers, the sRGB handling of the swapchain, the texture compression formats, text rendering, the vertex layout declaration syntax. Each is decided in the card that first needs it.
+
+## 13. Revision 1: depth in a pass, a pipeline and a barrier (card 6-2)
+
+The one counted port revision of phase 6 ([vulkan-and-mesh-v0](vulkan-and-mesh-v0.md) section 5). Vulkan's dynamic rendering and the Null validation both need to know the depth attachment of a pass, so the port now says it.
+
+```mermaid
+classDiagram
+  class PassDesc {
+    target: RenderTarget
+    clear_color: Option~RGBA~
+    clear_depth: Option~f32~
+    depth: Option~TextureId~  (new)
+  }
+  class PipelineDesc {
+    depth: DepthState
+    color_format: TextureFormat
+    depth_format: Option~TextureFormat~  (new)
+  }
+  class ResourceState {
+    Undefined
+    ColorTarget
+    DepthTarget  (new)
+    ShaderRead
+    Present
+  }
+  PassDesc --> TextureId : depth attachment
+  PipelineDesc ..> PassDesc : formats must match at set_pipeline
+  Barrier --> ResourceState
+```
+
+- **`PassDesc.depth`**: a `Depth32F` texture of the colour target's size (for the backbuffer, the surface size). `None` is a pass without depth, as before. `clear_depth` without an attachment is still accepted (OpenGL clears the window's own depth buffer).
+- **A depth texture is never its own colour target.** A pass whose colour target is the depth attachment is refused (OpenGL would find the framebuffer incomplete). `Present` and `ShaderRead` are allowed on depth textures (a depth texture may be sampled later); only the colour and depth target states are tied to the texture kind.
+- **`PipelineDesc.depth_format`**: `Some(Depth32F)` for a pipeline used in a pass with a depth attachment, `None` otherwise. A pipeline that tests or writes depth must say `Some(Depth32F)`; any other format is refused. `set_pipeline` is refused when the pipeline's depth format and the pass's attachment disagree (Vulkan needs both formats at pipeline creation and at `begin_rendering`).
+- **`ResourceState::DepthTarget`**: only for depth textures; `ColorTarget` is refused on them, and neither is for the backbuffer. The `barrier` command already names a texture handle, so a depth texture needs no new command: only the state tag `4` is new.
+- **Stream bytes.** A `begin_pass` payload with a depth attachment is 38 bytes (the old 30 plus the depth handle); without one it is the 30 bytes it always was, so every stream recorded before the revision is byte-identical and the golden dumps did not change. A payload of any other length is refused. The stream version word stays `1`.
+- **Null device.** Validates all of the above and clears a depth texture to `clear_depth` (the bytes read back as the float).
+- **OpenGL adapter.** A pass with a colour texture and a depth texture draws through one shared framebuffer that is re-pointed at the two textures for each such pass, so no cached framebuffer can outlive a destroyed texture. A pass on the backbuffer keeps using the window's own depth buffer (OpenGL cannot attach a texture to the default framebuffer): the depth texture named there is checked, not drawn into. A later sample that reads such a depth texture on OpenGL would not see the depth; that is a known limit until a card needs it.
+- **Contract suite.** New `depth_contract`: a pass with a matching depth texture is accepted; one of another size, a colour texture, or a destroyed texture is refused with the right error; the depth states of a barrier belong to depth textures. A deliberately broken device (accepts a wrong depth attachment) fails it.
+- **Not in this revision.** Render graph support for a depth attachment (the graph still emits `depth: None`; the mesh frontend card extends it), stencil, depth formats other than `Depth32F`, multisampling, sampling a depth texture in a shader.
+
+## 14. The mesh frontend (card 6-3)
+
+The 3D counterpart of the sprite frontend: no port call is new. It is plain data in `render` (layer 2) and a perspective matrix constructor in `base` (layer 0), as [vulkan-and-mesh-v0](vulkan-and-mesh-v0.md) section 5 said.
+
+```mermaid
+flowchart LR
+  cam["PerspectiveCamera<br/>position, target, up, fov, aspect, near, far"] -->|"view_projection / mvp(model)"| mat["Mat4<br/>perspective_rh * look_at_rh * model"]
+  mat -->|"matrix_bytes"| ubo["uniform buffer (64 bytes)"]
+  cube["cube_vertices / cube_indices<br/>24 vertices, 36 indices"] -->|"encode_mesh_vertices"| vbo["vertex buffer (32-byte stride)"]
+  ubo --> rec["record_mesh(stream, MeshBindings, index_count)"]
+  vbo --> rec
+  rec --> cs["CommandStream<br/>set_pipeline, bind x4, draw_indexed"]
+  cs --> dev["IRenderDevice<br/>Null, OpenGL (Vulkan next)"]
+```
+
+- **`Mat4::perspective_rh(fov_y, aspect, near, far)`** and **`Mat4::look_at_rh(eye, target, up)`** (`base`, Class 2 public API like `orthographic_rh`): right-handed, Y up, the camera looks down -Z, depth 0 to 1 (`z = -near` maps to 0, `z = -far` to 1). Both return `None` for a view that cannot exist (field of view outside (0, pi), non-positive aspect or near, `far` not beyond `near`, `eye` equal to `target`, `up` parallel to the view direction, a value that is not finite).
+- **`PerspectiveCamera`** (`render::camera`): `view_projection()` and `mvp(&model)`; `None` as above.
+- **`MeshVertex`** (`render::mesh`): position (3 floats), normal (3 floats), uv (2 floats), 32 bytes in vertex slot 0, locations 0, 1, 2. Slot 0 only, as the design note recommended; no widening of the vertex input.
+- **`cube_vertices()` and `cube_indices()`**: the unit cube, 24 vertices (four per face, so each face has its own normal and uv), 36 `u16` indices, counter-clockwise seen from outside, uv (0, 0) at the top-left of the image.
+- **`record_mesh`**: pipeline, uniform (slot 0), index buffer, vertex buffer, texture (slot 0), one `draw_indexed`; nothing for an empty mesh. The pipeline must carry `depth_format: Some(Depth32F)` and the pass a depth texture (port revision 1, section 13).
+- **Tests.** Camera and matrix maths on the CPU; cube geometry (outward counter-clockwise winding, one normal per face, a full texture per face); a golden stream (`engine/render/golden/mesh_scene.txt`); the Null device accepts a depth-tested frame and refuses the depth pipeline in a pass without depth; recording a frame makes no allocator call; and on a real OpenGL 4.5 device two cubes drawn near-first then far render with the near one in front, with a control frame (depth test off) in which the far cube wins the overlap. The GL test uses inline GLSL, so it needs no shader tool. It sees only the front face of each cube, so the winding of the other faces is verified on the CPU only (the port has no cull state to test it against).
+- **Not in this card.** The render graph still emits `depth: None` (a pass with a depth attachment is recorded by hand, as the image test does; the mesh sample, card 6-11, decides whether the graph should learn it), lighting, a mesh file format, more than one vertex slot, instancing.
+
+## 15. The SPIR-V output of the shader tool (card 6-4)
+
+The shader file `dshd` gains a second backend and the shader tool a second output, so the Vulkan adapter (cards 6-6 to 6-9) can take its shaders from a file, as the OpenGL adapter does. No port call changes: the blob stays opaque to the port ([vulkan-and-mesh-v0](vulkan-and-mesh-v0.md) section 4).
+
+```mermaid
+flowchart LR
+  src["GLSL 450 source (.vert, .frag)"] -->|"glslang -V"| spv["SPIR-V (the same for both outputs)"]
+  spv -->|"SPIRV-Cross --version 450"| glsl["GLSL 450 text"]
+  spv -->|"SPIRV-Cross --reflect"| refl["reflection record"]
+  glsl --> d0["dshd, backend 0 (OpenGL)"]
+  spv --> d1["dshd, backend 1 (Vulkan)"]
+  refl --> d0
+  refl --> d1
+  d1 --> rd["Program::parse: magic, whole words, minimum size, checked before a driver sees the blob"]
+```
+
+- **File format.** Byte 6 of the header, the backend, may now be `1` (SPIR-V) besides `0` (GLSL 450 text). Everything else is unchanged, so every existing file is read and written byte for byte as before. One file has one backend: the GL and the Vulkan program are two files from the same source. The code of a SPIR-V module is a binary of whole 32-bit words, at least the 5-word header, starting with the magic `0x07230203` in little-endian byte order. A binary with the other byte order, a length that is not a multiple of 4, fewer than 20 bytes, or a different first word is refused with `DshdError::BadSpirv`, by the reader and by the encoder. The size limit stays 1 MiB. The reader never allocates and gives a hostile file an error, not a panic.
+- **Reading.** `Program::backend()` says which kind a file is; `Module::spirv()` gives the binary of a SPIR-V module (`None` for GLSL); `Module::code()` still gives the GLSL text and is empty for a SPIR-V module. A program is opened as the backend it declares, never guessed from the bytes.
+- **Writing.** `SpirvModuleSpec`, `spirv_encoded_len` and `encode_spirv_into` next to the GLSL ones; the checks (stage, bindings, inputs, size) are shared.
+- **Tool.** `IShaderCompiler::compile_spirv` returns the SPIR-V glslang made, with the reflection of the same source (the same SPIR-V feeds both outputs, so the two reflections are equal; a contract rule checks it). `shaderc --backend spirv` writes a SPIR-V file; `--backend glsl` (the default) is the old behaviour. glslang runs with the same arguments as before, so the SPIR-V is the Vulkan 1.0 flavour that every Vulkan 1.3 driver accepts (O3).
+- **Checked-in asset.** `engine/tools_shaderc/golden/sprite.spv.dshd`, compared with the tool output by a test (skipped, and said so, when the tools are not set up; `DUCK_REQUIRE_SHADER_TOOLS=1` makes the missing tools a failure).
+- **Not in this card.** No `VkShaderModule` (card 6-9), no validation with `spirv-val` (the driver and the validation layers do that in 6-9), no second compiler. Whether "SPIR-V direct next to SPIR-V converted to GLSL" satisfies the rule of two for the compiler path stays the owner's decision recorded as O4 (accepted for phase 6 as option a).

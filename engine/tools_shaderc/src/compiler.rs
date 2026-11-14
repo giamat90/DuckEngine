@@ -1,5 +1,5 @@
-//! The shader compiler port, `IShaderCompiler`: GLSL 450 source in, one backend module and the
-//! engine's reflection record out.
+//! The shader compiler port, `IShaderCompiler`: GLSL 450 source in, one backend module (GLSL 450
+//! text for OpenGL, or a SPIR-V binary for Vulkan) and the engine's reflection record out.
 //!
 //! The port is declared here, by the only code that needs it, a build-time tool at layer 4. The
 //! runtime (`render`, the adapters) never sees a compiler: it reads the `dshd` file this tool writes
@@ -38,6 +38,18 @@ pub struct CompiledModule {
     pub stage: Stage,
     /// The backend text (GLSL 450 for OpenGL), `\n` line ends, entry point `main`.
     pub code: String,
+    /// The reflection record.
+    pub reflection: Reflection,
+}
+
+/// The SPIR-V result for one stage (card 6-4): the binary glslang made, with the same reflection
+/// record as the GLSL output of the same source.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompiledSpirv {
+    /// The stage that was compiled.
+    pub stage: Stage,
+    /// The SPIR-V binary: whole little-endian words, entry point `main`.
+    pub code: Vec<u8>,
     /// The reflection record.
     pub reflection: Reflection,
 }
@@ -91,6 +103,13 @@ pub trait IShaderCompiler {
     /// [`CompileError::EmptySource`] for an empty text, [`CompileError::Diagnostics`] for source the
     /// compiler rejects, the other variants for tool and file problems. Never panics.
     fn compile(&self, source: Source<'_>) -> Result<CompiledModule, CompileError>;
+
+    /// Compiles one stage to a SPIR-V binary, for the Vulkan adapter. The same source and the same
+    /// errors as [`IShaderCompiler::compile`]; the reflection equals the one of the GLSL output.
+    ///
+    /// # Errors
+    /// As [`IShaderCompiler::compile`].
+    fn compile_spirv(&self, source: Source<'_>) -> Result<CompiledSpirv, CompileError>;
 }
 
 #[cfg(test)]

@@ -37,11 +37,13 @@ fn passes(texture: TextureId) -> (PassDesc, PassDesc) {
         target: RenderTarget::Texture(texture),
         clear_color: Some([0.25, 0.5, 0.75, 1.0]),
         clear_depth: Some(1.0),
+        depth: None,
     };
     let backbuffer = PassDesc {
         target: RenderTarget::Backbuffer,
         clear_color: None,
         clear_depth: None,
+        depth: None,
     };
     (offscreen, backbuffer)
 }
@@ -282,6 +284,7 @@ fn a_pass_with_an_unknown_target_or_flag_is_refused() {
         target: RenderTarget::Backbuffer,
         clear_color: None,
         clear_depth: None,
+        depth: None,
     });
     let target_at = HEADER_LEN + COMMAND_HEADER_LEN;
     for (offset, value) in [(target_at, 2u8), (target_at + 1, 0b100)] {
@@ -301,6 +304,7 @@ fn clear_values_survive_bit_for_bit() {
         target: RenderTarget::Backbuffer,
         clear_color: Some([f32::NAN, -0.0, f32::INFINITY, f32::MIN_POSITIVE]),
         clear_depth: Some(-0.0),
+        depth: None,
     };
     let mut stream = CommandStream::new();
     stream.begin_pass(pass);
@@ -311,6 +315,7 @@ fn clear_values_survive_bit_for_bit() {
             target: RenderTarget::Backbuffer,
             clear_color: None,
             clear_depth: Some(f32::from(u8::from(other.is_some()))),
+            depth: None,
         },
     };
     let bits = |p: PassDesc| {
@@ -392,6 +397,7 @@ fn non_canonical_pass_fields_are_refused() {
         target: RenderTarget::Backbuffer,
         clear_color: None,
         clear_depth: None,
+        depth: None,
     });
     let first = HEADER_LEN + COMMAND_HEADER_LEN;
     // colour bytes, depth bytes, texture handle bytes: each non-zero while unused.
@@ -414,6 +420,7 @@ fn largest_payload_fits_the_length_field() {
         target: RenderTarget::Texture(t),
         clear_color: Some([1.0; 4]),
         clear_depth: Some(1.0),
+        depth: None,
     });
     stream.bind_texture(0, t, Handle::from_raw(1, 1));
     stream.bind_vertex_buffer(0, b, 0);

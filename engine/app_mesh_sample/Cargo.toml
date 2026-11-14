@@ -1,0 +1,24 @@
+[package]
+name = "app_mesh_sample"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+license-file.workspace = true
+description = "Layer 4 sample: a spinning textured cube with a depth buffer on the OpenGL or the Vulkan device (card 6-11)."
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+platform = { path = "../platform", version = "0.1.0" }
+render = { path = "../render", version = "0.1.0" }
+assets = { path = "../assets", version = "0.1.0" }
+app_sprite_sample = { path = "../app_sprite_sample", version = "0.1.0" }
+adapter_render_gl = { path = "../adapter_render_gl", version = "0.1.0" }
+adapter_render_vk = { path = "../adapter_render_vk", version = "0.1.0" }
+
+[dev-dependencies]
+tools_shaderc = { path = "../tools_shaderc", version = "0.1.0" }
+
+[lints]
+workspace = true

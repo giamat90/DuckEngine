@@ -4,11 +4,12 @@
 
 pub mod app;
 pub mod args;
+pub mod backend;
 pub mod cli;
 pub mod input;
 pub mod looping;
 pub mod sample;
 pub mod scene;
 
-pub use sample::{GOLDEN_SHADER, Sample, SampleError};
+pub use sample::{GOLDEN_SHADER, GOLDEN_SPIRV, Sample, SampleError};
 pub use scene::Scene;

@@ -1,7 +1,7 @@
 use super::*;
 use crate::null::NullCompiler;
 use crate::process::WorkDir;
-use assets::dshd::Program;
+use assets::dshd::{Backend, Program};
 
 fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(ToString::to_string).collect()
@@ -23,6 +23,62 @@ fn stages_come_from_the_extension() {
 }
 
 #[test]
+fn the_backend_defaults_to_glsl_and_can_be_spirv() {
+    let default = parse_args(&strings(&["a.vert", "-o", "o.dshd"]));
+    assert_eq!(default.map(|a| a.backend), Ok(Backend::Glsl450));
+    for (name, want) in [("glsl", Backend::Glsl450), ("spirv", Backend::SpirV)] {
+        let args = parse_args(&strings(&["--backend", name, "a.vert", "-o", "o.dshd"]));
+        assert_eq!(args.map(|a| a.backend), Ok(want), "{name}");
+    }
+}
+
+#[test]
+fn a_repeated_backend_keeps_the_last_one() {
+    let args = parse_args(&strings(&[
+        "--backend",
+        "spirv",
+        "--backend",
+        "glsl",
+        "a.vert",
+        "-o",
+        "o",
+    ]));
+    assert_eq!(args.map(|a| a.backend), Ok(Backend::Glsl450));
+}
+
+#[test]
+fn an_unknown_or_missing_backend_is_a_usage_error() {
+    for bad in [
+        strings(&["--backend", "dxil", "a.vert", "-o", "o"]),
+        strings(&["--backend"]),
+        strings(&["a.vert", "-o", "o", "--backend"]),
+    ] {
+        assert_eq!(parse_args(&bad).err(), Some(CliError::Usage), "{bad:?}");
+    }
+}
+
+#[test]
+fn build_writes_a_spirv_program_when_asked() {
+    let dir = must(WorkDir::create());
+    let out = dir.path().join("o.spv.dshd");
+    must(fs::write(dir.path().join("a.vert"), "void main() {}\n"));
+    must(fs::write(dir.path().join("a.frag"), "void main() {}\n"));
+    let mut args = args_for(
+        dir.path(),
+        &[(Stage::Vertex, "a.vert"), (Stage::Fragment, "a.frag")],
+        "o.spv.dshd",
+    );
+    args.backend = Backend::SpirV;
+    assert_eq!(build(&NullCompiler, &args), Ok(()));
+    let bytes = std::fs::read(&out).unwrap_or_default();
+    let program = Program::parse(&bytes);
+    assert!(
+        program.is_ok_and(|p| p.backend() == Backend::SpirV && p.module_count() == 2),
+        "not a SPIR-V program"
+    );
+}
+
+#[test]
 fn a_full_command_line_is_parsed() {
     let args = parse_args(&strings(&[
         "--tools", "t", "a.vert", "b.frag", "-o", "out.dshd",
@@ -36,6 +92,7 @@ fn a_full_command_line_is_parsed() {
                 (Stage::Fragment, "b.frag".to_string())
             ],
             output: "out.dshd".to_string(),
+            backend: Backend::Glsl450,
         })
     );
     let args = must(parse_args(&strings(&["-o", "o", "a.vert"])));
@@ -124,6 +181,7 @@ fn args_for(dir: &Path, inputs: &[(Stage, &str)], output: &str) -> Args {
             .map(|(s, n)| (*s, dir.join(n).to_string_lossy().into_owned()))
             .collect(),
         output: dir.join(output).to_string_lossy().into_owned(),
+        backend: Backend::Glsl450,
     }
 }
 

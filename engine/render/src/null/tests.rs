@@ -78,6 +78,7 @@ fn pipeline_desc(
             write: false,
         },
         color_format: TextureFormat::Rgba8,
+        depth_format: None,
     }
 }
 
@@ -101,6 +102,7 @@ fn backbuffer_pass() -> PassDesc {
         target: RenderTarget::Backbuffer,
         clear_color: None,
         clear_depth: None,
+        depth: None,
     }
 }
 
@@ -109,6 +111,7 @@ fn pass_to(texture: TextureId, color: Option<[f32; 4]>) -> PassDesc {
         target: RenderTarget::Texture(texture),
         clear_color: color,
         clear_depth: None,
+        depth: None,
     }
 }
 
@@ -346,6 +349,7 @@ fn pipelines_are_validated() {
     );
     let depth_target = PipelineDesc {
         color_format: TextureFormat::Depth32F,
+        depth_format: None,
         ..pipeline_desc(vs, fs, 8, &[POSITION])
     };
     assert_eq!(d.create_pipeline(depth_target), Err(invalid));
@@ -354,6 +358,47 @@ fn pipelines_are_validated() {
         d.create_pipeline(pipeline_desc(vs, fs, 8, &[POSITION])),
         Err(RenderError::InvalidHandle)
     );
+}
+
+#[test]
+fn depth_test_or_depth_write_alone_needs_a_depth_format() {
+    let mut d = device();
+    let vs = shader(&mut d, ShaderStage::Vertex);
+    let fs = shader(&mut d, ShaderStage::Fragment);
+    for (test, write) in [(true, false), (false, true), (true, true)] {
+        let desc = PipelineDesc {
+            depth: DepthState { test, write },
+            ..pipeline_desc(vs, fs, 8, &[POSITION])
+        };
+        assert_eq!(
+            d.create_pipeline(desc),
+            Err(RenderError::InvalidDescription),
+            "test {test}, write {write}"
+        );
+    }
+}
+
+#[test]
+fn a_second_backbuffer_pass_keeps_the_surface_size_for_its_depth_target() {
+    let mut d = device();
+    // The `surface` helper makes a 64 by 32 surface, so the depth texture has that size.
+    let depth = ok(d.create_texture(TextureDesc {
+        width: 64,
+        height: 32,
+        mip_count: 1,
+        format: TextureFormat::Depth32F,
+    }));
+    let pass = PassDesc {
+        depth: Some(depth),
+        clear_depth: Some(1.0),
+        ..backbuffer_pass()
+    };
+    let mut s = CommandStream::new();
+    for _ in 0..2 {
+        s.begin_pass(pass);
+        s.end_pass();
+    }
+    assert!(submit(&mut d, &s).is_ok());
 }
 
 #[test]

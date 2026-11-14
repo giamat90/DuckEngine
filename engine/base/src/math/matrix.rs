@@ -275,6 +275,56 @@ impl Mat4 {
         matrix.is_finite().then_some(matrix)
     }
 
+    /// Perspective projection with vertical field of view `fov_y` (radians), `aspect` = width over
+    /// height, and `near` and `far` distances in front of the camera (it looks down -Z),
+    /// right-handed, Y up, depth 0 to 1: `z = -near` maps to 0 and `z = -far` to 1 after the
+    /// division by `w`. `None` when the view cannot exist: a field of view outside (0, pi), an
+    /// aspect or near distance that is not positive, `far` not beyond `near`, a value that is not
+    /// finite, or a result that overflows.
+    #[must_use]
+    pub fn perspective_rh(
+        fov_y: Scalar,
+        aspect: Scalar,
+        near: Scalar,
+        far: Scalar,
+    ) -> Option<Self> {
+        let valid = fov_y > 0.0
+            && fov_y < core::f32::consts::PI
+            && aspect > 0.0
+            && near > 0.0
+            && far > near;
+        if !valid || !aspect.is_finite() || !near.is_finite() || !far.is_finite() {
+            return None;
+        }
+        let focal = 1.0 / (fov_y * 0.5).tan();
+        let depth = near - far;
+        let matrix = Self::from_cols(
+            Vec4::new(focal / aspect, 0.0, 0.0, 0.0),
+            Vec4::new(0.0, focal, 0.0, 0.0),
+            Vec4::new(0.0, 0.0, far / depth, -1.0),
+            Vec4::new(0.0, 0.0, near * far / depth, 0.0),
+        );
+        matrix.is_finite().then_some(matrix)
+    }
+
+    /// The view matrix of a camera at `eye` looking at `target` with `up` roughly upward: world
+    /// to camera space, right-handed, the camera looking down -Z. `None` when `eye` and `target`
+    /// coincide, `up` is zero or parallel to the view direction, or a value is not finite.
+    #[must_use]
+    pub fn look_at_rh(eye: Vec3, target: Vec3, up: Vec3) -> Option<Self> {
+        let forward =
+            Vec3::new(target.x - eye.x, target.y - eye.y, target.z - eye.z).normalized()?;
+        let right = forward.cross(up).normalized()?;
+        let true_up = right.cross(forward);
+        let matrix = Self::from_cols(
+            Vec4::new(right.x, true_up.x, -forward.x, 0.0),
+            Vec4::new(right.y, true_up.y, -forward.y, 0.0),
+            Vec4::new(right.z, true_up.z, -forward.z, 0.0),
+            Vec4::new(-right.dot(eye), -true_up.dot(eye), forward.dot(eye), 1.0),
+        );
+        matrix.is_finite().then_some(matrix)
+    }
+
     /// Counter-clockwise rotation about +X, see [`Mat3::from_rotation_x`].
     #[inline]
     #[must_use]
@@ -1127,6 +1177,160 @@ mod tests {
             (0.0, 1.0, 0.0, 1.0, 0.0, Scalar::INFINITY),
         ] {
             assert_eq!(ortho([l, r, b, t, n, f]), None);
+        }
+    }
+
+    /// Clip-space `x, y, z` and `w` of `point` through a perspective matrix.
+    fn project4(m: Mat4, point: Vec3) -> ([Scalar; 3], Scalar) {
+        let e = m.to_cols_array();
+        let clip = [0, 1, 2, 3].map(|row| {
+            e[row] * point.x + e[4 + row] * point.y + e[8 + row] * point.z + e[12 + row]
+        });
+        ([clip[0], clip[1], clip[2]], clip[3])
+    }
+
+    fn perspective(fov: Scalar, aspect: Scalar, near: Scalar, far: Scalar) -> Mat4 {
+        Mat4::perspective_rh(fov, aspect, near, far).unwrap_or(Mat4::IDENTITY)
+    }
+
+    #[test]
+    fn perspective_maps_the_near_plane_to_depth_zero_and_the_far_plane_to_one() {
+        let m = perspective(FRAC_PI_2, 1.0, 0.5, 20.0);
+        let (near, w_near) = project4(m, Vec3::new(0.0, 0.0, -0.5));
+        let (far, w_far) = project4(m, Vec3::new(0.0, 0.0, -20.0));
+        assert_close(&[near[2] / w_near, far[2] / w_far], &[0.0, 1.0], TOLERANCE);
+    }
+
+    #[test]
+    fn perspective_puts_the_view_edges_on_the_clip_edges() {
+        // A quarter-turn (90 degree) vertical field of view: at distance d the top edge is at y = d.
+        let m = perspective(FRAC_PI_2, 2.0, 1.0, 10.0);
+        let (top, w) = project4(m, Vec3::new(0.0, 4.0, -4.0));
+        assert_close(&[top[1] / w], &[1.0], TOLERANCE);
+        let (right, w) = project4(m, Vec3::new(8.0, 0.0, -4.0));
+        assert_close(&[right[0] / w], &[1.0], TOLERANCE);
+    }
+
+    #[test]
+    fn perspective_divides_by_the_distance_in_front_of_the_camera() {
+        let m = perspective(FRAC_PI_2, 1.0, 1.0, 10.0);
+        let (_, w) = project4(m, Vec3::new(1.0, 2.0, -5.0));
+        assert_close(&[w], &[5.0], TOLERANCE);
+    }
+
+    #[test]
+    fn perspective_refuses_a_view_that_cannot_exist() {
+        let wide = core::f32::consts::PI;
+        for (fov, aspect, near, far) in [
+            (0.0, 1.0, 1.0, 10.0),
+            (-1.0, 1.0, 1.0, 10.0),
+            (wide, 1.0, 1.0, 10.0),
+            (FRAC_PI_2, 0.0, 1.0, 10.0),
+            (FRAC_PI_2, 1.0, 0.0, 10.0),
+            (FRAC_PI_2, 1.0, -1.0, 10.0),
+            (FRAC_PI_2, 1.0, 10.0, 10.0),
+            (FRAC_PI_2, 1.0, 10.0, 1.0),
+            (Scalar::NAN, 1.0, 1.0, 10.0),
+            (FRAC_PI_2, 1.0, 1.0, Scalar::INFINITY),
+            (FRAC_PI_2, Scalar::INFINITY, 1.0, 10.0),
+            // Finite inputs whose matrix overflows.
+            (1.0e-39, 1.0, 1.0, 10.0),
+            (FRAC_PI_2, 1.0, 1.0e30, 3.0e38),
+        ] {
+            assert_eq!(Mat4::perspective_rh(fov, aspect, near, far), None);
+        }
+    }
+
+    #[test]
+    fn look_at_moves_the_eye_to_the_origin_and_the_target_down_minus_z() {
+        let eye = Vec3::new(3.0, 4.0, 5.0);
+        let target = Vec3::new(3.0, 4.0, -1.0);
+        let m = Mat4::look_at_rh(eye, target, Vec3::new(0.0, 1.0, 0.0)).unwrap_or(Mat4::IDENTITY);
+        assert_close(
+            &m.transform_point3(eye).to_array(),
+            &[0.0, 0.0, 0.0],
+            TOLERANCE,
+        );
+        assert_close(
+            &m.transform_point3(target).to_array(),
+            &[0.0, 0.0, -6.0],
+            TOLERANCE,
+        );
+    }
+
+    #[test]
+    fn look_at_keeps_up_up_and_the_right_hand_on_the_right() {
+        let made = Mat4::look_at_rh(
+            Vec3::new(0.0, 0.0, 5.0),
+            Vec3::ZERO,
+            Vec3::new(0.0, 1.0, 0.0),
+        );
+        assert!(made.is_some());
+        let m = made.unwrap_or(Mat4::IDENTITY);
+        assert_close(
+            &m.transform_vector3(Vec3::new(0.0, 1.0, 0.0)).to_array(),
+            &[0.0, 1.0, 0.0],
+            TOLERANCE,
+        );
+        assert_close(
+            &m.transform_vector3(Vec3::new(1.0, 0.0, 0.0)).to_array(),
+            &[1.0, 0.0, 0.0],
+            TOLERANCE,
+        );
+    }
+
+    #[test]
+    fn look_at_turns_with_the_eye_and_stays_a_rigid_transform() {
+        // From +X looking at the origin the camera's right is world -Z.
+        let m = Mat4::look_at_rh(
+            Vec3::new(5.0, 0.0, 0.0),
+            Vec3::ZERO,
+            Vec3::new(0.0, 1.0, 0.0),
+        )
+        .unwrap_or(Mat4::IDENTITY);
+        assert_close(
+            &m.transform_vector3(Vec3::new(0.0, 0.0, -1.0)).to_array(),
+            &[1.0, 0.0, 0.0],
+            TOLERANCE,
+        );
+        assert_close(&[m.determinant()], &[1.0], TOLERANCE);
+    }
+
+    #[test]
+    fn look_at_sends_a_point_ahead_and_above_to_minus_z_by_its_distance() {
+        // The camera at the origin looks up at 45 degrees; the target is 3 forward and 3 up.
+        let m = Mat4::look_at_rh(
+            Vec3::ZERO,
+            Vec3::new(0.0, 3.0, -3.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        )
+        .unwrap_or(Mat4::IDENTITY);
+        let distance = 18.0_f32.sqrt();
+        assert_close(
+            &m.transform_vector3(Vec3::new(0.0, 3.0, -3.0)).to_array(),
+            &[0.0, 0.0, -distance],
+            TOLERANCE,
+        );
+    }
+
+    #[test]
+    fn look_at_refuses_a_direction_it_cannot_resolve() {
+        let up = Vec3::new(0.0, 1.0, 0.0);
+        let nan = Vec3::new(Scalar::NAN, 0.0, 0.0);
+        for (eye, target, up) in [
+            (Vec3::ZERO, Vec3::ZERO, up),
+            (Vec3::ZERO, Vec3::new(0.0, 2.0, 0.0), up),
+            (Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), Vec3::ZERO),
+            (nan, Vec3::new(0.0, 0.0, -1.0), up),
+            (Vec3::ZERO, nan, up),
+            // Finite points so far apart that the direction overflows.
+            (
+                Vec3::new(-3.0e38, 0.0, 0.0),
+                Vec3::new(3.0e38, 0.0, 0.0),
+                up,
+            ),
+        ] {
+            assert_eq!(Mat4::look_at_rh(eye, target, up), None);
         }
     }
 }

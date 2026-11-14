@@ -118,6 +118,10 @@ pub struct Resources {
     pub shaders: Table<ShaderRec>,
     pub pipelines: Table<PipelineRec>,
     pub surfaces: Table<SurfaceRec>,
+    /// One framebuffer re-pointed at the colour and depth textures of each pass that has both;
+    /// made on first use. Nothing refers to the textures after the pass, so a destroyed texture
+    /// leaves nothing stale behind.
+    pub pair_framebuffer: Option<u32>,
 }
 
 impl Resources {
@@ -129,6 +133,7 @@ impl Resources {
             shaders: Table::new(),
             pipelines: Table::new(),
             surfaces: Table::new(),
+            pair_framebuffer: None,
         }
     }
 
@@ -140,5 +145,8 @@ impl Resources {
         self.textures.drain().for_each(|record| record.delete(api));
         self.buffers.drain().for_each(|record| record.delete(api));
         self.surfaces.drain().for_each(|record| record.delete(api));
+        if let Some(framebuffer) = self.pair_framebuffer.take() {
+            api.delete_framebuffer(framebuffer);
+        }
     }
 }

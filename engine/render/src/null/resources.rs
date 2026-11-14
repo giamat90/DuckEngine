@@ -1,6 +1,6 @@
 //! The Null device's resource tables: fixed-capacity pools of records.
 
-use crate::desc::{BufferUsage, ShaderStage, TextureDesc};
+use crate::desc::{BufferUsage, ShaderStage, TextureDesc, TextureFormat};
 use crate::error::RenderError;
 use base::pool::{Handle, Pool};
 
@@ -25,6 +25,8 @@ pub(super) struct ShaderRec {
 pub(super) struct PipelineRec {
     pub stride: u32,
     pub has_attributes: bool,
+    /// The depth attachment format the pipeline was made for; a pass must have the same.
+    pub depth_format: Option<TextureFormat>,
 }
 
 pub(super) struct SurfaceRec {

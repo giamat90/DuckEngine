@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["engine/skeleton", "engine/skeleton-unsafe", "engine/g1-control", "engine/base", "engine/platform", "engine/render", "engine/adapter_window_glfw", "engine/frame", "engine/app_runtime", "engine/tools_simd_bench", "engine/assets", "engine/tools_assetc", "engine/adapter_render_gl", "engine/tools_shaderc", "engine/tools_render_bench", "engine/app_sprite_sample", "engine/tools_physics_spike", "engine/jobs", "engine/tools_scheduler_spike", "engine/physics", "engine/tools_physics_bench", "engine/app_physics_sample", "engine/adapter_runtime_libs", "engine/audio", "engine/adapter_audio_miniaudio", "engine/tools_audio_bench", "engine/app_audio_sample"]
+members = ["engine/skeleton", "engine/skeleton-unsafe", "engine/g1-control", "engine/base", "engine/platform", "engine/render", "engine/adapter_window_glfw", "engine/frame", "engine/app_runtime", "engine/tools_simd_bench", "engine/assets", "engine/tools_assetc", "engine/adapter_render_gl", "engine/tools_shaderc", "engine/tools_render_bench", "engine/app_sprite_sample", "engine/tools_physics_spike", "engine/jobs", "engine/tools_scheduler_spike", "engine/physics", "engine/tools_physics_bench", "engine/app_physics_sample", "engine/adapter_runtime_libs", "engine/audio", "engine/adapter_audio_miniaudio", "engine/tools_audio_bench", "engine/app_audio_sample", "engine/adapter_render_vk", "engine/app_mesh_sample"]
 
 [workspace.package]
 edition = "2024"

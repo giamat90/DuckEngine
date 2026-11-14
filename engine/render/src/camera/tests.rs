@@ -106,3 +106,77 @@ fn large_viewports_convert_to_floats_correctly() {
     let bits = c.map(|c| (c.height.to_bits(), c.aspect.to_bits()));
     assert_eq!(bits, Some((70_000.0f32.to_bits(), 2.0f32.to_bits())));
 }
+
+fn perspective(position: Vec3) -> PerspectiveCamera {
+    PerspectiveCamera {
+        position,
+        target: Vec3::ZERO,
+        up: Vec3::new(0.0, 1.0, 0.0),
+        fov_y: core::f32::consts::FRAC_PI_2,
+        aspect: 1.0,
+        near: 0.5,
+        far: 20.0,
+    }
+}
+
+fn clip(m: &Mat4, p: Vec3) -> [f32; 4] {
+    let e = m.to_cols_array();
+    [0, 1, 2, 3].map(|r| e[r] * p.x + e[4 + r] * p.y + e[8 + r] * p.z + e[12 + r])
+}
+
+#[test]
+fn the_point_a_perspective_camera_looks_at_is_in_the_middle_of_the_view() {
+    let made = perspective(Vec3::new(0.0, 0.0, 5.0)).view_projection();
+    assert!(made.is_some());
+    let matrix = made.unwrap_or(Mat4::IDENTITY);
+    let centre = clip(&matrix, Vec3::ZERO);
+    assert!(
+        centre[0].abs() < 1e-5 && centre[1].abs() < 1e-5,
+        "{centre:?}"
+    );
+    let depth = centre[2] / centre[3];
+    assert!((0.0..=1.0).contains(&depth), "depth {depth}");
+}
+
+#[test]
+fn nearer_points_get_a_smaller_depth_than_farther_ones() {
+    let m = perspective(Vec3::new(0.0, 0.0, 5.0))
+        .view_projection()
+        .unwrap_or(Mat4::IDENTITY);
+    let depth = |z: f32| {
+        let c = clip(&m, Vec3::new(0.0, 0.0, z));
+        c[2] / c[3]
+    };
+    assert!(depth(2.0) < depth(0.0) && depth(0.0) < depth(-5.0));
+}
+
+#[test]
+fn a_model_matrix_moves_the_object_before_the_camera_sees_it() {
+    let camera = perspective(Vec3::new(0.0, 0.0, 5.0));
+    let model = Mat4::from_translation(Vec3::new(1.0, 0.0, 0.0));
+    let mvp = camera.mvp(&model).unwrap_or(Mat4::IDENTITY);
+    let moved = clip(&mvp, Vec3::ZERO);
+    let view_projection = camera.view_projection().unwrap_or(Mat4::IDENTITY);
+    let plain = clip(&view_projection, Vec3::new(1.0, 0.0, 0.0));
+    for (a, b) in moved.iter().zip(plain) {
+        assert!((a - b).abs() < 1e-5, "{moved:?} != {plain:?}");
+    }
+}
+
+#[test]
+fn a_perspective_camera_that_cannot_look_has_no_matrix() {
+    let from = perspective(Vec3::new(0.0, 0.0, 5.0));
+    let cases = [
+        perspective(Vec3::ZERO), // at its own target
+        PerspectiveCamera { fov_y: 0.0, ..from },
+        PerspectiveCamera { near: 30.0, ..from },
+        PerspectiveCamera {
+            aspect: f32::NAN,
+            ..from
+        },
+    ];
+    for c in cases {
+        assert_eq!(c.view_projection(), None, "{c:?}");
+        assert_eq!(c.mvp(&Mat4::IDENTITY), None);
+    }
+}

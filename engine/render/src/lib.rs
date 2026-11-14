@@ -14,6 +14,7 @@ pub mod dump;
 pub mod error;
 pub mod graph;
 pub mod ids;
+pub mod mesh;
 pub mod null;
 pub mod sprite;
 pub mod stream;
