@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v1.45 (2026-11-14).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v1.46 (2026-11-14).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.46** - ECS storage spike (card 7-2, Class 2, new tool crate `engine/tools_ecs_spike`, ordinary card into `develop`; owner accepted choices O1-O8 of the phase 7 design note on 2026-11-14): new page [spikes/ecs-storage-spike](spikes/ecs-storage-spike.md), archetype tables with safe and with type-erased columns, sparse sets and a hybrid compared on the sandbox's shape (iteration equal, add and remove 9 times dearer in tables, type erasure no win); recommendation and a proposed ADR-0003 text for the governance card 7-3. Evidence `reviews/7-2.md`.
 > - **v1.45** - Phase 7 design note (card 7-1, Class 1 documentation, ordinary card into `develop`; phase 7 started on the owner's go-ahead of 2026-11-14): new page [architecture/ecs-and-sandbox-v0](architecture/ecs-and-sandbox-v0.md) (the ECS chosen by a storage spike, scene, input mapping, the three glue crates, the 2D physics sandbox, proposed cards 7-2 to 7-14, eight choices for the owner O1-O8, among them the native adapters the roadmap names before phase 7 closes). Evidence `reviews/7-1.md`.
 > - **v1.44** - F-MUTGAPS closed (card 6-19, Class 1, documentation, ordinary card into `develop`): [spikes/phase6-milestone-review](spikes/phase6-milestone-review.md) records that card 6-18 added tests for the four real mutation gaps of section 11; the four probably-equivalent misses stay. Evidence `reviews/6-19.md`.
 > - **v1.43** - Phase 6 mutation testing (card 6-17, Class 1, measurement and documentation, ordinary card into `develop`): [spikes/phase6-milestone-review](spikes/phase6-milestone-review.md) gains section 11, cargo-mutants over the phase 6 changes in `render`, `assets`, `tools_shaderc` and `base`: 253 mutants, 219 caught, 8 missed, 26 unviable, score 96.5% against the 80% gate; four of the eight misses are real test gaps and four probably equivalent (new finding F-MUTGAPS). Evidence `reviews/6-17.md`.
@@ -205,6 +206,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 42 | [architecture/vulkan-adapter-v0](architecture/vulkan-adapter-v0.md) | Vulkan adapter (cards 6-6 onwards): loader, instance, device, queue, surface, swapchain, clear colour, memory sub-allocator, buffers, textures, samplers, uploads; ownership and tear-down; tests |
 | 43 | [spikes/phase6-milestone-review](spikes/phase6-milestone-review.md) | Phase 6 milestone review (card 6-13): exit criteria, swap diff 0, cards and pull requests, open findings, `stable` promotion proposal for the render port |
 | 44 | [architecture/ecs-and-sandbox-v0](architecture/ecs-and-sandbox-v0.md) | Phase 7 design note (card 7-1): ECS storage by spike, scene, input mapping, glue crates, the 2D physics sandbox, proposed cards and owner choices |
+| 45 | [spikes/ecs-storage-spike](spikes/ecs-storage-spike.md) | ECS storage spike (card 7-2): archetype tables (safe and type-erased), sparse sets and a hybrid compared on the sandbox shape, recommendation and proposed ADR-0003 text |
 
 ## Confidence legend used in this wiki
 

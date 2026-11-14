@@ -226,6 +226,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tools_ecs_spike"
+version = "0.1.0"
+dependencies = [
+ "base",
+]
+
+[[package]]
 name = "tools_physics_bench"
 version = "0.1.0"
 dependencies = [
