@@ -1,0 +1,16 @@
+[package]
+name = "input"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+license-file.workspace = true
+description = "Layer 2 input crate: layout-independent key codes with per-OS scancode tables, named actions (button or axis), contexts of bindings, and the per-frame input state fed by platform events. No ECS dependency, no unsafe code."
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+platform = { path = "../platform", version = "0.1.0" }
+
+[lints]
+workspace = true

@@ -156,6 +156,14 @@ name = "g1-control"
 version = "0.1.0"
 
 [[package]]
+name = "input"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "platform",
+]
+
+[[package]]
 name = "jobs"
 version = "0.1.0"
 dependencies = [
