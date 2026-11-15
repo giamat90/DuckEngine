@@ -148,6 +148,61 @@ classDiagram
 
 **Glue.** Each glue crate is a set of plain functions over borrowed parts of the world, called by the frame loop in a fixed order: `input -> gameplay systems -> sync_physics (in) -> physics step (fixed) -> sync_physics (out) -> scene update -> sync_render (extract) -> render -> sync_audio`. The fixed-step part runs zero or more times a frame, the rest once. A test drives the whole order on the Null render device, the Null audio device and the Headless platform with scripted input and checks a replay hash of the ECS state (the same rule as the physics replay hash: identical across runs and across thread counts on one machine).
 
+**As built (card 7-9, crates `engine/frame` extended and `engine/sync_physics`, layer 2 glue, no `unsafe`).** `frame` gets `Phase`, the nine phases of a frame in the order above (`Phase::ORDER`; `runs_in_fixed_step` is true for the three physics phases), and `FramePlan::new(steps)`, an allocation-free iterator that yields the phases of one frame: the two before the physics, the physics block `SyncPhysicsIn, PhysicsStep, SyncPhysicsOut` once per fixed step, then the four after it; a frame with no fixed step skips the block. The application still owns the loop: it asks `FixedStep::advance` for the number of steps, walks the plan and calls the matching function for each phase. `sync_physics` depends on `base`, `ecs`, `scene` and `physics`; physics does not depend on the ECS. A body is a component: `PhysicsBody` holds the `BodyHandle`, has no public constructor and is not `Clone`, so only `attach_body` makes one (it creates the body, gives the entity the component and a `Transform2D` at the body's pose, keeping an existing scale; it refuses a stale entity, an entity with a parent, an entity that has a body, and a full physics world, and changes nothing on a refusal). `release_body` destroys the body and removes the component (a body already destroyed behind the glue is not an error). The two copies are plain functions over the two worlds: `push_forces(&mut ecs, &mut physics)` applies the `AppliedForce` component (a force and a torque) to the body of every entity that has both, in the storage order of the ECS; a zero force is not applied because applying one wakes a sleeping body; a body that is gone, a static body or a value that is not finite is counted in `SyncReport::skipped` and applies nothing, not an error. `pull_transforms(&mut ecs, &physics)` writes the position and rotation of each body into the `Transform2D` of its entity and keeps the scale. Both make no allocator call after warm-up (counting-allocator test), and a frame loop test drives the phases of `FramePlan` with a falling and rolling ball, then the scene update, and finds the same physics state hash in two runs. **Limits, stated:** a body belongs on a root entity (a body pose is in world space, a `Transform2D` under a parent is local), which `attach_body` checks but a later `set_parent` can break, so a glue user must not parent a body entity; physics has only static and dynamic bodies, so there are no kinematic targets and the only way in is forces and torque; the copy out writes every body, also a sleeping one, and overwrites any change gameplay made to the transform of a body entity (there is no teleport yet); despawning an entity with `World::despawn` does not destroy its body, so call `release_body` first; a handle belongs to the physics world that made it; the replay hash across thread counts of the whole frame belongs to the later sandbox test. **Architecture check (recorded as the card asks):** `gates/architecture.toml` needed no change: `frame` and `sync_*` are glue, exempt from the same-layer edge list, so `sync_physics -> physics`, `-> scene` and `-> ecs` pass; `tools/arch-check` reports 35 crates, 0 violations, and with a temporary `physics -> ecs` dependency added it reports `forbidden-edge physics must not depend on ecs` (the probe was reverted and is not in the diff).
+
+```mermaid
+sequenceDiagram
+  participant App as application loop
+  participant F as frame (FixedStep, FramePlan)
+  participant E as ecs World + scene
+  participant S as sync_physics
+  participant P as physics World
+  App->>F: advance(frame ticks) gives the step count
+  loop each fixed step
+    App->>S: push_forces(ecs, physics)
+    S->>E: read PhysicsBody, AppliedForce
+    S->>P: apply_force, apply_torque
+    App->>P: step(dt)
+    App->>S: pull_transforms(ecs, physics)
+    S->>P: read body pose
+    S->>E: write Transform2D position and rotation
+  end
+  App->>E: TransformUpdater.update (scene update)
+```
+
+```mermaid
+classDiagram
+  class Phase {
+    <<enum>>
+    ORDER
+    +runs_in_fixed_step() bool
+  }
+  class FramePlan {
+    <<iterator, no allocation>>
+    +new(steps) FramePlan
+  }
+  class PhysicsBody {
+    <<component, only attach_body makes it>>
+    +handle() BodyHandle
+  }
+  class AppliedForce {
+    <<component>>
+    force: Vec2
+    torque: f32
+  }
+  class SyncPhysics {
+    <<functions over two worlds>>
+    +attach_body(ecs, physics, entity, desc) Result
+    +release_body(ecs, physics, entity) Result
+    +push_forces(ecs, physics) Result~SyncReport~
+    +pull_transforms(ecs, physics) Result~SyncReport~
+  }
+  FramePlan ..> Phase : yields
+  SyncPhysics ..> PhysicsBody : creates and reads
+  SyncPhysics ..> AppliedForce : reads
+  SyncPhysics ..> Transform2D : writes pose
+```
+
 **The sandbox.** The mouse drops a box or a disc, a key resets the arena, a key toggles the debug drawing, another quits (what the physics sample does today), and now each object is an entity with transform, sprite and body components. A contact above a threshold plays a sound through `sync_audio`. The sample runs on the Null device in tests (an image-free golden check of the command stream, as in phase 6) and on OpenGL or Vulkan by the existing backend choice in the composition root. The old `app_physics_sample` stays as it is, so the cost of going through the ECS can be compared with the direct version on the same scene (choice O5).
 
 ## 5. Tests and measurements
