@@ -95,6 +95,57 @@ flowchart TB
 
 **Input mapping.** The window port gives scancodes and pointer positions. The module adds layout-independent key codes, an `Action` (named, with a kind: button or axis), a `Context` (a set of bindings that can be switched), and per-frame state. The physics sample's table becomes data in the sandbox, not code. Rebinding at run time and text input stay out (no UI yet). Gamepad is out of v0 as in the platform note.
 
+**As built (card 7-8, crate `engine/input`, layer 2, depends on `base` and `platform`, no ECS dependency, no `unsafe`).** A `KeyCode` is a physical key named by its place on a PC keyboard (letters, digits, Escape, Space, Enter, Tab, Backspace, shift, control and alt on both sides, the arrows and F1 to F12), so the key at the place of `Q` is `Q` on any layout. The platform event carries only a hardware scancode, so a `KeyMap` turns it into a key code: `KeyMap::windows()` (GLFW scancodes: the PC set-1 code, plus `0x100` for the extended keys), `KeyMap::linux()` (evdev code plus 8) and `KeyMap::host()` for the build's own system. The main block of both tables agrees with the physics sample's table for the five keys the sample uses (checked by tests); **the extended keys of the Windows table and the whole Linux table were derived from the key lists and have not been run on hardware**. A key the table does not know is counted in `unmapped_keys()` and does nothing. An `InputMap` is built once (it allocates): named actions of kind `Button` or `Axis`, named contexts, and bindings per context. A button takes a key or a mouse button; an axis takes a key pair (negative, positive: both down cancel to 0) or the vertical wheel; a binding of the wrong kind (asking a button for an axis reads inactive, not an error), a duplicate name a mouse button above 7, or an id out of range of the map is an `InputError` value (ids carry no map tag, so an id of another map that is in range names an unrelated action; keep ids with their map). An action is active while any of its bindings in the active context is; one context is active at a time (the first at the start), and switching it leaves keys and this frame's edges as they are and changes what they mean (a held key reads as held in the new context without a press there). Key pairs of one axis add up and are limited to -1..1; the wheel is added unlimited. The pointer is shared by all windows. `Input` holds the state: `begin_frame()` clears the pressed and released edges, the wheel and the pointer delta; `apply(&Event)` follows each event, taking events of every window; queries are `pressed`, `held`, `released`, `axis` (a sum, the wheel gives the amount of the frame), `pointer`, `pointer_delta`, `scroll`, `quit_requested` (a latch). Edges are kept as bit sets, not found by comparing two snapshots, so **a tap that starts and ends inside one frame still reports pressed and released**; a key repeat changes nothing; losing focus releases every key and button, so none stays stuck. A frame allocates nothing (counting-allocator test). Tests push scripted events through the Headless platform and `pump`, so no display is needed. Left out, as the note says: rebinding at run time, text input, gamepad, modifier keys as bindings, and more than 128 key codes.
+
+```mermaid
+classDiagram
+  class KeyCode {
+    <<enum, physical key>>
+    +ALL
+    +index() u32
+  }
+  class KeyMap {
+    scancode to KeyCode, sorted
+    +windows() KeyMap
+    +linux() KeyMap
+    +host() KeyMap
+    +key(scancode) Option~KeyCode~
+  }
+  class InputMap {
+    <<built once>>
+    +add_action(name, kind) ActionId
+    +add_context(name) ContextId
+    +bind(context, action, binding) Result
+  }
+  class Binding {
+    <<enum>>
+    Key
+    MouseButton
+    KeyAxis
+    ScrollY
+  }
+  class Input {
+    <<per frame, no allocation>>
+    +begin_frame()
+    +apply(event)
+    +set_context(context) Result
+    +pressed(action) bool
+    +held(action) bool
+    +released(action) bool
+    +axis(action) f32
+    +pointer_delta() Vec2
+  }
+  class Event {
+    <<platform window port>>
+  }
+  KeyMap ..> KeyCode : yields
+  InputMap o-- Binding : per context
+  Binding ..> KeyCode
+  Input *-- InputMap
+  Input *-- KeyMap
+  Input ..> Event : apply reads
+```
+
 **Glue.** Each glue crate is a set of plain functions over borrowed parts of the world, called by the frame loop in a fixed order: `input -> gameplay systems -> sync_physics (in) -> physics step (fixed) -> sync_physics (out) -> scene update -> sync_render (extract) -> render -> sync_audio`. The fixed-step part runs zero or more times a frame, the rest once. A test drives the whole order on the Null render device, the Null audio device and the Headless platform with scripted input and checks a replay hash of the ECS state (the same rule as the physics replay hash: identical across runs and across thread counts on one machine).
 
 **The sandbox.** The mouse drops a box or a disc, a key resets the arena, a key toggles the debug drawing, another quits (what the physics sample does today), and now each object is an entity with transform, sprite and body components. A contact above a threshold plays a sound through `sync_audio`. The sample runs on the Null device in tests (an image-free golden check of the command stream, as in phase 6) and on OpenGL or Vulkan by the existing backend choice in the composition root. The old `app_physics_sample` stays as it is, so the cost of going through the ECS can be compared with the direct version on the same scene (choice O5).
