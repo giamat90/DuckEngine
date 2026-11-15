@@ -114,6 +114,8 @@ stateDiagram-v2
 - **As built (card 7-4, crate `engine/ecs`, layer 1, depends on `base` only; `jobs` joins with the parallel queries of card 7-5).** `World` owns the entities and the archetype tables of [ADR-0003](../decisions/adr-0003-ecs-storage.md). An `Entity` is a `base::pool::Handle` (slot index and generation, eight bytes); a freed slot is reused last in, first out and its generation grows by one, a slot whose generation would overflow is retired, so an old handle can never match again. A component is any `'static + Send + Sync` type (the trait `Component` has a blanket impl, no macro); a world registers a type on first use or on `World::register`, and ids follow the order of first use. `spawn` puts an entity in the empty table; `insert` adds a component (or replaces it in place) and `remove` drops one, each moving the entity's row to the table of the new component set with `swap_remove`, found through a per-table edge cache so a warm world allocates nothing; `despawn` drops the row. Columns are `Vec<T>` behind a trait object found again by `TypeId`; there is no `unsafe`. `entities()` lists live entities in table creation order, then row order (`BTreeMap` for the registry and the table index, no hash). Every refusal is an `EcsError` value (`StaleEntity`, `MissingComponent`, `TooManyEntities`, `TooManyComponents`, `StorageMismatch` for an internal inconsistency). `Commands` records spawn, despawn, insert and remove while a system iterates and `apply(&mut World)` runs them in the recorded order, returning how many took effect and how many were refused (a stale or unknown target never stops the others); `spawn()` returns a `Target::Pending(n)` that later commands of the same buffer may use, and `spawned()` maps it to the real entity after the apply. Values wait in one typed queue per component type, so no command boxes anything. Tests: unit and behaviour tests, a long random history checked against a plain model, zero allocator calls in steady state (counting allocator, with a control that shows the warm-up does allocate). Mutation score of the crate 98% (122 of 124 viable mutants caught, the two missed are equivalent). Queries, declared access and parallel iteration are card 7-5. Details: `reviews/7-4.md`.
 
 - **As built (card 7-5, crate `engine/ecs` now also depends on `jobs`).** A query names its components as types: `Read<T>` gives `&T`, `Write<T>` gives `&mut T`, alone or in a tuple of two or three (plain traits, no macro, no `unsafe`). `World::for_each::<Q, _>(f)` runs `f` on every entity that has all of them, tables in creation order and rows in order, so the order is a function of the history of the world and never of a hash; a component nobody registered matches nothing. The declared access is data: `Access::of::<Q>()` lists the types read and written and `conflicts_with` says whether two queries could not run at the same time (one writes what the other reads or writes). A query that names one component twice would need two borrows of one column and is refused before anything runs with `EcsError::ConflictingAccess`; running different systems in parallel is a later card (owner choice O6), the check is only here from the start; a query borrows the world mutably, so two read-only queries cannot overlap until the storage offers a shared view. `World::par_for_each::<Q, _>(&dyn IScheduler, grain, f)` cuts each table into at most 64 contiguous chunks of at least `grain` rows, the last of a table excepted (the chunk cells live on the stack) and runs them with one `parallel_for` per table; the closure sees one entity at a time and may touch only what the item gives it, so the result does not depend on the scheduler, the order or the thread (D0, D1). A table with one chunk runs on the calling thread without a scheduler call; a zero grain or a refused scheduler call comes back as `EcsError::Jobs`. No call allocates after warm-up on the calling thread (counting allocator, measured with the inline and the reversed scheduler; the pool's own allocation behaviour is the jobs crate's test). Tests: unit and behaviour tests, parallel equals serial on the inline, reversed and shuffled schedulers and on a work-stealing pool at 1, 2 and 4 workers, refusals, zero allocation, and the mutation score in `reviews/7-5.md`. The benchmark tool `engine/tools_ecs_bench` (`report`, `icount-workload`) measures the three query shapes; it is not registered as a gate yet (card 7-6, governance). Details: `reviews/7-5.md`.
+- **Decided by owner (choice O4, 2026-11-15, recorded with card 7-7): the ECS iteration target is at most 1.0 ns per entity per frame for serial query iteration over one, two and three components** (100,000 entities, one thread, release build, Windows x86-64; card 7-5 measured 0.42 to 0.72). It is a wall-time target for the owner's machine; the gate that runs in `ci` is the relative instruction count of card 7-6, which enforces no absolute figure.
+- **As built (card 7-7, crate `engine/scene`, layer 2, depends on `base` and `ecs`; the edge `scene -> ecs` was already allowed).** `Transform2D` is the local transform: a position, a counter-clockwise rotation in radians and a scale per axis, applied scale first, then rotation, then translation, as a 2D homogeneous `Mat3` of `base`. `WorldTransform2D` holds the derived matrix and nothing else should write it. The hierarchy is three link components, `Parent`, `FirstChild` and `NextSibling`; they have no public constructor and are neither `Clone` nor `Copy`, so a link only comes from `set_parent`, which refuses a cycle (the parent is the child or one of its descendants) and an entity that is despawned or has no `Transform2D`; after those refusals only a storage limit of the world can fail the call. As long as nobody removes a link by hand the links form a forest, but `World::remove` is public, and removing a link can let a later `set_parent` close a loop; so every walk is bounded by the number of entities and reports `SceneError::BrokenHierarchy` instead of looping. Children keep the order they were added in (a new child goes last; setting the same parent again moves it last). `detach` makes a root, and `despawn_subtree` despawns a node and all its descendants, children before parents, with no recursion. Appending a child and taking one out walk the list of its siblings, so both are linear in their number. A node despawned with `World::despawn` instead leaves dangling links, and a dangling link reads as absent: a dead parent makes a root, a dead first child or sibling ends the list there, so the siblings after it cannot be reached; `UpdateReport.unreached` counts such entities (zero for a scene edited only through this crate), and a glue crate should treat a non-zero value as a bug. `TransformUpdater::update(&mut world)` writes a world matrix for every entity with a `Transform2D`: roots are the entities without a live parent that have a transform or children and get their local matrix, a child gets its parent's world matrix times its own (an entity without a `Transform2D` counts as the identity, passes the matrix on and is not counted), and the walk is depth first over the first-child and next-sibling links, so it needs no stack and a chain of any depth is safe. The updater keeps its list of roots between calls, and a call after the first makes no allocator call while the roots fit its list and no entity is new (a counting-allocator test). It is single-threaded; a parallel update waits for the scheduling choice O6 of the phase 7 note. **No dirty flags**, as the phase 7 note proposed, because a full recompute is cheap: a throwaway probe on the author's machine (release build, 10,000 entities, median of 40 updates, not committed) took about 33 ns per entity for a flat scene (0.33 ms) and about 82 ns per entity for a tree or a chain (0.82 ms). The decision is revisited with the real frame budget in card 7-13. The type names carry `2D` so that phase 8 can add 3D transforms next to them.
 
 ```mermaid
 classDiagram
@@ -162,6 +164,53 @@ classDiagram
   Query ..> World : visits tables in creation order
   Query ..> Access : declares, refuses a repeated component
   Query ..> IScheduler : one parallel_for per table
+```
+
+The `scene` crate of card 7-7 on top of the `ecs` crate (transforms and the three link components are ordinary components of the world):
+
+```mermaid
+classDiagram
+  class Transform2D {
+    <<local, component>>
+    position: Vec2
+    rotation: f32 radians
+    scale: Vec2
+    +to_mat3() Mat3
+  }
+  class WorldTransform2D {
+    <<derived, component>>
+    matrix: Mat3
+    +transform_point(point) Vec2
+  }
+  class Parent {
+    <<link component>>
+  }
+  class FirstChild {
+    <<link component>>
+  }
+  class NextSibling {
+    <<link component>>
+  }
+  class Hierarchy {
+    <<functions over World>>
+    +set_parent(world, child, parent) Result
+    +detach(world, child) Result
+    +despawn_subtree(world, root) Result
+    +parent_of(world, entity) Option
+    +children(world, entity) Children
+  }
+  class TransformUpdater {
+    roots: Vec~Entity~ kept between calls
+    +update(world) Result~UpdateReport~
+  }
+  Hierarchy ..> Parent : writes
+  Hierarchy ..> FirstChild : writes
+  Hierarchy ..> NextSibling : writes
+  Hierarchy ..> Transform2D : requires on both ends
+  TransformUpdater ..> Transform2D : reads
+  TransformUpdater ..> WorldTransform2D : writes, parents first
+  TransformUpdater ..> FirstChild : walks depth first
+  TransformUpdater ..> NextSibling : walks depth first
 ```
 
 - **Relationships** (parent/child, "targets"): start with an explicit hierarchy in `scene`; general relationships (Flecs-style) deferred because they interact badly with archetype layouts [S](https://blog.innogames.com/entity-relationships-in-unity-dots-ecs/).
