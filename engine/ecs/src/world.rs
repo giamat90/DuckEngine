@@ -216,6 +216,16 @@ impl World {
             .flat_map(|table| table.entities().iter().copied())
     }
 
+    /// The id of a registered component type, if any.
+    pub(crate) fn component_id(&self, type_id: TypeId) -> Option<ComponentId> {
+        self.ids.get(&type_id).copied()
+    }
+
+    /// Every table, mutably, in creation order.
+    pub(crate) fn tables_mut(&mut self) -> &mut [Archetype] {
+        &mut self.archetypes
+    }
+
     fn table(&self, at: usize) -> Result<&Archetype, EcsError> {
         self.archetypes.get(at).ok_or(EcsError::StorageMismatch)
     }

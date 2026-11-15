@@ -6,6 +6,7 @@ use crate::column::{Column, typed, typed_mut};
 use crate::component::{Component, ComponentId};
 use crate::entity::Entity;
 use crate::error::EcsError;
+use crate::query::MAX_PARAMS;
 
 pub(crate) struct Archetype {
     /// Sorted ascending, no duplicates; `columns[i]` holds `components[i]`.
@@ -47,6 +48,19 @@ impl Archetype {
 
     fn column_index(&self, id: ComponentId) -> Option<usize> {
         self.components.binary_search(&id).ok()
+    }
+
+    /// The columns of the components `ids` (at most [`MAX_PARAMS`]), each as a distinct mutable
+    /// borrow, in the order of `ids`; a slot is `None` when the table has no such component.
+    pub(crate) fn take_columns(
+        &mut self,
+        ids: &[ComponentId],
+    ) -> [Option<&mut dyn Column>; MAX_PARAMS] {
+        let mut out: [Option<&mut dyn Column>; MAX_PARAMS] = [None, None, None];
+        for (component, column) in self.components.iter().zip(self.columns.iter_mut()) {
+            place(&mut out, ids, *component, column.as_mut());
+        }
+        out
     }
 
     /// The rows of component `id` as `&Vec<T>`.
@@ -144,6 +158,22 @@ fn set_edge(edges: &mut Vec<Option<u32>>, id: ComponentId, target: u32) {
     }
     if let Some(slot) = edges.get_mut(index) {
         *slot = Some(target);
+    }
+}
+
+/// Puts `column` in the slot of `out` that `ids` assigns to `component`, if it names it.
+fn place<'a>(
+    out: &mut [Option<&'a mut dyn Column>; MAX_PARAMS],
+    ids: &[ComponentId],
+    component: ComponentId,
+    column: &'a mut dyn Column,
+) {
+    let slot = ids
+        .iter()
+        .position(|id| *id == component)
+        .and_then(|at| out.get_mut(at));
+    if let Some(slot) = slot {
+        *slot = Some(column);
     }
 }
 

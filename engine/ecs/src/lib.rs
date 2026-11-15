@@ -16,4 +16,7 @@ pub use entity::Entity;
 pub use error::EcsError;
 pub use world::World;
 pub mod commands;
+pub mod query;
+
 pub use commands::{ApplyReport, Commands, Target};
+pub use query::{Access, Query, Read, Write};
