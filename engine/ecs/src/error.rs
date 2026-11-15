@@ -18,6 +18,12 @@ pub enum EcsError {
     /// A column did not hold the type its component id says, or a row was out of range: an internal inconsistency, reported
     /// instead of panicking.
     StorageMismatch,
+    /// A query names a component twice, or reads and writes the same component: its declared
+    /// access conflicts with itself.
+    ConflictingAccess,
+    /// The scheduler refused a parallel call (a zero grain refuses before anything runs; a refusal
+    /// later leaves the entities of the tables and chunks that already ran changed).
+    Jobs(jobs::error::JobError),
 }
 
 impl fmt::Display for EcsError {
@@ -28,6 +34,8 @@ impl fmt::Display for EcsError {
             Self::TooManyEntities => "too many entities for a 32-bit slot index",
             Self::TooManyComponents => "too many component types or archetypes",
             Self::StorageMismatch => "the storage is inconsistent (wrong column type or row)",
+            Self::ConflictingAccess => "the query names a component twice or reads and writes it",
+            Self::Jobs(_) => "the scheduler refused the parallel call",
         };
         f.write_str(text)
     }
@@ -47,6 +55,8 @@ mod tests {
             EcsError::TooManyEntities,
             EcsError::TooManyComponents,
             EcsError::StorageMismatch,
+            EcsError::ConflictingAccess,
+            EcsError::Jobs(jobs::error::JobError::InvalidGrain),
         ];
         let texts: Vec<String> = all.iter().map(ToString::to_string).collect();
         assert!(texts.iter().all(|t| !t.is_empty()));

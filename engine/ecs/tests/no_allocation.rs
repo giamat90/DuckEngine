@@ -122,3 +122,41 @@ fn buffered_frame_no_vec(world: &mut World, commands: &mut Commands) {
     }
     commands.apply(world);
 }
+
+#[test]
+fn queries_do_not_allocate_after_warm_up() {
+    use ecs::{Read, Write};
+    use jobs::inline::InlineScheduler;
+    use jobs::reversed::ReversedScheduler;
+
+    let mut world = World::new();
+    let mut scratch = Vec::with_capacity(ENTITIES);
+    for i in 0..ENTITIES {
+        let Ok(entity) = world.spawn() else {
+            panic!("spawn");
+        };
+        scratch.push(entity);
+        assert!(world.insert(entity, Position(1.0)).is_ok());
+        if i % 2 == 0 {
+            assert!(world.insert(entity, Velocity(2.0)).is_ok());
+        }
+    }
+    let run = |world: &mut World| {
+        let _ = world.for_each::<(Write<Position>, Read<Velocity>), _>(|(p, v)| p.0 += v.0);
+        let _ = world.par_for_each::<Write<Position>, _>(&InlineScheduler, 4, |p| p.0 += 1.0);
+        let _ = world.par_for_each::<Write<Position>, _>(&ReversedScheduler, 4, |p| p.0 += 1.0);
+    };
+    run(&mut world);
+    let ((), counts) = count_allocations(|| {
+        for _ in 0..20 {
+            run(&mut world);
+        }
+    });
+    assert_eq!(counts.calls(), 0);
+    // The queries really ran: 21 rounds of +1 +1 on every entity, +2 more on the even ones.
+    let first = scratch.first().and_then(|e| world.get::<Position>(*e));
+    assert_eq!(
+        first.map(|p| p.0.to_bits()),
+        Some((1.0_f32 + 21.0 * 4.0).to_bits())
+    );
+}

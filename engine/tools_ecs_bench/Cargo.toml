@@ -1,0 +1,17 @@
+[package]
+name = "tools_ecs_bench"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+license-file.workspace = true
+description = "Dev-time benchmark of the ecs crate (card 7-5): query iteration over one to three components, serial and on the work-stealing pool, and the deterministic workload for instruction counts; report only."
+
+[dependencies]
+ecs = { path = "../ecs", version = "0.1.0" }
+jobs = { path = "../jobs", version = "0.1.0" }
+platform = { path = "../platform", version = "0.1.0" }
+
+[lints]
+workspace = true

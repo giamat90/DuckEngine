@@ -113,6 +113,8 @@ stateDiagram-v2
 - Queries are cached and typed; systems are plain functions over query views; parallel safety is derived from declared access.
 - **As built (card 7-4, crate `engine/ecs`, layer 1, depends on `base` only; `jobs` joins with the parallel queries of card 7-5).** `World` owns the entities and the archetype tables of [ADR-0003](../decisions/adr-0003-ecs-storage.md). An `Entity` is a `base::pool::Handle` (slot index and generation, eight bytes); a freed slot is reused last in, first out and its generation grows by one, a slot whose generation would overflow is retired, so an old handle can never match again. A component is any `'static + Send + Sync` type (the trait `Component` has a blanket impl, no macro); a world registers a type on first use or on `World::register`, and ids follow the order of first use. `spawn` puts an entity in the empty table; `insert` adds a component (or replaces it in place) and `remove` drops one, each moving the entity's row to the table of the new component set with `swap_remove`, found through a per-table edge cache so a warm world allocates nothing; `despawn` drops the row. Columns are `Vec<T>` behind a trait object found again by `TypeId`; there is no `unsafe`. `entities()` lists live entities in table creation order, then row order (`BTreeMap` for the registry and the table index, no hash). Every refusal is an `EcsError` value (`StaleEntity`, `MissingComponent`, `TooManyEntities`, `TooManyComponents`, `StorageMismatch` for an internal inconsistency). `Commands` records spawn, despawn, insert and remove while a system iterates and `apply(&mut World)` runs them in the recorded order, returning how many took effect and how many were refused (a stale or unknown target never stops the others); `spawn()` returns a `Target::Pending(n)` that later commands of the same buffer may use, and `spawned()` maps it to the real entity after the apply. Values wait in one typed queue per component type, so no command boxes anything. Tests: unit and behaviour tests, a long random history checked against a plain model, zero allocator calls in steady state (counting allocator, with a control that shows the warm-up does allocate). Mutation score of the crate 98% (122 of 124 viable mutants caught, the two missed are equivalent). Queries, declared access and parallel iteration are card 7-5. Details: `reviews/7-4.md`.
 
+- **As built (card 7-5, crate `engine/ecs` now also depends on `jobs`).** A query names its components as types: `Read<T>` gives `&T`, `Write<T>` gives `&mut T`, alone or in a tuple of two or three (plain traits, no macro, no `unsafe`). `World::for_each::<Q, _>(f)` runs `f` on every entity that has all of them, tables in creation order and rows in order, so the order is a function of the history of the world and never of a hash; a component nobody registered matches nothing. The declared access is data: `Access::of::<Q>()` lists the types read and written and `conflicts_with` says whether two queries could not run at the same time (one writes what the other reads or writes). A query that names one component twice would need two borrows of one column and is refused before anything runs with `EcsError::ConflictingAccess`; running different systems in parallel is a later card (owner choice O6), the check is only here from the start; a query borrows the world mutably, so two read-only queries cannot overlap until the storage offers a shared view. `World::par_for_each::<Q, _>(&dyn IScheduler, grain, f)` cuts each table into at most 64 contiguous chunks of at least `grain` rows, the last of a table excepted (the chunk cells live on the stack) and runs them with one `parallel_for` per table; the closure sees one entity at a time and may touch only what the item gives it, so the result does not depend on the scheduler, the order or the thread (D0, D1). A table with one chunk runs on the calling thread without a scheduler call; a zero grain or a refused scheduler call comes back as `EcsError::Jobs`. No call allocates after warm-up on the calling thread (counting allocator, measured with the inline and the reversed scheduler; the pool's own allocation behaviour is the jobs crate's test). Tests: unit and behaviour tests, parallel equals serial on the inline, reversed and shuffled schedulers and on a work-stealing pool at 1, 2 and 4 workers, refusals, zero allocation, and the mutation score in `reviews/7-5.md`. The benchmark tool `engine/tools_ecs_bench` (`report`, `icount-workload`) measures the three query shapes; it is not registered as a gate yet (card 7-6, governance). Details: `reviews/7-5.md`.
+
 ```mermaid
 classDiagram
   class World {
@@ -139,10 +141,27 @@ classDiagram
     +insert~T~(target, value)
     +apply(world) ApplyReport
   }
+  class Query {
+    <<Read or Write of one to three components>>
+    +for_each(f)
+    +par_for_each(scheduler, grain, f)
+  }
+  class Access {
+    <<reads and writes as data>>
+    +of~Q~() Result
+    +conflicts_with(other) bool
+  }
+  class IScheduler {
+    <<port of the jobs crate>>
+    +parallel_for(count, grain, body)
+  }
   World "1" *-- "1" EntityTable
   World "1" *-- "*" Archetype
   Archetype "1" *-- "*" Column
   Commands ..> World : apply in recorded order
+  Query ..> World : visits tables in creation order
+  Query ..> Access : declares, refuses a repeated component
+  Query ..> IScheduler : one parallel_for per table
 ```
 
 - **Relationships** (parent/child, "targets"): start with an explicit hierarchy in `scene`; general relationships (Flecs-style) deferred because they interact badly with archetype layouts [S](https://blog.innogames.com/entity-relationships-in-unity-dots-ecs/).

@@ -7,7 +7,7 @@ use crate::error::EcsError;
 use std::any::Any;
 
 /// The operations an archetype table needs from a column without knowing its type.
-pub(crate) trait Column: Any + Send + Sync {
+pub trait Column: Any + Send + Sync {
     /// Drops row `row`; the last row fills the hole.
     fn swap_remove_drop(&mut self, row: usize) -> Result<(), EcsError>;
     /// Moves row `row` to the end of `dst`; the last row fills the hole. Nothing changes when `dst`
