@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The instruction-count gate (physics, card 4-23; audio, card 5-15; rules-digest section 7: "PR benchmark gate on instruction
+"""The instruction-count gate (physics, card 4-23; audio, card 5-15; ECS, card 7-6; rules-digest section 7: "PR benchmark gate on instruction
 counts (warn 5%, fail 10%)"). A profile names the benchmark table, the workload flags and the words.
 
 What is measured comes from the trees under test: the `tools_physics_bench` binary built from the base tree and
@@ -56,7 +56,11 @@ AUDIO = Profile("audio", "Audio", "audio_icount",
                 "not run: audio benchmark tool absent (engine/tools_audio_bench/Cargo.toml is in neither "
                 "the base tree nor the pushed commit)",
                 (("voices", "--voices", MAX_WORKLOAD), ("blocks", "--blocks", MAX_WORKLOAD)))
-PROFILES = {profile.name: profile for profile in (PHYSICS, AUDIO)}
+ECS = Profile("ecs", "ECS", "ecs_icount",
+              "not run: ECS benchmark tool absent (engine/tools_ecs_bench/Cargo.toml is in neither "
+              "the base tree nor the pushed commit)",
+              (("entities", "--entities", MAX_WORKLOAD), ("frames", "--frames", MAX_WORKLOAD)))
+PROFILES = {profile.name: profile for profile in (PHYSICS, AUDIO, ECS)}
 
 
 @dataclass(frozen=True)

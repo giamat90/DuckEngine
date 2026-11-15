@@ -42,11 +42,11 @@ flowchart LR
 
 ## 2. Jobs of the `ci` workflow
 
-Source: `.github/workflows/ci.yml`. Thirteen independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
+Source: `.github/workflows/ci.yml`. Fourteen independent jobs run in parallel. A new push to the same ref cancels the run in progress (a dispatched run on a branch); a run on `main` is never cancelled.
 
 ```mermaid
 flowchart TB
-  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & vk_linux & arm64 & d2_determinism & tsan & physics_icount & audio_icount
+  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & vk_linux & arm64 & d2_determinism & tsan & physics_icount & audio_icount & ecs_icount
 
   subgraph g1["g1: build, test, fmt, clippy (Windows and Ubuntu)"]
     direction TB
@@ -163,7 +163,19 @@ flowchart TB
     a5 --> a6["compare, bands from gates.toml of main: warn 5%, fail 10%, same as physics"]
   end
 
-  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & vk_linux & arm64 & d2_determinism & tsan & physics_icount & audio_icount --> done(["all green = the commit may merge"])
+  subgraph ecs_icount["ecs_icount (Ubuntu x86-64, card 7-6): instruction count of the serial query workload, base against head"]
+    direction TB
+    e0["same job as audio_icount: trusted/ = main, base/, head/; icount_gate --benchmark ecs"] --> e0b{"ECS profile and [ecs_icount] on main?"}
+    e0b -- "no (before the card is merged)" --> e0c["summary: not run: icount-gate is not on main yet"]
+    e0b -- yes --> e1{"engine/tools_ecs_bench/Cargo.toml: in base, in head"}
+    e1 -- "neither" --> e2["notice and summary: not run: ECS benchmark tool absent (the only skip)"]
+    e1 -- "only in base" --> e3["RED: tool deleted"]
+    e1 -- "only in head" --> e4["count head only, summary: no baseline, recorded only"]
+    e1 -- "both" --> e5["count base and head: 2 runs each under callgrind (workload from benchmarks.toml), spread within the noise limit"]
+    e5 --> e6["compare, bands from gates.toml of main: warn 5%, fail 10%, same as physics and audio"]
+  end
+
+  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & vk_linux & arm64 & d2_determinism & tsan & physics_icount & audio_icount & ecs_icount --> done(["all green = the commit may merge"])
 ```
 
 ---
@@ -191,7 +203,7 @@ flowchart LR
   twf -- "judges; the PR cannot edit it, and it rejects a deleted or hollowed pwf" --> pwf
   ptools -. "unit tests in job g1, not a gate" .-> tools
 
-  note["Exceptions: arch-check runs cargo inside the PR tree and so honours its rust-toolchain.toml and .cargo/ (both protected paths). The PR can edit ci.yml, so the owner reads any workflow diff. Jobs that must run the pushed code (tsan, d2_determinism, physics_icount, audio_icount) execute it as the program under test; their verdict still comes from the trusted tools, and physics_icount reads the instruction count from valgrind's own log file, not from anything the program prints."]
+  note["Exceptions: arch-check runs cargo inside the PR tree and so honours its rust-toolchain.toml and .cargo/ (both protected paths). The PR can edit ci.yml, so the owner reads any workflow diff. Jobs that must run the pushed code (tsan, d2_determinism, physics_icount, audio_icount, ecs_icount) execute it as the program under test; their verdict still comes from the trusted tools, and physics_icount reads the instruction count from valgrind's own log file, not from anything the program prints."]
   pwf --- note
 ```
 
