@@ -108,7 +108,8 @@ stateDiagram-v2
 
 ## 4. ECS (ADR-0003)
 
-- **Proposal: hybrid storage like Bevy** (dense tables/archetypes by default for iteration speed, opt-in sparse sets for frequently toggled "tag" components) [S](https://bevy.org/news/bevy-0-5/). Decision is **data-driven**: a benchmark spike implements both minimal storages and measures iteration vs structural-change cost on our workloads. Published evidence says archetypes win iteration, sparse sets win mutation [S](https://diglib.eg.org/handle/10.2312/cgvc20251224).
+- **Decided (card 7-3, upon the owner's approval of the PR): archetype tables with safe typed columns, no `unsafe`, no sparse class in version 1** ([adr-0003-ecs-storage](../decisions/adr-0003-ecs-storage.md)); the proposal below was measured by the spike of card 7-2 and the sparse class is left to a later decision.
+- **Proposal (superseded by the decision above): hybrid storage like Bevy** (dense tables/archetypes by default for iteration speed, opt-in sparse sets for frequently toggled "tag" components) [S](https://bevy.org/news/bevy-0-5/). Decision is **data-driven**: a benchmark spike implements both minimal storages and measures iteration vs structural-change cost on our workloads. Published evidence says archetypes win iteration, sparse sets win mutation [S](https://diglib.eg.org/handle/10.2312/cgvc20251224).
 - Queries are cached and typed; systems are plain functions over query views; parallel safety is derived from declared access.
 - **Relationships** (parent/child, "targets"): start with an explicit hierarchy in `scene`; general relationships (Flecs-style) deferred because they interact badly with archetype layouts [S](https://blog.innogames.com/entity-relationships-in-unity-dots-ecs/).
 - **ECS is not the universal container.** Physics and audio keep their own optimised internal storage; ECS holds *references (handles)* and synced state. This prevents the ECS from constraining the hot loops of the other subsystems.
