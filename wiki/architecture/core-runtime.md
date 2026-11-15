@@ -111,6 +111,40 @@ stateDiagram-v2
 - **Decided (card 7-3, upon the owner's approval of the PR): archetype tables with safe typed columns, no `unsafe`, no sparse class in version 1** ([adr-0003-ecs-storage](../decisions/adr-0003-ecs-storage.md)); the proposal below was measured by the spike of card 7-2 and the sparse class is left to a later decision.
 - **Proposal (superseded by the decision above): hybrid storage like Bevy** (dense tables/archetypes by default for iteration speed, opt-in sparse sets for frequently toggled "tag" components) [S](https://bevy.org/news/bevy-0-5/). Decision is **data-driven**: a benchmark spike implements both minimal storages and measures iteration vs structural-change cost on our workloads. Published evidence says archetypes win iteration, sparse sets win mutation [S](https://diglib.eg.org/handle/10.2312/cgvc20251224).
 - Queries are cached and typed; systems are plain functions over query views; parallel safety is derived from declared access.
+- **As built (card 7-4, crate `engine/ecs`, layer 1, depends on `base` only; `jobs` joins with the parallel queries of card 7-5).** `World` owns the entities and the archetype tables of [ADR-0003](../decisions/adr-0003-ecs-storage.md). An `Entity` is a `base::pool::Handle` (slot index and generation, eight bytes); a freed slot is reused last in, first out and its generation grows by one, a slot whose generation would overflow is retired, so an old handle can never match again. A component is any `'static + Send + Sync` type (the trait `Component` has a blanket impl, no macro); a world registers a type on first use or on `World::register`, and ids follow the order of first use. `spawn` puts an entity in the empty table; `insert` adds a component (or replaces it in place) and `remove` drops one, each moving the entity's row to the table of the new component set with `swap_remove`, found through a per-table edge cache so a warm world allocates nothing; `despawn` drops the row. Columns are `Vec<T>` behind a trait object found again by `TypeId`; there is no `unsafe`. `entities()` lists live entities in table creation order, then row order (`BTreeMap` for the registry and the table index, no hash). Every refusal is an `EcsError` value (`StaleEntity`, `MissingComponent`, `TooManyEntities`, `TooManyComponents`, `StorageMismatch` for an internal inconsistency). `Commands` records spawn, despawn, insert and remove while a system iterates and `apply(&mut World)` runs them in the recorded order, returning how many took effect and how many were refused (a stale or unknown target never stops the others); `spawn()` returns a `Target::Pending(n)` that later commands of the same buffer may use, and `spawned()` maps it to the real entity after the apply. Values wait in one typed queue per component type, so no command boxes anything. Tests: unit and behaviour tests, a long random history checked against a plain model, zero allocator calls in steady state (counting allocator, with a control that shows the warm-up does allocate). Mutation score of the crate 98% (122 of 124 viable mutants caught, the two missed are equivalent). Queries, declared access and parallel iteration are card 7-5. Details: `reviews/7-4.md`.
+
+```mermaid
+classDiagram
+  class World {
+    +spawn() Entity
+    +despawn(entity)
+    +insert~T~(entity, value)
+    +remove~T~(entity)
+    +get~T~(entity) Option
+    +entities() iterator
+  }
+  class EntityTable {
+    <<slots, free list, generations>>
+  }
+  class Archetype {
+    <<one dense table per component set>>
+    entities: Vec~Entity~
+    add and remove edge caches
+  }
+  class Column {
+    <<Vec of T behind a trait object>>
+  }
+  class Commands {
+    +spawn() Target
+    +insert~T~(target, value)
+    +apply(world) ApplyReport
+  }
+  World "1" *-- "1" EntityTable
+  World "1" *-- "*" Archetype
+  Archetype "1" *-- "*" Column
+  Commands ..> World : apply in recorded order
+```
+
 - **Relationships** (parent/child, "targets"): start with an explicit hierarchy in `scene`; general relationships (Flecs-style) deferred because they interact badly with archetype layouts [S](https://blog.innogames.com/entity-relationships-in-unity-dots-ecs/).
 - **ECS is not the universal container.** Physics and audio keep their own optimised internal storage; ECS holds *references (handles)* and synced state. This prevents the ECS from constraining the hot loops of the other subsystems.
 
