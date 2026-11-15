@@ -2,7 +2,9 @@
 
 use core::fmt;
 
-/// Why an ECS operation was refused. Every variant leaves the world as it was.
+/// Why an ECS operation was refused. Every variant except [`EcsError::StorageMismatch`] leaves the
+/// world as it was; `StorageMismatch` reports an internal inconsistency that no caller can cause,
+/// and the world should be dropped after it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EcsError {
     /// The entity was despawned (or never existed): its generation no longer matches its slot.

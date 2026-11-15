@@ -103,7 +103,7 @@ impl EntityTable {
         Ok(location)
     }
 
-    /// The live entity in slot `index`, if any, for tests that walk the table.
+    /// Sets the generation of slot `index`, for the test of the retirement at the last generation.
     #[cfg(test)]
     fn set_generation(&mut self, index: u32, generation: u32) {
         if let Some(slot) = self.slots.get_mut(index as usize) {

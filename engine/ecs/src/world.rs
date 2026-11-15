@@ -21,6 +21,9 @@ const EMPTY_TABLE: usize = 0;
 /// entity's row to another table with `swap_remove`. Iteration order is table creation order, then
 /// row order; no hash is iterated, so the order is a function of the history of calls.
 ///
+/// A world with `K` component types can reach up to `2^K` tables (one per set that really occurs),
+/// each with two edge caches of `K` entries; the sandbox's handful of types stays far from that.
+///
 /// After a warm-up that has created the tables and the transitions between them and has grown the
 /// columns, spawning, despawning, inserting and removing make no allocator call. Registering every
 /// component type up front with [`World::register`] keeps the first use out of the hot path.

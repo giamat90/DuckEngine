@@ -18,6 +18,9 @@ pub enum Target {
     /// An entity that exists now.
     Existing(Entity),
     /// The `n`th entity spawned by this buffer, which does not exist until [`Commands::apply`].
+    /// The number is only meaningful for the buffer that returned it and until its next apply: a
+    /// number kept longer, or taken from another buffer, names whatever that buffer spawned at the
+    /// same position, or nothing.
     Pending(u32),
 }
 
@@ -39,9 +42,9 @@ pub struct ApplyReport {
 impl ApplyReport {
     fn count(&mut self, done: Result<(), EcsError>) {
         if done.is_ok() {
-            self.applied += 1;
+            self.applied = self.applied.saturating_add(1);
         } else {
-            self.refused += 1;
+            self.refused = self.refused.saturating_add(1);
         }
     }
 }
@@ -103,7 +106,9 @@ impl Commands {
     pub fn spawn(&mut self) -> Target {
         self.ops.push(Op::Spawn);
         let pending = Target::Pending(self.spawns);
-        self.spawns += 1;
+        // At 2^32 spawns the number saturates and no longer names a spawn: later commands on it
+        // are refused instead of aliasing another entity.
+        self.spawns = self.spawns.saturating_add(1);
         pending
     }
 

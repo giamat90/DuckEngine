@@ -2,7 +2,7 @@
 //! must leave every entity with exactly the components the model says, and every despawned handle
 //! stale, whatever rows `swap_remove` shuffled.
 
-use ecs::{EcsError, Entity, World};
+use ecs::{Commands, EcsError, Entity, World};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct A(i64);
@@ -166,5 +166,85 @@ fn run(seed: u64, steps: i64) {
 fn random_histories_match_the_model() {
     for seed in [1_u64, 2, 3, 0xDEAD_BEEF, 0x1234_5678_9ABC_DEF1] {
         run(seed, 600);
+    }
+}
+
+/// Records the same random script into a command buffer and applies it directly to a second
+/// world, in batches; both worlds must end in the same state.
+fn run_buffered(seed: u64, batches: usize) {
+    let mut rng = Rng(seed);
+    let mut direct = World::new();
+    let mut buffered = World::new();
+    let mut commands = Commands::new();
+    for batch in 0..batches {
+        let live: Vec<Entity> = direct.entities().collect();
+        let live_buffered: Vec<Entity> = buffered.entities().collect();
+        assert_eq!(live, live_buffered);
+        for step in 0..8_usize {
+            let serial = i64::try_from(batch * 8 + step).unwrap_or(0);
+            record(&mut rng, serial, &live, &mut commands, &mut direct);
+        }
+        commands.apply(&mut buffered);
+        assert_eq!(snapshot(&direct), snapshot(&buffered));
+    }
+}
+
+fn record(
+    rng: &mut Rng,
+    serial: i64,
+    live: &[Entity],
+    commands: &mut Commands,
+    direct: &mut World,
+) {
+    let pick = live.get(rng.below(live.len().max(1))).copied();
+    match (rng.below(5), pick) {
+        (0, _) | (_, None) => {
+            let pending = commands.spawn();
+            commands.insert(pending, A(serial));
+            if let Ok(entity) = direct.spawn() {
+                let _ = direct.insert(entity, A(serial));
+            }
+        }
+        (1, Some(entity)) => {
+            commands.despawn(entity);
+            let _ = direct.despawn(entity);
+        }
+        (2, Some(entity)) => {
+            commands.insert(entity, B(serial));
+            let _ = direct.insert(entity, B(serial));
+        }
+        (3, Some(entity)) => {
+            commands.remove::<A>(entity);
+            let _ = direct.remove::<A>(entity);
+        }
+        (_, Some(entity)) => {
+            commands.insert(entity, C(serial));
+            let _ = direct.insert(entity, C(serial));
+        }
+    }
+}
+
+/// Slot, generation and the three optional values of one entity.
+type Snapshot = (u32, u32, Option<i64>, Option<i64>, Option<i64>);
+
+fn snapshot(world: &World) -> Vec<Snapshot> {
+    world
+        .entities()
+        .map(|e| {
+            (
+                e.index(),
+                e.generation(),
+                world.get::<A>(e).map(|v| v.0),
+                world.get::<B>(e).map(|v| v.0),
+                world.get::<C>(e).map(|v| v.0),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_command_buffer_gives_the_same_world_as_the_direct_calls() {
+    for seed in [7_u64, 8, 9, 0xFEED_FACE] {
+        run_buffered(seed, 60);
     }
 }

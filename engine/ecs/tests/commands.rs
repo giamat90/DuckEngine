@@ -243,3 +243,29 @@ fn the_buffer_can_cross_threads() {
     fn needs_send_sync<T: Send + Sync>() {}
     needs_send_sync::<Commands>();
 }
+
+#[test]
+fn a_pending_number_used_before_its_spawn_is_refused() {
+    let mut world = World::new();
+    let mut commands = Commands::new();
+    commands.insert(Target::Pending(0), Position(1.0));
+    commands.spawn();
+    assert_eq!(commands.apply(&mut world), report(1, 1));
+    assert_eq!(world.len(), 1);
+}
+
+#[test]
+fn a_pending_number_kept_from_an_earlier_apply_names_the_new_spawn_at_that_position() {
+    let mut world = World::new();
+    let mut commands = Commands::new();
+    let old = commands.spawn();
+    commands.apply(&mut world);
+    let fresh = commands.spawn();
+    assert_eq!(old, fresh);
+    commands.insert(old, Position(4.0));
+    commands.apply(&mut world);
+    let entities: Vec<Entity> = world.entities().collect();
+    assert_eq!(entities.len(), 2);
+    assert_eq!(world.get::<Position>(entities[1]), Some(&Position(4.0)));
+    assert_eq!(world.get::<Position>(entities[0]), None);
+}
