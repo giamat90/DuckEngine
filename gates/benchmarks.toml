@@ -25,3 +25,14 @@ voices = 1024
 blocks = 200
 runs = 2
 noise_max_percent = 0.5
+
+# The serial query workload of the ECS (one, two and three components over one world of 8192 entities in three
+# tables, 8 frames each), counted on the base tree and on the pushed commit in the same job (job `ecs_icount` in
+# .github/workflows/ci.yml) and compared with the same two bands. Card 7-6.
+[ecs_icount]
+package = "tools_ecs_bench"
+manifest = "engine/tools_ecs_bench/Cargo.toml"
+entities = 8192
+frames = 8
+runs = 2
+noise_max_percent = 0.5
