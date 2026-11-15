@@ -619,6 +619,32 @@ class Ci(unittest.TestCase):
         self.assertIn("ready=false", step)
         self.assertNotIn("if:", step)
 
+    def ecs_icount_job(self):
+        job = CI[CI.index("\n  ecs_icount:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        return job[:following.start()] if following else job
+
+    def test_the_ecs_icount_job_is_the_audio_job_with_the_ecs_profile(self):
+        # Card 7-6: same trusted-main, locked-checkout, base-against-head structure; only the profile and the words differ.
+        audio, ecs = self.audio_icount_job(), self.ecs_icount_job()
+        audio = audio.replace("--benchmark audio", "--benchmark ecs")
+        audio = audio.replace("audio_icount", "ecs_icount").replace("Audio instruction count", "ECS instruction count")
+        audio = audio.replace("the audio profile", "the ECS profile")
+        self.assertEqual(ecs.strip(), audio.strip())
+        self.assertEqual(len(re.findall(r"(?m)^\s+if:", ecs)), 7)
+        self.assertEqual(ecs.count("--benchmark ecs"), 4)
+        self.assertNotIn("continue-on-error", ecs)
+
+    def test_the_ecs_icount_job_waits_for_the_ecs_table_on_main(self):
+        step = next(s for s in self.ecs_icount_job().split("\n      - ") if "id: gate" in s)
+        self.assertIn("ecs_icount", step)
+        self.assertIn("ready=false", step)
+        self.assertNotIn("if:", step)
+
+    def test_the_icount_tool_states_its_ecs_skip_line(self):
+        gate = (Path(__file__).resolve().parents[2] / "tools" / "icount-gate" / "icount_gate.py").read_text(encoding="utf-8")
+        self.assertIn("not run: ECS benchmark tool absent", gate)
+
     def test_the_icount_tool_states_its_audio_skip_line(self):
         gate = (Path(__file__).resolve().parents[2] / "tools" / "icount-gate" / "icount_gate.py").read_text(encoding="utf-8")
         self.assertIn("not run: audio benchmark tool absent", gate)
