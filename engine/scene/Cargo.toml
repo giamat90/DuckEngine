@@ -1,0 +1,16 @@
+[package]
+name = "scene"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+license-file.workspace = true
+description = "Layer 2 scene crate: 2D local and world transforms and the parent-child hierarchy as components of the ecs crate (first child and next sibling), with a depth-first world transform update. No unsafe code."
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+ecs = { path = "../ecs", version = "0.1.0" }
+
+[lints]
+workspace = true
