@@ -246,6 +246,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sync_render"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "ecs",
+ "frame",
+ "render",
+ "scene",
+]
+
+[[package]]
 name = "tools_assetc"
 version = "0.1.0"
 dependencies = [

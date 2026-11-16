@@ -16,5 +16,6 @@ pub mod graph;
 pub mod ids;
 pub mod mesh;
 pub mod null;
+pub mod scene;
 pub mod sprite;
 pub mod stream;
