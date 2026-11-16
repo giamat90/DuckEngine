@@ -8,8 +8,8 @@ Card 7-14, written on 2026-11-16 on branch `task/7-14-phase7-exit` (cut from `de
 
 | Question | Answer |
 |---|---|
-| Are the phase 7 exit criteria met? | **Mostly met, with three items that need the owner.** The ECS is built and measured (0.42 to 0.72 ns per entity per frame against the accepted target of 1.0 ns), the sandbox plays through ECS, scene, input and three glue crates, and its frame costs about 0.2 ms of CPU. **Open:** the frame budget is a proposal that the owner has not accepted, the hosted instruction-count gate of the ECS has never run (its crate is not on `main`), and the native Win32 and audio adapters that the roadmap names "before phase 7 closes" were not built and have no card. |
-| Did a gate fail on phase 7 code? | No gate was lowered, skipped or waived. Every code card had an independent review and its blockers and majors were fixed before the merge (section 3): two blockers (7-3, 7-7: a hang on a hand-made loop) and thirteen majors over cards 7-1 to 7-13. |
+| Are the phase 7 exit criteria met? | **Mostly met, with two decisions for the owner and one run still to come.** The ECS is built and measured (0.42 to 0.72 ns per entity per frame against the accepted target of 1.0 ns), the sandbox builds and runs frames through ECS, scene, input and three glue crates (headless, and timed on OpenGL; interactive play with a mouse and an audio device is not verified), and its frame costs about 0.2 ms of CPU. **Open:** the frame budget is a proposal that the owner has not accepted, the hosted instruction-count gate of the ECS has never run (its crate is not on `main`), and the native Win32 and audio adapters that the roadmap names "before phase 7 closes" were not built and have no card. |
+| Did a gate fail on phase 7 code? | No gate was lowered, skipped or waived. Every code card had an independent review and its blockers and majors were fixed before the merge (section 3): two blockers (7-3: links to a page not yet on `main`; 7-7: a hang on a hand-made loop) and thirteen majors over cards 7-1 to 7-13. |
 | Main weaknesses found | (1) **Hosted CI has not run any phase 7 code**: `develop` has no CI, so Linux, the ECS instruction-count gate and the coverage job first run on the release PR (F-HOSTED). (2) **Evidence from one machine** for every timing. (3) **The frame budget is unaccepted and unenforced** (F-BUDGET). (4) **Native adapters undecided** (F-NATIVE). (5) Three groups of tests were written together with the code and have no red run (section 6). |
 | A figure that moved the wrong way? | None. Phase 7 added no `unsafe` to layers 0 to 2: 88 blocks, as at the phase 6 review, and the share fell from 0.19% to 0.16% only because the code grew. |
 | Recommendation | **Phase 7 done with named limits**, once the owner decides the frame budget and the native adapters (section 7). The release PR `develop` to `main` carries 11 phase 7 cards (12 with this one) and is the first hosted run of this code. Phase 8 is not started. |
@@ -36,7 +36,7 @@ flowchart LR
 
 ## 2. Exit criteria of the phase 7 row
 
-The roadmap row: "ECS + scene + input mapping, then the integration sample | **ECS (after the storage spike) and scene/input mapping are built here, when the sample needs them (D-8)**; small playable **2D physics sandbox** sample (Q20, owner) using ECS + 2D physics + 2D render + audio | ECS iteration benchmark vs target; meets frame budget on reference machine; full metrics report; retrospective". The roadmap's scope-control rule 2 adds a target (not a gate): native Win32 and audio adapters replace the stopgaps "before phase 7 closes".
+The roadmap row: "ECS + scene + input mapping, then the integration sample | **ECS (after the storage spike) and scene/input mapping are built here, when the sample needs them (D-8)**; small playable **2D physics sandbox** sample (Q20, owner) using ECS + 2D physics + 2D render + audio | ECS iteration benchmark vs target; meets frame budget on reference machine; full metrics report; retrospective". The roadmap's scope-control rule 2 (a different rule from the operating rule 2 on iterations) adds a target (not a gate): native Win32 and audio adapters replace the stopgaps "before phase 7 closes".
 
 ### 2.1 Deliverables
 
@@ -59,7 +59,7 @@ The roadmap row: "ECS + scene + input mapping, then the integration sample | **E
 | Criterion | Evidence | Result | Owner decision needed |
 |---|---|---|---|
 | ECS iteration benchmark vs target | Target: serial query iteration at most 1.0 ns per entity per frame for one, two and three components (proposed by 7-5, accepted by the owner with 7-7). *Recorded* (7-5): 0.42 to 0.72 ns on 100,000 entities, one thread, release, Windows, load not controlled; a pool of 2 workers 0.26 to 0.35. The instruction-count gate of 7-6 is on `main` but its job says "not run" until `tools_ecs_bench` reaches `main` | **met on one machine; the hosted gate has not run** | no (it runs on the release PR) |
-| Meets the frame budget on the reference machine | The budget is the proposal of 7-13: OpenGL mean at most 0.5 ms and p99 at most 1.0 ms, Null mean at most 0.2 ms, the ECS path adds at most 25 us per frame. *Recorded* (7-13): OpenGL sandbox frame mean 207.9 us, p99 470 us, max 917 us; Null 84.8 us; the ECS path adds 5 to 10 us. Measured on a laptop (i7-12700H, Windows 11, release) that I took as the reference machine; the owner has not confirmed that | **within the proposal, which is not accepted** | **yes**: accept, change or refuse; and confirm the machine |
+| Meets the frame budget on the reference machine | The budget is the proposal of 7-13: OpenGL mean at most 0.5 ms and p99 at most 1.0 ms, Null mean at most 0.2 ms, the ECS path adds at most 25 us per frame. *Recorded* (7-13): OpenGL sandbox frame mean 207.9 us, p99 470 us, max 917 us; Null 84.8 us; the ECS path adds 5 to 10 us. Measured on a laptop (i7-12700H, Windows 11, release); the design note calls the owner's machine the reference, and nobody has confirmed that this laptop is it | **within the proposal, which is not accepted** | **yes**: accept, change or refuse; and confirm the machine |
 | Full metrics report | Section 4: line coverage and mutation of the phase 7 crates, tests, `unsafe`, architecture | **met for this page** | no |
 | Retrospective | Section 6 | **met** | no |
 | Native adapters before the phase closes (a target, not a gate) | none built; window, input and audio ports stay `experimental` | **not met** | **yes** (O8, section 7) |
@@ -79,7 +79,7 @@ The roadmap row: "ECS + scene + input mapping, then the integration sample | **E
 flowchart TD
   subgraph met["met"]
     ecs["ECS iteration under the accepted target"]
-    smp["playable sandbox through the glue crates"]
+    smp["sandbox runs through the glue crates"]
     met2["metrics report and retrospective"]
   end
   subgraph partly["met with a limit"]
@@ -113,8 +113,8 @@ State is taken from git (merged PRs), **not from the Trello board**. Findings ar
 | 7-5 | `ecs` part 2, queries | #58 | 2 | 0 major, 8 minor | not released |
 | 7-6 | ECS gate (governance) | #59 | 3 | 0 major, 4 minor | on `main` |
 | 7-7 | `scene` | #60 | 2 | 1 blocker, 2 major, 6 minor, fixed (2 reviews) | not released |
-| 7-8 | `input` | #61 | 2 | 0 major, 9 minor | not released |
-| 7-9 | `frame`, `sync_physics` | #62 | 2 | 1 major, 8 minor, fixed | not released |
+| 7-8 | `input` | #61 | 2 | 0 major, 9 minor, 5 nit | not released |
+| 7-9 | `frame`, `sync_physics` | #62 | 2 | 1 major, 8 minor, nits, fixed | not released |
 | 7-10 | `RenderScene`, `sync_render` | #63 | 2 | 0 major, 2 minor, 3 nit | not released |
 | 7-11 | `sync_audio` | #64 | 2 | 1 major, 2 minor, 2 nit, fixed | not released |
 | 7-12 | `app_sandbox` | #65 | 2 | 2 major, 7 minor, 5 nit, fixed | not released |
@@ -129,8 +129,8 @@ State is taken from git (merged PRs), **not from the Trello board**. Findings ar
 |---|---|---|
 | Cards | 7-1 to 7-14 | the same 14 cards, no card added and none cut |
 | Governance steps | 7-3 and 7-6, owner-declared | both done as planned |
-| Options for the owner | O1 to O8 | accepted by the owner on 2026-11-14 (changelog v1.46); O1 to O7 were followed as recommended; the option chosen for O8 is not recorded by name, and no native adapter card exists |
-| Iterations rule (roadmap rule 2: stop at about twice the planned iterations) | 14 cards | 14 cards, one fix loop at most per card; nothing suggests the rule triggered |
+| Options for the owner | O1 to O8 | accepted by the owner on 2026-11-14 (changelog v1.46); the changelog says only "accepted choices O1-O8", so the option chosen for O8 is not recorded by name; the design note mentions a card 7-15 for a real audio device, which was never created, and no native adapter card exists (this hints at option (a), not at a decision) |
+| Iterations rule (roadmap operating rule 2: stop at about twice the planned iterations) | 14 cards | 14 cards, one fix loop at most per card; nothing suggests the rule triggered |
 | Cut items | none named | none |
 
 ## 4. Metrics
@@ -194,7 +194,7 @@ Each item was checked against the repository on 2026-11-16 (`8389ea4`) before it
 **What worked**
 - **Measure first, then decide.** The storage spike (7-2) chose archetype tables on numbers and showed that type erasure gave no win, so `ecs` has no `unsafe` at all. Dirty flags for transforms were dropped on a probe (7-7) and the sandbox measurement (7-13) confirmed it: the whole transform update costs 6.7 us.
 - **The order of the cards.** Spike, ADR, ECS, scene and input, glue, sandbox, measurement. The ADR and its `unsafe` budget decision came before the first `ecs` PR, as the 7-1 review asked.
-- **Independent review found real defects every time it ran on code.** One code blocker (7-7: the claim "the links always form a forest" was false and a hand-made loop hung `update`; fixed by bounding every walk and reporting `BrokenHierarchy`), and majors in 7-1, 7-2 (3), 7-3 (2), 7-7 (2), 7-9, 7-11, 7-12 (2) and 7-13. The 7-13 major mattered for the owner: the first comparison favoured the sandbox by run order, and the report now gives a range.
+- **Independent review found a blocker or a major on six of the code cards (7-2, 7-7, 7-9, 7-11, 7-12, 7-13).** One code blocker (7-7: the claim "the links always form a forest" was false and a hand-made loop hung `update`; fixed by bounding every walk and reporting `BrokenHierarchy`), and majors in 7-1, 7-2 (3), 7-3 (2), 7-7 (2), 7-9, 7-11, 7-12 (2) and 7-13. The 7-13 major mattered for the owner: the first comparison favoured the sandbox by run order, and the report now gives a range.
 - **Mutation per card caught gaps early.** First runs missed: 8 (7-5), 5 (7-8), 3 plus a hang (7-9), 1 (7-10), 1 plus 4 hangs (7-7). Each was fixed with a test and the run repeated.
 - **Narrow glue crates.** The three `sync_*` crates are small (58 to 119 lines each) and physics stayed free of the ECS.
 
@@ -232,5 +232,6 @@ The owner decides; nothing here moves a card.
 - No Linux, ARM64 or second-machine run of any phase 7 code, and no hosted run.
 - Branch coverage and the new-line coverage gate (section 4.1); line coverage of the `RenderScene` change in `render`.
 - That the machine of 7-13 is the owner's reference machine.
+- Interactive play of the sandbox: the window path needs a display and an audio device, and no review records a run by hand with the mouse and keyboard.
 - The Trello board state of the cards.
 - Mermaid syntax: read by the author, not rendered.
