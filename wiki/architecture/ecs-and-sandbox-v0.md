@@ -323,7 +323,79 @@ classDiagram
   SyncAudio ..> SyncReport : returns
 ```
 
-**The sandbox.** The mouse drops a box or a disc, a key resets the arena, a key toggles the debug drawing, another quits (what the physics sample does today), and now each object is an entity with transform, sprite and body components. A contact above a threshold plays a sound through `sync_audio`. The sample runs on the Null device in tests (an image-free golden check of the command stream, as in phase 6) and on OpenGL or Vulkan by the existing backend choice in the composition root. The old `app_physics_sample` stays as it is, so the cost of going through the ECS can be compared with the direct version on the same scene (choice O5).
+**As built (card 7-12, crate `engine/app_sandbox`, layer 4, no `unsafe`; no engine crate changed).** `app_sandbox` is the composition root of phase 7: a library (the `Sandbox`, the `Renderer`, the `Session`, the loop) and the binary `app_sandbox [--frames N] [--null]`. It is built from the crates of cards 7-2 to 7-11 and from the old physics sample (kept, choice O5): it reuses that sample's arena, its constants, its textures and its controls (a click, R, Escape) and owns the rest. **Every object is an entity.** The floor and the two walls carry a `Transform2D` and a `SpriteRenderer` (their bodies are in the arena that the old sample builds; a static body never moves, so it has no body component). A falling box or disc is made by `attach_body` (the `PhysicsBody` and the `Transform2D`), a `SpriteRenderer` (layer 1, a checker for a box, an orange disc) and a `Motion` component (the velocity after the last step). **One frame is the nine phases of `FramePlan`**, with the fixed-step ones once per step the time holds: `Input` (the events became `Requests` before the frame), `Gameplay` (a reset, then a click, dropped inside the walls), `SyncPhysicsIn` (the stream drops a body every 12 steps up to 80; then `push_forces`), `PhysicsStep`, `SyncPhysicsOut` (`pull_transforms`, then impacts), `SceneUpdate`, `SyncRender` (`extract_sprites` into the `RenderScene`), `Render` (the `Draw` object batches, uploads, records and submits) and `SyncAudio` (`sync_audio`, then the mix). **An impact is a cue.** The physics crate reports no contact events and the glue has none, so the sandbox compares the velocity of each body with the one it had a step before: a change of 3 m/s or more (gravity changes it by 0.16 m/s a step) is an impact, and a `SoundCue` at that entity is queued, louder with the size of the change (gain 0.2 to 1). The sound is a decaying tone made in code; the pan comes from where the entity is, against a listener at the middle of the view. **No device for the sound.** The frame mixes a sixtieth of a second through the `AudioProcessor` on the calling thread (this stands in for the audio device, and frees the ended voices); the window run does not open an audio device, so it is silent, and a real device is the work of the native or miniaudio wiring (card 7-15 and later). The report of a frame says the steps, spawns, impacts, refused cues, extracted sprites, played and failed cues. **The render phase is a trait object** (`Draw`), so the tests give the sandbox a recorder and the session gives it the renderer and a device (coarse boundary, as the rules allow). **Replay hash:** `state_hash` is the hash of the physics state; it is the same for the same seed and the same scripted session, and the same with the solver on one worker and on four (tests; the entity transforms are copies of the poses, so the physics hash covers them). **Golden stream:** the fingerprint of the command stream after frames 1, 60 and 200 of seed 24 on the Null device is stored in the test (a change of the picture changes it). **Allocation:** 60 measured frames after 1100 warm-up frames (the stream is done, bodies move and rest) make no allocator call, and a second test checks every frame without a spawn in the first 400 frames, where impacts and cues happen; a frame that makes an entity may grow an ECS column (the ECS has no reserve call), so a frame with a spawn is excluded, and a reset (which builds a new world) is neither measured nor claimed. **Limits, stated:** the window run has no sound device; one scene (no pyramid, no solver option: the options are refused); no debug drawing; the keys are the old sample's scancode table (Windows tested, the Linux table not run); the frame budget and the comparison with the direct version are card 7-13.
+
+```mermaid
+sequenceDiagram
+  participant L as loop (window or Null)
+  participant S as Session
+  participant B as Sandbox.frame
+  participant P as PhysicsWorld
+  participant E as ecs World
+  participant R as Renderer + device
+  participant A as AudioEngine
+  L->>S: events, then frame(ticks)
+  S->>B: Requests (reset, click), ticks
+  B->>B: FixedStep gives n steps, FramePlan(n)
+  B->>E: Gameplay: reset, click spawn
+  loop each fixed step
+    B->>E: SyncPhysicsIn: stream spawn, push_forces
+    B->>P: PhysicsStep: step(dt)
+    B->>E: SyncPhysicsOut: pull_transforms, find impacts, queue cues
+  end
+  B->>E: SceneUpdate: world transforms
+  B->>E: SyncRender: extract_sprites into RenderScene
+  B->>R: Render: prepare_scene, upload, record, submit
+  B->>A: SyncAudio: sync_audio plays the cues, mix a block
+```
+
+```mermaid
+classDiagram
+  class Session {
+    +new(device, program, surface, size, seed)
+    +apply(event)
+    +frame(device, ticks) FrameReport
+    +resize(device, size)
+  }
+  class Sandbox {
+    +new(textures, seed, view)
+    +frame(requests, ticks, draw) FrameReport
+    +state_hash() u64
+    +set_execution(execution)
+  }
+  class Renderer {
+    +draw(device, scene)
+    +stream() CommandStream
+  }
+  class Draw {
+    <<trait>>
+    +draw(scene)
+  }
+  class Requests {
+    reset: bool
+    spawn: Option~Vec2~
+  }
+  class FrameReport {
+    steps
+    spawned
+    impacts
+    played
+    failed
+  }
+  class Motion {
+    <<component>>
+    velocity: Vec2
+  }
+  Session --> Sandbox
+  Session --> Renderer
+  Renderer ..|> Draw : via Target
+  Sandbox ..> Draw : render phase
+  Sandbox ..> Requests : reads
+  Sandbox ..> FrameReport : returns
+  Sandbox o-- Motion : per body entity
+```
+
+**The sandbox (the plan; the as-built paragraph above says what card 7-12 delivered: no debug drawing yet, OpenGL only).** The mouse drops a box or a disc, a key resets the arena, a key toggles the debug drawing, another quits (what the physics sample does today), and now each object is an entity with transform, sprite and body components. A contact above a threshold plays a sound through `sync_audio`. The sample runs on the Null device in tests (an image-free golden check of the command stream, as in phase 6) and on OpenGL or Vulkan by the existing backend choice in the composition root. The old `app_physics_sample` stays as it is, so the cost of going through the ECS can be compared with the direct version on the same scene (choice O5).
 
 ## 5. Tests and measurements
 
