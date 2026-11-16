@@ -235,6 +235,17 @@ name = "skeleton-unsafe"
 version = "0.1.0"
 
 [[package]]
+name = "sync_audio"
+version = "0.1.0"
+dependencies = [
+ "audio",
+ "base",
+ "ecs",
+ "frame",
+ "scene",
+]
+
+[[package]]
 name = "sync_physics"
 version = "0.1.0"
 dependencies = [
