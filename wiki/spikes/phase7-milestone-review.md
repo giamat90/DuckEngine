@@ -1,5 +1,7 @@
 # Phase 7 milestone review `[S]`
 
+> **Update (card 7-15, 2026-11-16):** the owner accepted the frame budget as proposed. Sections 1 to 8 are left as written, so they still call it a proposal; the exit criterion "meets the frame budget" is now read against the accepted numbers, see [section 9](#9-status-after-the-review-card-7-15).
+
 Card 7-14, written on 2026-11-16 on branch `task/7-14-phase7-exit` (cut from `develop` at `8389ea4`, which holds cards 7-1 to 7-13). The roadmap asks for this review at the end of each phase ([roadmap](../workflow/roadmap.md) "Milestone reviews", [quality-metrics §4](../workflow/quality-metrics.md)); the design note names card 7-14 as the exit record, with coverage and mutation runs as done for phase 6 ([ecs-and-sandbox-v0](../architecture/ecs-and-sandbox-v0.md) section 5). It follows the form of the [phase 6 review](phase6-milestone-review.md). **Whether phase 7 is done, the frame budget, the native adapters and the release are the owner's** (section 7); this page gives evidence and a recommendation and closes nothing.
 
 **How the numbers were made.** As in earlier phases the release metric report is a placeholder, so there is no whole-phase measurement from the pipeline. Statements marked *recorded* are taken from the review file of a card and were not re-run. Statements marked *measured here* were computed for this page on 2026-11-16 on the Windows developer machine: the test run with line coverage of nine crates, the mutation run over the phase 7 diff, the unsafe-budget tool, the architecture check and git history. Nothing was lowered, skipped or waived, and no governance file was edited.
@@ -235,3 +237,17 @@ The owner decides; nothing here moves a card.
 - Interactive play of the sandbox: the window path needs a display and an audio device, and no review records a run by hand with the mouse and keyboard.
 - The Trello board state of the cards.
 - Mermaid syntax: read by the author, not rendered.
+
+## 9. Status after the review (card 7-15)
+
+Written on 2026-11-16, documentation only. After the release of phase 7 (v0.13.0) the owner accepted the frame budget exactly as proposed in card 7-13: on the OpenGL device the CPU time of one frame call has a mean of at most 0.5 ms and a p99 of at most 1.0 ms, on the Null device a mean of at most 0.2 ms, and the ECS path adds at most 25 us per frame to the direct sample with its debug drawing off. The numbers are recorded in [ecs-and-sandbox-v0](../architecture/ecs-and-sandbox-v0.md) section 4.
+
+```mermaid
+flowchart LR
+  p["7-13: measured 0.2 ms, budget proposed"] --> a["owner: accepted as proposed (2026-11-16)"]
+  a --> c["criterion: meets the frame budget, within it on the measured laptop"]
+  a --> g["no gate: a gate would be a governance task"]
+  a --> o["still open: native adapters (O8), architecture edges, umbrella card"]
+```
+
+**Against the exit criterion.** Measured on the laptop of card 7-13: OpenGL mean 207.9 us and p99 470 us, Null mean 84.8 us, ECS path +5 to 10 us: all inside the accepted caps. The criterion is **met on that laptop**. The owner did not separately confirm the laptop as the reference machine and did not name another one. **Limits unchanged:** nothing enforces the budget, GPU time and the wait of the present are not budgeted, and only a scene of 83 entities on one machine was measured. F-BUDGET (section 5) now reads: accepted, not enforced. Of the decisions in section 7, number 1 is now made and number 3 (the release) is done, as v0.13.0; numbers 2 (native adapters), 4 (architecture edges) and 5 (umbrella card) are still the owner's.
