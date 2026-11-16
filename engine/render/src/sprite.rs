@@ -9,6 +9,7 @@
 
 use crate::desc::{IndexType, VertexAttribute, VertexFormat};
 use crate::ids::{BufferId, PipelineId, SamplerId, TextureId};
+use crate::scene::RenderScene;
 use crate::stream::CommandStream;
 use base::math::Vec2;
 
@@ -268,6 +269,18 @@ impl SpriteBatcher {
         }
         self.group(sprites);
         Ok(&self.batches)
+    }
+
+    /// [`Self::prepare`] for the sprites of a [`RenderScene`].
+    ///
+    /// # Errors
+    /// [`BatchError::TooManySprites`] or [`BatchError::StagingTooSmall`].
+    pub fn prepare_scene(
+        &mut self,
+        scene: &RenderScene,
+        staging: &mut [SpriteVertex],
+    ) -> Result<&[Batch], BatchError> {
+        self.prepare(scene.sprites(), staging)
     }
 
     /// Groups the sorted sprites into runs of one texture.

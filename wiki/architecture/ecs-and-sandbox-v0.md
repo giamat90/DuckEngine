@@ -203,6 +203,66 @@ classDiagram
   SyncPhysics ..> Transform2D : writes pose
 ```
 
+**As built (card 7-10, crates `engine/render` extended and `engine/sync_render`, layer 2 glue, no `unsafe`).** `render` gets `RenderScene`, the plain snapshot the renderer consumes: an orthographic camera and a list of `Sprite` values with a fixed capacity (at most `MAX_SPRITES`), filled with `push` (a full scene refuses the sprite and stays as it was), emptied with `clear` (the capacity stays), allocated once in `new`. `SpriteBatcher::prepare_scene` is `prepare` over the sprites of a scene. `render` still depends on `base` only. `sync_render` depends on `base`, `ecs`, `scene` and `render`: the component `SpriteRenderer` (texture, size at scale one, texture rectangle, tint, layer; `SpriteRenderer::new` takes the whole texture, a white tint and layer zero) makes an entity a sprite, and `extract_sprites(&mut ecs, &mut scene)` replaces the sprites of the scene with one sprite per entity that has a `SpriteRenderer` and a `WorldTransform2D`, in the storage order of the ECS. From the world matrix it takes the position (the translation), the angle (the turn of the x axis) and the size (the size of the renderer times the length of each axis). A value that is not finite or a size that is not positive is counted in `ExtractReport::skipped`, a sprite that does not fit in `dropped`, not an error. **The camera is not extracted:** the application sets it with `RenderScene::set_camera` (it knows the viewport; a camera entity can come later). The extraction makes no allocator call after warm-up (counting-allocator test, 200 entities), and a frame test drives `SceneUpdate`, `SyncRender` and `Render` of `FramePlan`, finds the batches in layer order, and two runs stage the same vertices bit for bit. **Limits, stated:** a mirror is not drawn mirrored: the lengths of the axes have no sign, so a negative scale on x shows the sprite turned by half a circle (a symmetric image looks right, an asymmetric one does not); a non-uniform scale under a rotated parent shears the matrix, and the sprite takes the axis lengths and the turn of the x axis, so a shear is not drawn; the order inside one layer and texture is the storage order of the ECS, which is by table (a set of components) and then by row, so an entity that gets another component moves to another table and changes place (stable for the same sequence of calls, not a promise across edits); no culling, no visibility flag (remove the component to hide); one camera per scene. **Architecture check:** `gates/architecture.toml` needed no change (`sync_render` is glue); `tools/arch-check` reports 36 crates and 0 violations. **Finding for the owner:** a temporary `render -> ecs` dependency is not refused, because the layer rule allows an edge down to layer 1 and only `physics -> ecs` is a forbidden edge, so "the renderer sees only the scene" holds by convention, not by the gate; adding `["render", "ecs"]` (and `["render", "scene"]`) to `forbidden_edges` is a governance change and is not part of this card.
+
+```mermaid
+sequenceDiagram
+  participant App as application loop
+  participant E as ecs World + scene
+  participant U as TransformUpdater
+  participant X as sync_render
+  participant R as RenderScene
+  participant B as SpriteBatcher
+  App->>U: update(world) (SceneUpdate)
+  U->>E: write WorldTransform2D
+  App->>R: set_camera(camera) (the application knows the viewport)
+  App->>X: extract_sprites(ecs, scene) (SyncRender)
+  X->>R: clear
+  X->>E: read WorldTransform2D, SpriteRenderer
+  X->>R: push(Sprite) per entity
+  App->>B: prepare_scene(scene, staging) (Render)
+  B->>R: read sprites
+  B-->>App: batches by layer, texture, order
+```
+
+```mermaid
+classDiagram
+  class SpriteRenderer {
+    <<component>>
+    texture: TextureId
+    size: Vec2
+    uv: UvRect
+    tint: u8x4
+    layer: i16
+    +new(texture, size) SpriteRenderer
+  }
+  class SyncRender {
+    <<functions over two worlds>>
+    +extract_sprites(ecs, scene) Result~ExtractReport~
+  }
+  class ExtractReport {
+    extracted: u32
+    skipped: u32
+    dropped: u32
+  }
+  class RenderScene {
+    <<render crate, plain data>>
+    +new(capacity, camera) Result
+    +push(Sprite) Result
+    +clear()
+    +sprites() slice
+    +set_camera(camera)
+  }
+  class SpriteBatcher {
+    +prepare_scene(scene, staging) Result
+  }
+  SyncRender ..> SpriteRenderer : reads
+  SyncRender ..> WorldTransform2D : reads
+  SyncRender ..> RenderScene : clears and fills
+  SyncRender ..> ExtractReport : returns
+  SpriteBatcher ..> RenderScene : reads sprites
+```
+
 **The sandbox.** The mouse drops a box or a disc, a key resets the arena, a key toggles the debug drawing, another quits (what the physics sample does today), and now each object is an entity with transform, sprite and body components. A contact above a threshold plays a sound through `sync_audio`. The sample runs on the Null device in tests (an image-free golden check of the command stream, as in phase 6) and on OpenGL or Vulkan by the existing backend choice in the composition root. The old `app_physics_sample` stays as it is, so the cost of going through the ECS can be compared with the direct version on the same scene (choice O5).
 
 ## 5. Tests and measurements

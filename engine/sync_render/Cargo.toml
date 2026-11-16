@@ -1,0 +1,21 @@
+[package]
+name = "sync_render"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+license-file.workspace = true
+description = "Layer 2 glue crate: connects the ecs and scene crates to the render crate. An entity with a sprite component and a world transform becomes a sprite of the render scene, the plain snapshot the renderer consumes. No unsafe code."
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+ecs = { path = "../ecs", version = "0.1.0" }
+render = { path = "../render", version = "0.1.0" }
+scene = { path = "../scene", version = "0.1.0" }
+
+[dev-dependencies]
+frame = { path = "../frame", version = "0.1.0" }
+
+[lints]
+workspace = true
