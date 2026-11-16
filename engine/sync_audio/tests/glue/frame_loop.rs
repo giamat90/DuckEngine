@@ -21,7 +21,7 @@ struct Sim {
 impl Sim {
     fn run_phase(&mut self, phase: Phase, frame: u32) -> Result<(), Failure> {
         match phase {
-            Phase::Gameplay if frame == 1 => {
+            Phase::Gameplay if frame == 0 => {
                 self.queue.push(SoundCue::new(self.sound).at(self.source))?;
             }
             Phase::SceneUpdate => {
@@ -72,13 +72,29 @@ fn run() -> Result<Vec<u32>, Failure> {
 }
 
 #[test]
-fn a_cue_raised_in_gameplay_is_heard_from_the_next_audio_phase() -> Result<(), Failure> {
+fn a_cue_raised_in_gameplay_is_heard_panned_in_the_same_frame() -> Result<(), Failure> {
     let heard = run()?;
-    // Frame 0 is silent, frame 1 has the cue (right of centre), frame 2 still plays.
-    assert!(f32::from_bits(heard[0]).abs() < 1e-6 && f32::from_bits(heard[1]).abs() < 1e-6);
-    let (left, right) = (f32::from_bits(heard[2]), f32::from_bits(heard[3]));
-    assert!(right > left && left > 0.0);
-    assert!(f32::from_bits(heard[5]) > 0.0);
+    // The source was never updated before frame 0: the scene update of the frame comes before the
+    // audio phase, so the cue of frame 0 is already panned to the right (source at x = 4 of 10).
+    for frame in 0..3 {
+        let (left, right) = (
+            f32::from_bits(heard[frame * 2]),
+            f32::from_bits(heard[frame * 2 + 1]),
+        );
+        assert!(right > left && left > 0.0);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_source_whose_world_transform_is_not_updated_yet_is_heard_in_the_centre() -> Result<(), Failure>
+{
+    let mut sim = sim()?;
+    sim.queue.push(SoundCue::new(sim.sound).at(sim.source))?;
+    // No scene update: the source has no WorldTransform2D yet.
+    sync_audio(&sim.world, &mut sim.rig.engine, &mut sim.queue, &listener());
+    let (left, right) = last_frame(&mut sim.rig.processor);
+    assert!((left - right).abs() < 1e-6 && left > 0.0);
     Ok(())
 }
 

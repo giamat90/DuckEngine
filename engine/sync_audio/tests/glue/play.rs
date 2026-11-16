@@ -80,19 +80,20 @@ fn the_gain_of_the_cue_is_applied() -> Result<(), Failure> {
 
 #[test]
 fn the_pitch_of_the_cue_is_applied() -> Result<(), Failure> {
-    let mut rig = rig(4)?;
-    let sound = tone(&mut rig.engine, 100, 0.5)?;
-    let mut queue = CueQueue::new(4);
-    queue.push(SoundCue {
-        pitch: 2.0,
-        ..SoundCue::new(sound)
-    })?;
-    sync_audio(&World::new(), &mut rig.engine, &mut queue, &listener());
-    // At pitch two, 100 frames end inside the second block of 64; at pitch one they would not.
-    last_frame(&mut rig.processor);
-    last_frame(&mut rig.processor);
-    let report = sync_audio(&World::new(), &mut rig.engine, &mut queue, &listener());
-    assert_eq!(report.finished, 1);
+    // A sound of 100 frames: at pitch two it ends inside one block of 64, at pitch one it does not.
+    for (pitch, finished) in [(2.0, 1), (1.0, 0)] {
+        let mut rig = rig(4)?;
+        let sound = tone(&mut rig.engine, 100, 0.5)?;
+        let mut queue = CueQueue::new(4);
+        queue.push(SoundCue {
+            pitch,
+            ..SoundCue::new(sound)
+        })?;
+        sync_audio(&World::new(), &mut rig.engine, &mut queue, &listener());
+        last_frame(&mut rig.processor);
+        let report = sync_audio(&World::new(), &mut rig.engine, &mut queue, &listener());
+        assert_eq!(report.finished, finished);
+    }
     Ok(())
 }
 

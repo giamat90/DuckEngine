@@ -40,3 +40,16 @@ fn a_number_that_cannot_be_used_gives_the_centre() {
         assert!(at(0.0, half_width).pan(3.0).abs() < f32::EPSILON);
     }
 }
+
+#[test]
+fn a_difference_that_overflows_or_a_tiny_half_width_still_pans_to_the_edge() {
+    assert!((at(-3e38, 10.0).pan(3e38) - 1.0).abs() < f32::EPSILON);
+    assert!((at(3e38, 10.0).pan(-3e38) + 1.0).abs() < f32::EPSILON);
+    assert!((at(0.0, 1e-45).pan(1.0) - 1.0).abs() < f32::EPSILON);
+    assert!((at(0.0, 1e-45).pan(-1.0) + 1.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn a_negative_zero_is_the_centre() {
+    assert!(at(0.0, 10.0).pan(-0.0).abs() < f32::EPSILON);
+}
