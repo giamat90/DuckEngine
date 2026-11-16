@@ -1,10 +1,10 @@
 # Phase 7 milestone review `[S]`
 
-> **Correction (card 7-17, 2026-11-16):** this page said the option chosen for O8 was not recorded. It is: Backlog card 7-15 records that the owner accepted O8 (a), the native Win32 and audio adapters are not in phase 7. The statements about the native adapters are corrected in place (rows of sections 1, 2, 3.1, 5 and 7, retrospective point 4). The budget card of the update below is numbered 7-16.
+> **Correction (card 7-17, 2026-11-16):** this page said the option chosen for O8 was not recorded. It is: Backlog card 7-15 records that the owner accepted O8 (a), the native Win32 and audio adapters are not in phase 7. The statements about the native adapters are corrected in place (rows of sections 1, 2, 3.1, 5 and 7, the flowcharts and section 9; retrospective point 4 is rewritten as a new lesson). The budget card of the update below is numbered 7-16.
 
 > **Update (card 7-16, 2026-11-16):** the owner accepted the frame budget as proposed. Sections 1 to 8 are left as written, so they still call it a proposal; the exit criterion "meets the frame budget" is now read against the accepted numbers, see [section 9](#9-status-after-the-review-card-7-16).
 
-Card 7-14, written on 2026-11-16 on branch `task/7-14-phase7-exit` (cut from `develop` at `8389ea4`, which holds cards 7-1 to 7-13). The roadmap asks for this review at the end of each phase ([roadmap](../workflow/roadmap.md) "Milestone reviews", [quality-metrics §4](../workflow/quality-metrics.md)); the design note names card 7-14 as the exit record, with coverage and mutation runs as done for phase 6 ([ecs-and-sandbox-v0](../architecture/ecs-and-sandbox-v0.md) section 5). It follows the form of the [phase 6 review](phase6-milestone-review.md). **Whether phase 7 is done, the frame budget, the native adapters and the release are the owner's** (section 7); this page gives evidence and a recommendation and closes nothing.
+Card 7-14, written on 2026-11-16 on branch `task/7-14-phase7-exit` (cut from `develop` at `8389ea4`, which holds cards 7-1 to 7-13). The roadmap asks for this review at the end of each phase ([roadmap](../workflow/roadmap.md) "Milestone reviews", [quality-metrics §4](../workflow/quality-metrics.md)); the design note names card 7-14 as the exit record, with coverage and mutation runs as done for phase 6 ([ecs-and-sandbox-v0](../architecture/ecs-and-sandbox-v0.md) section 5). It follows the form of the [phase 6 review](phase6-milestone-review.md). **Whether phase 7 is done, the frame budget, where the native adapters go, and the release are the owner's** (section 7); this page gives evidence and a recommendation and closes nothing.
 
 **How the numbers were made.** As in earlier phases the release metric report is a placeholder, so there is no whole-phase measurement from the pipeline. Statements marked *recorded* are taken from the review file of a card and were not re-run. Statements marked *measured here* were computed for this page on 2026-11-16 on the Windows developer machine: the test run with line coverage of nine crates, the mutation run over the phase 7 diff, the unsafe-budget tool, the architecture check and git history. Nothing was lowered, skipped or waived, and no governance file was edited.
 
@@ -56,7 +56,7 @@ The roadmap row: "ECS + scene + input mapping, then the integration sample | **E
 | Glue crates | 7-9 (#62) `frame` phases and `sync_physics`; 7-10 (#63) `RenderScene` and `sync_render`; 7-11 (#64) `sync_audio` | met |
 | Playable 2D physics sandbox | 7-12 (#65): `app_sandbox`, golden stream, replay hash, allocation test | met; one scene, no audio device in the window run |
 | Frame budget measured and proposed | 7-13 (#66): about 0.2 ms CPU per sandbox frame; the proposal is in the design note | measured; **proposal not accepted** |
-| Native Win32 and audio adapters | out of phase 7 by the owner's choice O8 (a) of 2026-11-14 (Backlog card 7-15 changes the roadmap line); not built | **not done, as decided** |
+| Native Win32 and audio adapters | out of phase 7 by the owner's choice O8 (a) of 2026-11-14 (Backlog card 7-15 is to change the roadmap line); not built | **not done, as decided** |
 
 ### 2.2 Exit criteria
 
@@ -92,7 +92,7 @@ flowchart TD
   end
   subgraph pending["owner decides"]
     acc["accept, change or refuse the budget"]
-    nat["native adapters (O8)"]
+    nat["native adapters: where they go, roadmap line (O8 (a) decided)"]
     rel["release PR develop to main"]
   end
   ecs --> gate
@@ -252,4 +252,4 @@ flowchart LR
   a --> o["still open: where the native adapters go (card 7-15), architecture edges"]
 ```
 
-**Against the exit criterion.** Measured on the laptop of card 7-13: OpenGL mean 207.9 us and p99 470 us, Null mean 84.8 us, ECS path +5 to 10 us: all inside the accepted caps. The criterion is **met on that laptop**. The owner did not separately confirm the laptop as the reference machine and did not name another one. **Limits unchanged:** nothing enforces the budget, GPU time and the wait of the present are not budgeted, and only a scene of 83 entities on one machine was measured. F-BUDGET (section 5) now reads: accepted, not enforced. Of the decisions in section 7, number 1 is now made and number 3 (the release) is done, as v0.13.0; number 2 is decided as O8 (a) and only where the adapters go is open, number 5 (umbrella card) was done by the owner's order, and number 4 (architecture edges) is still the owner's.
+**Against the exit criterion.** Measured on the laptop of card 7-13: OpenGL mean 207.9 us and p99 470 us, Null mean 84.8 us, ECS path +5 to 10 us: all inside the accepted caps. The criterion is **met on that laptop**. The owner did not separately confirm the laptop as the reference machine and did not name another one. **Limits unchanged:** nothing enforces the budget, GPU time and the wait of the present are not budgeted, and only a scene of 83 entities on one machine was measured. F-BUDGET (section 5) now reads: accepted, not enforced. Of the decisions in section 7, number 1 is now made and number 3 (the release) is done, as v0.13.0; number 2 is decided as O8 (a) and only where the adapters go is open, number 5 (umbrella card) was done on the owner's order of 2026-11-16 ("move phase 7 umbrella card to Done"), and number 4 (architecture edges) is still the owner's.
