@@ -12,6 +12,7 @@ pub mod app;
 pub mod cli;
 pub mod components;
 pub mod error;
+pub mod measure;
 pub mod renderer;
 pub mod sandbox;
 pub mod session;
