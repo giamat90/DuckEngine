@@ -92,6 +92,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "app_sandbox"
+version = "0.1.0"
+dependencies = [
+ "adapter_render_gl",
+ "adapter_window_glfw",
+ "app_physics_sample",
+ "app_sprite_sample",
+ "assets",
+ "audio",
+ "base",
+ "ecs",
+ "frame",
+ "jobs",
+ "physics",
+ "platform",
+ "render",
+ "scene",
+ "sync_audio",
+ "sync_physics",
+ "sync_render",
+]
+
+[[package]]
 name = "app_sprite_sample"
 version = "0.1.0"
 dependencies = [
