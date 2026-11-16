@@ -241,3 +241,58 @@ fn the_error_says_what_failed() {
     let error = SyncError::Ecs(ecs::EcsError::StaleEntity);
     assert!(error.to_string().starts_with("ecs: "));
 }
+
+#[test]
+fn a_turn_past_half_a_circle_is_given_as_the_equal_angle_in_range() -> Result<(), SyncError> {
+    let texture = textures(1)[0];
+    let mut world = World::new();
+    let local = Transform2D {
+        rotation: 4.0,
+        ..at(0.0, 0.0)
+    };
+    drawable(&mut world, local, unit(texture))?;
+    refresh(&mut world);
+    let mut scene = render_scene(1);
+    extract_sprites(&mut world, &mut scene)?;
+    assert!(close(scene.sprites()[0].angle, 4.0 - std::f32::consts::TAU));
+    Ok(())
+}
+
+#[test]
+fn a_mirror_is_drawn_as_a_half_turn_not_mirrored() -> Result<(), SyncError> {
+    let texture = textures(1)[0];
+    let mut world = World::new();
+    let local = Transform2D {
+        scale: Vec2::new(-1.0, 1.0),
+        ..at(0.0, 0.0)
+    };
+    drawable(&mut world, local, unit(texture))?;
+    refresh(&mut world);
+    let mut scene = render_scene(1);
+    extract_sprites(&mut world, &mut scene)?;
+    let drawn = scene.sprites()[0];
+    assert!(close(drawn.angle.abs(), std::f32::consts::PI));
+    assert!(close(drawn.size.x, 1.0) && close(drawn.size.y, 1.0));
+    Ok(())
+}
+
+#[test]
+fn entities_of_another_archetype_come_after_the_first_one_not_in_spawn_order()
+-> Result<(), SyncError> {
+    let texture = textures(1)[0];
+    let mut world = World::new();
+    let plain_first = drawable(&mut world, at(1.0, 0.0), unit(texture))?;
+    let extra = drawable(&mut world, at(2.0, 0.0), unit(texture))?;
+    world.insert(extra, 7_u32)?;
+    drawable(&mut world, at(3.0, 0.0), unit(texture))?;
+    refresh(&mut world);
+    assert!(world.is_alive(plain_first));
+    let mut scene = render_scene(4);
+    extract_sprites(&mut world, &mut scene)?;
+    let xs: Vec<f32> = scene.sprites().iter().map(|s| s.position.x).collect();
+    // The order is by table, then by row: the extra component moved entity 2 to its own table.
+    assert_eq!(xs.len(), 3);
+    assert!(xs.contains(&2.0) && xs.contains(&1.0) && xs.contains(&3.0));
+    assert_eq!(xs.last(), Some(&2.0));
+    Ok(())
+}

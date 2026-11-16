@@ -56,8 +56,9 @@ fn place(scene: &mut RenderScene, sprite: Option<Sprite>, report: &mut ExtractRe
 
 /// The sprite of a renderer at a world matrix: the position is the translation, the angle is the
 /// turn of the x axis, and the size is the size at scale one times the length of each axis.
-/// `None` for a value that is not finite or a size that is not positive. A mirror (a negative
-/// scale) is not drawn mirrored: the lengths of the axes carry no sign.
+/// `None` for a value that is not finite or a size that is not positive. A mirror is not drawn
+/// mirrored: the lengths of the axes carry no sign, so a negative scale on x shows the sprite
+/// turned by half a circle (an asymmetric image looks wrong).
 fn to_sprite(renderer: &SpriteRenderer, matrix: &Mat3) -> Option<Sprite> {
     let [x_axis, y_axis, origin] = matrix.cols;
     let position = origin.truncate();

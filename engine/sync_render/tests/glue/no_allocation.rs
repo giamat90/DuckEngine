@@ -25,6 +25,27 @@ fn a_warm_extraction_does_not_allocate() -> Result<(), SyncError> {
     extract_sprites(&mut world, &mut scene)?;
     let (result, counts) = count_allocations(|| extract_sprites(&mut world, &mut scene));
     assert_eq!(result?.extracted, 200);
-    assert_eq!(counts.allocations, 0);
+    assert_eq!(counts.calls(), 0);
+    Ok(())
+}
+
+#[test]
+fn a_full_scene_and_skipped_entities_do_not_allocate_either() -> Result<(), SyncError> {
+    let tex = textures(2);
+    let mut world = World::new();
+    for n in 0..30_u8 {
+        let x = if n % 5 == 0 { f32::NAN } else { f32::from(n) };
+        drawable(&mut world, at(x, 0.0), unit(tex[usize::from(n % 2)]))?;
+    }
+    refresh(&mut world);
+    let mut scene = render_scene(10);
+    extract_sprites(&mut world, &mut scene)?;
+    let (result, counts) = count_allocations(|| extract_sprites(&mut world, &mut scene));
+    let report = result?;
+    assert_eq!(
+        (report.extracted, report.skipped, report.dropped),
+        (10, 6, 14)
+    );
+    assert_eq!(counts.calls(), 0);
     Ok(())
 }

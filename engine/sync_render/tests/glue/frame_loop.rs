@@ -39,7 +39,9 @@ impl Sim {
     }
 }
 
-fn run() -> Result<(Vec<Batch>, Vec<SpriteVertex>), Failure> {
+type Run = (Vec<Batch>, Vec<SpriteVertex>, Vec<render::ids::TextureId>);
+
+fn run() -> Result<Run, Failure> {
     let tex = textures(2);
     let mut sim = Sim {
         world: World::new(),
@@ -64,25 +66,49 @@ fn run() -> Result<(Vec<Batch>, Vec<SpriteVertex>), Failure> {
         sim.run_phase(phase)?;
     }
     let staged = sim.staging[..16].to_vec();
-    Ok((sim.batches, staged))
+    Ok((sim.batches, staged, tex))
+}
+
+/// The x of the centre of the sprite staged in slot `slot` (four vertices each).
+fn centre_x(staged: &[SpriteVertex], slot: usize) -> f32 {
+    staged[slot * 4..slot * 4 + 4]
+        .iter()
+        .map(|v| v.position[0])
+        .sum::<f32>()
+        / 4.0
 }
 
 #[test]
 fn the_phases_of_a_frame_turn_entities_into_batches_in_layer_order() -> Result<(), Failure> {
-    let (batches, staged) = run()?;
-    // Layer 0 first (entities 1 and 3, textures 1 and 1), then layer 1 (entities 0 and 2,
-    // textures 0 and 0): two batches of two sprites.
+    let (batches, staged, tex) = run()?;
+    // Layer 0 first (entities 1 and 3, texture 1), then layer 1 (entities 0 and 2, texture 0).
     assert_eq!(batches.len(), 2);
-    assert!(batches.iter().all(|b| b.sprite_count == 2));
-    let first = staged[0].position;
-    assert!((first[0] - 0.5).abs() < 1.0 && first[0] > 0.0);
+    assert_eq!(
+        (
+            batches[0].texture,
+            batches[0].first_sprite,
+            batches[0].sprite_count
+        ),
+        (tex[1], 0, 2)
+    );
+    assert_eq!(
+        (
+            batches[1].texture,
+            batches[1].first_sprite,
+            batches[1].sprite_count
+        ),
+        (tex[0], 2, 2)
+    );
+    for (slot, x) in [1.0_f32, 3.0, 0.0, 2.0].into_iter().enumerate() {
+        assert!((centre_x(&staged, slot) - x).abs() < 1e-4);
+    }
     Ok(())
 }
 
 #[test]
 fn two_runs_stage_the_same_vertices_bit_for_bit() -> Result<(), Failure> {
-    let (batches_a, staged_a) = run()?;
-    let (batches_b, staged_b) = run()?;
+    let (batches_a, staged_a, _) = run()?;
+    let (batches_b, staged_b, _) = run()?;
     assert_eq!(batches_a.len(), 2);
     assert_eq!(batches_a, batches_b);
     let bits = |v: &[SpriteVertex]| -> Vec<u32> {
