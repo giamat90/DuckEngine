@@ -1,0 +1,21 @@
+[package]
+name = "sync_audio"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+license-file.workspace = true
+description = "Layer 2 glue crate: connects the ecs and scene crates to the audio crate. Game events are sound cues in a queue; one call per frame turns them into play calls, pans each by where its source entity is, and frees the voices that have ended. No unsafe code."
+
+[dependencies]
+audio = { path = "../audio", version = "0.1.0" }
+base = { path = "../base", version = "0.1.0" }
+ecs = { path = "../ecs", version = "0.1.0" }
+scene = { path = "../scene", version = "0.1.0" }
+
+[dev-dependencies]
+frame = { path = "../frame", version = "0.1.0" }
+
+[lints]
+workspace = true

@@ -263,6 +263,66 @@ classDiagram
   SpriteBatcher ..> RenderScene : reads sprites
 ```
 
+**As built (card 7-11, crate `engine/sync_audio`, layer 2 glue, no `unsafe`; the `audio` crate is unchanged).** `sync_audio` depends on `base`, `ecs`, `scene` and `audio`. A game event is a `SoundCue` (the registered sound, an optional source entity, gain, pitch and bus; `SoundCue::new` gives gain one, pitch one, the master bus and no source, `at(entity)` sets the source) pushed into a `CueQueue` (fixed capacity, allocated once; a full queue refuses the cue with `SyncError::QueueFull` and changes nothing). Once a frame, in the `SyncAudio` phase, `sync_audio(&world, &mut engine, &mut queue, &listener)` first frees the voices that have ended (`poll_finished` until it is empty, so a voice slot is free for the cues of the same call), then plays every waiting cue in the order it was pushed and empties the queue. The pan comes from the world x of the source entity relative to the `Listener` (an x and a half width, usually the camera x and half the view width): `Listener::pan` runs from -1 to 1 and is clamped; a cue without a source, a source that is gone or has no `WorldTransform2D` (a source not yet updated by the scene update, which must run first, as the frame plan has it), or a number that is not usable gives the centre. It returns a `SyncReport` with `played`, `failed` and `finished`; a cue the engine refuses (an unknown sound, a gain or pitch out of range, a missing bus, no free voice, a full command queue) is counted in `failed` and is **not retried**, because a cue is an instant and a late one would be wrong. The call makes no allocator call after warm-up (counting-allocator test: one measured call with plays, failures and ended voices), and a frame test drives `Gameplay`, `SceneUpdate` and `SyncAudio` of `FramePlan` through a processor and finds that two runs give the same samples bit for bit. **Limits, stated:** the glue carries cues to the engine; **deciding that a contact above a speed or a spawn is a cue is gameplay and belongs to the sandbox (card 7-12)**, which reads the physics contacts and pushes the cues, so the glue has no physics dependency; pan only, no distance attenuation and no Doppler; one listener; looping sounds, stopping a voice and changing a bus are done on the `AudioEngine` directly, not by a cue; the voice handle of a cue is not kept. **Architecture check:** `gates/architecture.toml` needed no change; `tools/arch-check` reports 37 crates and 0 violations. **The finding of card 7-10 holds for audio too:** a temporary `audio -> ecs` dependency is not refused, so "the audio engine does not know the ECS" is held by convention; `forbidden_edges` would need `["audio", "ecs"]` (a governance change, not in this card).
+
+```mermaid
+sequenceDiagram
+  participant G as gameplay (and the sandbox)
+  participant Q as CueQueue
+  participant A as sync_audio
+  participant E as ecs World + scene
+  participant N as AudioEngine
+  participant P as AudioProcessor (audio thread)
+  G->>Q: push(SoundCue at entity)
+  Note over A: SyncAudio phase, once a frame
+  A->>N: poll_finished until empty
+  N-->>A: ended voices freed
+  A->>Q: drain in order
+  A->>E: read WorldTransform2D of the source
+  A->>A: Listener.pan(x)
+  A->>N: play(sound, gain, pan, pitch, bus)
+  N-)P: command through a lock-free queue
+```
+
+```mermaid
+classDiagram
+  class SoundCue {
+    sound: SoundHandle
+    source: Option~Entity~
+    gain: f32
+    pitch: f32
+    bus: BusId
+    +new(sound) SoundCue
+    +at(entity) SoundCue
+  }
+  class CueQueue {
+    <<fixed capacity>>
+    +new(capacity) CueQueue
+    +push(cue) Result
+    +len() usize
+  }
+  class Listener {
+    x: f32
+    half_width: f32
+    +pan(x) f32
+  }
+  class SyncAudio {
+    <<function over two worlds>>
+    +sync_audio(ecs, engine, queue, listener) SyncReport
+  }
+  class SyncReport {
+    played: u32
+    failed: u32
+    finished: u32
+  }
+  CueQueue o-- SoundCue
+  SyncAudio ..> CueQueue : drains
+  SyncAudio ..> Listener : pans by
+  SyncAudio ..> WorldTransform2D : reads the source
+  SyncAudio ..> AudioEngine : play, poll_finished
+  SyncAudio ..> SyncReport : returns
+```
+
 **The sandbox.** The mouse drops a box or a disc, a key resets the arena, a key toggles the debug drawing, another quits (what the physics sample does today), and now each object is an entity with transform, sprite and body components. A contact above a threshold plays a sound through `sync_audio`. The sample runs on the Null device in tests (an image-free golden check of the command stream, as in phase 6) and on OpenGL or Vulkan by the existing backend choice in the composition root. The old `app_physics_sample` stays as it is, so the cost of going through the ECS can be compared with the direct version on the same scene (choice O5).
 
 ## 5. Tests and measurements
