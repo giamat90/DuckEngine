@@ -1,0 +1,19 @@
+[package]
+name = "ecs"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+license-file.workspace = true
+description = "Layer 1 ecs crate (ADR-0003): generation-checked entities, archetype tables with safe typed columns, spawn, despawn, insert, remove, a command buffer, typed queries with declared access and parallel iteration on the job system. No unsafe code."
+
+[dependencies]
+base = { path = "../base", version = "0.1.0" }
+jobs = { path = "../jobs", version = "0.1.0" }
+
+[dev-dependencies]
+platform = { path = "../platform", version = "0.1.0" }
+
+[lints]
+workspace = true

@@ -4,7 +4,9 @@
 use base::alloc::{CountingAllocator, count_allocations};
 use base::math::Vec2;
 use base::pool::{Handle, Pool};
+use render::camera::OrthographicCamera;
 use render::ids::{Buffer, Pipeline, Sampler, Texture, TextureId};
+use render::scene::RenderScene;
 use render::sprite::{Sprite, SpriteBatcher, SpriteBindings, SpriteVertex, UvRect};
 use render::stream::CommandStream;
 use std::alloc::System;
@@ -65,5 +67,36 @@ fn a_sprite_frame_makes_no_allocator_call() {
         ready
     });
     assert!(ok);
+    assert_eq!(counts.calls(), 0);
+}
+
+#[test]
+fn refilling_a_render_scene_and_preparing_it_makes_no_allocator_call() {
+    let mut pool = Pool::<Texture>::with_capacity(3);
+    let textures: Vec<TextureId> = (0..3)
+        .map(|_| {
+            pool.insert(Texture)
+                .unwrap_or_else(|_| Handle::from_raw(0, 0))
+        })
+        .collect();
+    let sprites = scene(&textures);
+    let camera = OrthographicCamera {
+        position: Vec2::new(0.0, 0.0),
+        height: 10.0,
+        aspect: 1.0,
+    };
+    let mut render_scene = RenderScene::new(SPRITES, camera).unwrap_or_else(|_| unreachable!());
+    let mut batcher = SpriteBatcher::new(SPRITES).unwrap_or_else(|_| unreachable!());
+    let mut staging = vec![SpriteVertex::default(); SPRITES * 4];
+    let (result, counts) = count_allocations(|| {
+        render_scene.clear();
+        let pushed = sprites
+            .iter()
+            .filter(|s| render_scene.push(**s).is_ok())
+            .count();
+        let ready = batcher.prepare_scene(&render_scene, &mut staging).is_ok();
+        (pushed, ready)
+    });
+    assert_eq!(result, (SPRITES, true));
     assert_eq!(counts.calls(), 0);
 }

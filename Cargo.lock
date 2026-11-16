@@ -92,6 +92,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "app_sandbox"
+version = "0.1.0"
+dependencies = [
+ "adapter_render_gl",
+ "adapter_window_glfw",
+ "app_physics_sample",
+ "app_sprite_sample",
+ "assets",
+ "audio",
+ "base",
+ "ecs",
+ "frame",
+ "jobs",
+ "physics",
+ "platform",
+ "render",
+ "scene",
+ "sync_audio",
+ "sync_physics",
+ "sync_render",
+]
+
+[[package]]
 name = "app_sprite_sample"
 version = "0.1.0"
 dependencies = [
@@ -130,6 +153,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecs"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "jobs",
+ "platform",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -145,6 +177,14 @@ dependencies = [
 [[package]]
 name = "g1-control"
 version = "0.1.0"
+
+[[package]]
+name = "input"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "platform",
+]
 
 [[package]]
 name = "jobs"
@@ -196,6 +236,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "scene"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "ecs",
+]
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -208,6 +256,39 @@ version = "0.1.0"
 [[package]]
 name = "skeleton-unsafe"
 version = "0.1.0"
+
+[[package]]
+name = "sync_audio"
+version = "0.1.0"
+dependencies = [
+ "audio",
+ "base",
+ "ecs",
+ "frame",
+ "scene",
+]
+
+[[package]]
+name = "sync_physics"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "ecs",
+ "frame",
+ "physics",
+ "scene",
+]
+
+[[package]]
+name = "sync_render"
+version = "0.1.0"
+dependencies = [
+ "base",
+ "ecs",
+ "frame",
+ "render",
+ "scene",
+]
 
 [[package]]
 name = "tools_assetc"
@@ -223,6 +304,22 @@ dependencies = [
  "audio",
  "base",
  "tools_render_bench",
+]
+
+[[package]]
+name = "tools_ecs_bench"
+version = "0.1.0"
+dependencies = [
+ "ecs",
+ "jobs",
+ "platform",
+]
+
+[[package]]
+name = "tools_ecs_spike"
+version = "0.1.0"
+dependencies = [
+ "base",
 ]
 
 [[package]]
