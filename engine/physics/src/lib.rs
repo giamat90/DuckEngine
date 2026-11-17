@@ -14,3 +14,6 @@ pub mod d2;
 
 #[cfg(test)]
 mod test_support;
+
+#[cfg(test)]
+mod spike3d;
