@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v1.63 (2026-11-17).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v1.64 (2026-11-17).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.64** - `physics::d3` bodies (card 8-3, Class 2, new public API, ordinary card into `develop`): the `D=3` instance fills `Dim` with `Vec3`, `Quat`, diagonal inverse inertia, `Shape3` (sphere, box, capsule), `Aabb3`, `Manifold3`; bodies integrate, spin, hash and enter the shared broadphase; no contacts yet (narrowphase 8-4, solver 8-6). Evidence `reviews/8-3.md`.
 > - **v1.63** - 3D core spike (card 8-2, Class 1, documentation only, ordinary card into `develop`): new page [spikes/3d-core-spike](spikes/3d-core-spike.md), a throw-away `D=3` instance on the generic core (branch `spike/8-2-3d-core`, not merged); no ADR-0018 trigger fired, `Dim` grew by 0 methods. Evidence `reviews/8-2.md`.
 > - **v1.62** - Phase 8 choices recorded (card 8-17, Class 1, documentation only, ordinary card into `develop`): the owner accepted all recommendations O1 to O9 of [architecture/phase8-3d-v0](architecture/phase8-3d-v0.md) on 2026-11-17; section 8 of the note says so and cards 8-2 to 8-16 exist in the Backlog. Evidence `reviews/8-17.md`.
 > - **v1.61** - Phase 8 design note (card 8-1, Class 1, documentation only, ordinary card into `develop`): new page [architecture/phase8-3d-v0](architecture/phase8-3d-v0.md), written after the owner's go-ahead of 2026-11-17: evidence table (known and unverified), where the code lives, the `D=3` physics instance behind the ADR-0018 `Dim` trait with a spike first, the lit mesh frontend on the existing render port, scene and glue pieces, the sample, tests, proposed cards 8-2 to 8-16 and nine choices O1 to O9 for the owner. Nothing after 8-1 starts before the owner picks. Evidence `reviews/8-1.md`.

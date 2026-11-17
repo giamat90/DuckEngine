@@ -2,8 +2,9 @@
 //!
 //! One crate with the modules [`core`] (the dimension-generic world, bodies, handles and state hash,
 //! generic over the narrow [`core::Dim`] trait) and [`d2`] (the 2D instance and the API applications
-//! use). A 3D instance (`d3`) is phase 8 and is not built; a test instance in `tests/` proves that
-//! the core compiles and steps for a second dimension.
+//! use). The 3D instance [`d3`] (phase 8) has bodies, shapes and bounds; its contacts come with the
+//! narrowphase and solver cards. A test instance in `tests/` proves that the core compiles and
+//! steps for a second dimension.
 //!
 //! Rules kept here: errors are values, no panic, no `unsafe`; capacities are fixed when the world is
 //! built and no call allocates afterwards; iteration order is slot-index order; floating-point work
@@ -11,6 +12,7 @@
 
 pub mod core;
 pub mod d2;
+pub mod d3;
 
 #[cfg(test)]
 mod test_support;
