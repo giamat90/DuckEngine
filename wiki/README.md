@@ -1,8 +1,9 @@
 # DuckEngine Wiki
 
-> **Status: PROPOSAL v1.62 (2026-11-17).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
+> **Status: PROPOSAL v1.63 (2026-11-17).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.63** - 3D core spike (card 8-2, Class 1, documentation only, ordinary card into `develop`): new page [spikes/3d-core-spike](spikes/3d-core-spike.md), a throw-away `D=3` instance on the generic core (branch `spike/8-2-3d-core`, not merged); no ADR-0018 trigger fired, `Dim` grew by 0 methods. Evidence `reviews/8-2.md`.
 > - **v1.62** - Phase 8 choices recorded (card 8-17, Class 1, documentation only, ordinary card into `develop`): the owner accepted all recommendations O1 to O9 of [architecture/phase8-3d-v0](architecture/phase8-3d-v0.md) on 2026-11-17; section 8 of the note says so and cards 8-2 to 8-16 exist in the Backlog. Evidence `reviews/8-17.md`.
 > - **v1.61** - Phase 8 design note (card 8-1, Class 1, documentation only, ordinary card into `develop`): new page [architecture/phase8-3d-v0](architecture/phase8-3d-v0.md), written after the owner's go-ahead of 2026-11-17: evidence table (known and unverified), where the code lives, the `D=3` physics instance behind the ADR-0018 `Dim` trait with a spike first, the lit mesh frontend on the existing render port, scene and glue pieces, the sample, tests, proposed cards 8-2 to 8-16 and nine choices O1 to O9 for the owner. Nothing after 8-1 starts before the owner picks. Evidence `reviews/8-1.md`.
 > - **v1.60** - Corrections to the phase 7 record (card 7-17, Class 1, documentation only, ordinary card into `develop`): [spikes/phase7-milestone-review](spikes/phase7-milestone-review.md) said the option chosen for O8 was not recorded; Backlog card 7-15 records that the owner accepted O8 (a) on 2026-11-14 (native Win32 and audio adapters are not in phase 7), so the statements about the native adapters are corrected; the frame budget card of v1.59 was numbered 7-15 by mistake and is 7-16 (review file `reviews/7-16.md`, references in the design note, the review and v1.59). Section 9 of the review also records that the owner ordered the phase 7 umbrella card to Done on 2026-11-16. Evidence `reviews/7-17.md`.
@@ -226,6 +227,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 46 | [decisions/adr-0003-ecs-storage](decisions/adr-0003-ecs-storage.md) | ADR-0003 (accepted upon owner approval): ECS storage as archetype tables with safe typed columns, no `unsafe`, sparse class deferred |
 | 47 | [spikes/phase7-milestone-review](spikes/phase7-milestone-review.md) | Phase 7 milestone review (card 7-14): exit criteria, ECS target, frame budget proposal, coverage and mutation of the phase 7 crates, open findings, retrospective |
 | 48 | [architecture/phase8-3d-v0](architecture/phase8-3d-v0.md) | Phase 8 design note (card 8-1): the `D=3` physics instance behind the ADR-0018 `Dim` trait (spike first), lit meshes on the existing render port, 3D scene and glue, the 3D sample, proposed cards 8-2 to 8-16, choices O1 to O9 for the owner |
+| 49 | [spikes/3d-core-spike](spikes/3d-core-spike.md) | 3D core spike (card 8-2): a throw-away `D=3` instance on the generic core, the ADR-0018 trigger answers, sizes, what the 3D solver still costs |
 
 ## Confidence legend used in this wiki
 
