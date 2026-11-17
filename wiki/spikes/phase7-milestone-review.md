@@ -1,6 +1,10 @@
 # Phase 7 milestone review `[S]`
 
-Card 7-14, written on 2026-11-16 on branch `task/7-14-phase7-exit` (cut from `develop` at `8389ea4`, which holds cards 7-1 to 7-13). The roadmap asks for this review at the end of each phase ([roadmap](../workflow/roadmap.md) "Milestone reviews", [quality-metrics §4](../workflow/quality-metrics.md)); the design note names card 7-14 as the exit record, with coverage and mutation runs as done for phase 6 ([ecs-and-sandbox-v0](../architecture/ecs-and-sandbox-v0.md) section 5). It follows the form of the [phase 6 review](phase6-milestone-review.md). **Whether phase 7 is done, the frame budget, the native adapters and the release are the owner's** (section 7); this page gives evidence and a recommendation and closes nothing.
+> **Correction (card 7-17, 2026-11-16):** this page said the option chosen for O8 was not recorded. It is: Backlog card 7-15 records that the owner accepted O8 (a), the native Win32 and audio adapters are not in phase 7. The statements about the native adapters are corrected in place (rows of sections 1, 2, 3.1, 5 and 7, the flowcharts and section 9; retrospective point 4 is rewritten as a new lesson). The budget card of the update below is numbered 7-16.
+
+> **Update (card 7-16, 2026-11-16):** the owner accepted the frame budget as proposed. Sections 1 to 8 are left as written, so they still call it a proposal; the exit criterion "meets the frame budget" is now read against the accepted numbers, see [section 9](#9-status-after-the-review-card-7-16).
+
+Card 7-14, written on 2026-11-16 on branch `task/7-14-phase7-exit` (cut from `develop` at `8389ea4`, which holds cards 7-1 to 7-13). The roadmap asks for this review at the end of each phase ([roadmap](../workflow/roadmap.md) "Milestone reviews", [quality-metrics §4](../workflow/quality-metrics.md)); the design note names card 7-14 as the exit record, with coverage and mutation runs as done for phase 6 ([ecs-and-sandbox-v0](../architecture/ecs-and-sandbox-v0.md) section 5). It follows the form of the [phase 6 review](phase6-milestone-review.md). **Whether phase 7 is done, the frame budget, where the native adapters go, and the release are the owner's** (section 7); this page gives evidence and a recommendation and closes nothing.
 
 **How the numbers were made.** As in earlier phases the release metric report is a placeholder, so there is no whole-phase measurement from the pipeline. Statements marked *recorded* are taken from the review file of a card and were not re-run. Statements marked *measured here* were computed for this page on 2026-11-16 on the Windows developer machine: the test run with line coverage of nine crates, the mutation run over the phase 7 diff, the unsafe-budget tool, the architecture check and git history. Nothing was lowered, skipped or waived, and no governance file was edited.
 
@@ -8,11 +12,11 @@ Card 7-14, written on 2026-11-16 on branch `task/7-14-phase7-exit` (cut from `de
 
 | Question | Answer |
 |---|---|
-| Are the phase 7 exit criteria met? | **Mostly met, with two decisions for the owner and one run still to come.** The ECS is built and measured (0.42 to 0.72 ns per entity per frame against the accepted target of 1.0 ns), the sandbox builds and runs frames through ECS, scene, input and three glue crates (headless, and timed on OpenGL; interactive play with a mouse and an audio device is not verified), and its frame costs about 0.2 ms of CPU. **Open:** the frame budget is a proposal that the owner has not accepted, the hosted instruction-count gate of the ECS has never run (its crate is not on `main`), and the native Win32 and audio adapters that the roadmap names "before phase 7 closes" were not built and have no card. |
+| Are the phase 7 exit criteria met? | **Mostly met, with two decisions for the owner and one run still to come.** The ECS is built and measured (0.42 to 0.72 ns per entity per frame against the accepted target of 1.0 ns), the sandbox builds and runs frames through ECS, scene, input and three glue crates (headless, and timed on OpenGL; interactive play with a mouse and an audio device is not verified), and its frame costs about 0.2 ms of CPU. **Open:** the frame budget is a proposal that the owner has not accepted, the hosted instruction-count gate of the ECS has never run (its crate is not on `main`), and the native Win32 and audio adapters were not built: the owner accepted on 2026-11-14 (O8 (a), recorded on Backlog card 7-15) that they are not in phase 7, but the roadmap line "before phase 7 closes" has not been changed yet. |
 | Did a gate fail on phase 7 code? | No gate was lowered, skipped or waived. Every code card had an independent review and its blockers and majors were fixed before the merge (section 3): two blockers (7-3: links to a page not yet on `main`; 7-7: a hang on a hand-made loop) and thirteen majors over cards 7-1 to 7-13. |
-| Main weaknesses found | (1) **Hosted CI has not run any phase 7 code**: `develop` has no CI, so Linux, the ECS instruction-count gate and the coverage job first run on the release PR (F-HOSTED). (2) **Evidence from one machine** for every timing. (3) **The frame budget is unaccepted and unenforced** (F-BUDGET). (4) **Native adapters undecided** (F-NATIVE). (5) Three groups of tests were written together with the code and have no red run (section 6). |
+| Main weaknesses found | (1) **Hosted CI has not run any phase 7 code**: `develop` has no CI, so Linux, the ECS instruction-count gate and the coverage job first run on the release PR (F-HOSTED). (2) **Evidence from one machine** for every timing. (3) **The frame budget is unaccepted and unenforced** (F-BUDGET). (4) **Native adapters out of phase 7 by decision (O8 (a)); the roadmap line and where they go are still open** (F-NATIVE). (5) Three groups of tests were written together with the code and have no red run (section 6). |
 | A figure that moved the wrong way? | None. Phase 7 added no `unsafe` to layers 0 to 2: 88 blocks, as at the phase 6 review, and the share fell from 0.19% to 0.16% only because the code grew. |
-| Recommendation | **Phase 7 done with named limits**, once the owner decides the frame budget and the native adapters (section 7). The release PR `develop` to `main` carries 11 phase 7 cards (12 with this one) and is the first hosted run of this code. Phase 8 is not started. |
+| Recommendation | **Phase 7 done with named limits**, once the owner decides the frame budget and where the native adapters go (section 7). The release PR `develop` to `main` carries 11 phase 7 cards (12 with this one) and is the first hosted run of this code. Phase 8 is not started. |
 
 ```mermaid
 flowchart LR
@@ -52,7 +56,7 @@ The roadmap row: "ECS + scene + input mapping, then the integration sample | **E
 | Glue crates | 7-9 (#62) `frame` phases and `sync_physics`; 7-10 (#63) `RenderScene` and `sync_render`; 7-11 (#64) `sync_audio` | met |
 | Playable 2D physics sandbox | 7-12 (#65): `app_sandbox`, golden stream, replay hash, allocation test | met; one scene, no audio device in the window run |
 | Frame budget measured and proposed | 7-13 (#66): about 0.2 ms CPU per sandbox frame; the proposal is in the design note | measured; **proposal not accepted** |
-| Native Win32 and audio adapters | not planned in the phase 7 cards (O8), no card exists | **not done** |
+| Native Win32 and audio adapters | out of phase 7 by the owner's choice O8 (a) of 2026-11-14 (Backlog card 7-15 is to change the roadmap line); not built | **not done, as decided** |
 
 ### 2.2 Exit criteria
 
@@ -62,7 +66,7 @@ The roadmap row: "ECS + scene + input mapping, then the integration sample | **E
 | Meets the frame budget on the reference machine | The budget is the proposal of 7-13: OpenGL mean at most 0.5 ms and p99 at most 1.0 ms, Null mean at most 0.2 ms, the ECS path adds at most 25 us per frame. *Recorded* (7-13): OpenGL sandbox frame mean 207.9 us, p99 470 us, max 917 us; Null 84.8 us; the ECS path adds 5 to 10 us. Measured on a laptop (i7-12700H, Windows 11, release); the design note calls the owner's machine the reference, and nobody has confirmed that this laptop is it | **within the proposal, which is not accepted** | **yes**: accept, change or refuse; and confirm the machine |
 | Full metrics report | Section 4: line coverage and mutation of the phase 7 crates, tests, `unsafe`, architecture | **met for this page** | no |
 | Retrospective | Section 6 | **met** | no |
-| Native adapters before the phase closes (a target, not a gate) | none built; window, input and audio ports stay `experimental` | **not met** | **yes** (O8, section 7) |
+| Native adapters before the phase closes (a target, not a gate) | none built; window, input and audio ports stay `experimental`; O8 (a) put them outside phase 7, and the roadmap text still says "before phase 7 closes" | **not met as the text stands; out of phase 7 by decision** | **yes**: where they go and the roadmap line (section 7) |
 
 ### 2.3 Other statements the phase made
 
@@ -88,7 +92,7 @@ flowchart TD
   end
   subgraph pending["owner decides"]
     acc["accept, change or refuse the budget"]
-    nat["native adapters (O8)"]
+    nat["native adapters: where they go, roadmap line (O8 (a) decided)"]
     rel["release PR develop to main"]
   end
   ecs --> gate
@@ -129,7 +133,7 @@ State is taken from git (merged PRs), **not from the Trello board**. Findings ar
 |---|---|---|
 | Cards | 7-1 to 7-14 | the same 14 cards, no card added and none cut |
 | Governance steps | 7-3 and 7-6, owner-declared | both done as planned |
-| Options for the owner | O1 to O8 | accepted by the owner on 2026-11-14 (changelog v1.46); the changelog says only "accepted choices O1-O8", so the option chosen for O8 is not recorded by name; the design note mentions a card 7-15 for a real audio device, which was never created, and no native adapter card exists (this hints at option (a), not at a decision) |
+| Options for the owner | O1 to O8 | accepted by the owner on 2026-11-14 (changelog v1.46); the changelog says only "accepted choices O1-O8", but the Backlog card 7-15 records that the owner accepted O8 (a): the native adapters are not in phase 7 (this page first said the option was not recorded; corrected by card 7-17). The roadmap line change is still to do |
 | Iterations rule (roadmap operating rule 2: stop at about twice the planned iterations) | 14 cards | 14 cards, one fix loop at most per card; nothing suggests the rule triggered |
 | Cut items | none named | none |
 
@@ -179,7 +183,7 @@ Each item was checked against the repository on 2026-11-16 (`8389ea4`) before it
 |---|---|---|---|
 | F-HOSTED | No hosted CI has run phase 7 code. The release PR is the first Linux run, the first `ecs_icount` run, the first hosted coverage run | `develop` runs only `pr-title` and `governance-guard`; `tools_ecs_bench` is not on `main` | open the release PR when the owner decides; read a red job as a stop and fix it before merge |
 | F-BUDGET | The frame budget is a proposal; nothing enforces it | design note, section 4 "Frame budget"; no entry in `gates/benchmarks.toml` | owner accepts, changes or refuses; a gate would be a governance task |
-| F-NATIVE | The native Win32 and audio adapters have no card; the roadmap text still says "before phase 7 closes"; window, input and audio ports stay `experimental` | design note O8; the 14 phase 7 cards contain none | owner: change the roadmap line and give the adapters their own cards or phase, or add cards now |
+| F-NATIVE | The native Win32 and audio adapters are out of phase 7 by O8 (a) (2026-11-14); the roadmap text still says "before phase 7 closes"; window, input and audio ports stay `experimental` | design note O8; Backlog card 7-15 | owner: say where the adapters go (a later phase or cards); card 7-15 then changes the roadmap line (governance) |
 | F-EDGES | `render -> ecs` and `audio -> ecs` are not refused by `gates/architecture.toml` (only `physics -> ecs` is a forbidden edge); the glue crates are the intended place for those edges | found in 7-10 and 7-11; arch-check gives 0 violations | optional governance card to forbid them |
 | F-SPAWN | A frame that spawns may allocate: the ECS has no reserve call. Warm frames do not | 7-13 review | add `reserve` when a sample needs it |
 | F-SINGLE | One scene, 83 entities, one machine, no audio device in the window run, no GPU time | 7-12 and 7-13 reviews | a second machine and a larger scene are follow-ups if the owner wants them |
@@ -209,18 +213,18 @@ Each item was checked against the repository on 2026-11-16 (`8389ea4`) before it
 1. Write the claim and the test that tries to break it in the same step, before the claim goes into a page.
 2. For any measurement that compares two paths, state the fairness controls (same settings, alternating order) in the test list, not after the review.
 3. Run coverage and mutation for the whole phase at the exit review as done here, and ask each library card for its own mutation run (done for every new library crate of the phase).
-4. Decide the native adapters (O8) at the start of the next phase, not at its end.
+4. When a choice such as O8 (a) moves work out of a phase, change the roadmap line in the same step, not after the phase closes.
 
 ## 7. Go / adjust: recommendation for the owner
 
-**Recommendation: phase 7 is done with named limits.** An entity-based sandbox now runs on top of physics, render and audio only through three glue crates, the ECS is under its accepted iteration target, the sandbox frame is about 1.2% of a 60 Hz frame on the measured machine, and the metrics of the phase are measured and above the gates. The limits are what the evidence names: one machine, no hosted run yet, the budget unaccepted and the native adapters undecided.
+**Recommendation: phase 7 is done with named limits.** An entity-based sandbox now runs on top of physics, render and audio only through three glue crates, the ECS is under its accepted iteration target, the sandbox frame is about 1.2% of a 60 Hz frame on the measured machine, and the metrics of the phase are measured and above the gates. The limits are what the evidence names: one machine, no hosted run yet, the budget unaccepted when this was written, and the roadmap line for the native adapters not yet changed.
 
 The owner decides; nothing here moves a card.
 
 | # | Decision | Options |
 |---|---|---|
 | 1 | Frame budget (O4) | (a) accept as proposed: OpenGL mean at most 0.5 ms and p99 at most 1.0 ms, Null mean at most 0.2 ms, the ECS path at most 25 us more than the direct sample; (b) change the numbers; (c) refuse. Also confirm that the measured laptop is the reference machine. Enforcement would be a later governance task |
-| 2 | Native Win32 and audio adapters (O8) | (a) not in phase 7: a later phase or cards, and the roadmap line is changed by a governance task; (b) add cards now before closing phase 7 |
+| 2 | Native Win32 and audio adapters (O8) | **Decided: (a), not in phase 7 (2026-11-14).** Open: where they go (a later phase or cards) and the roadmap line, changed by a governance task (Backlog card 7-15) |
 | 3 | Release | when to open the release PR `develop` to `main` (13 commits, 11 phase 7 cards plus this one, one PR, merge commit with `Release-Batch:`), and whether to run `ci` by hand on `main` right after it. This is the first hosted run of the phase 7 code (F-HOSTED) |
 | 4 | Architecture edges | (a) leave `render -> ecs` and `audio -> ecs` as they are; (b) a governance card to forbid them |
 | 5 | Phase 7 umbrella card | done now, or after the release PR merges |
@@ -235,3 +239,17 @@ The owner decides; nothing here moves a card.
 - Interactive play of the sandbox: the window path needs a display and an audio device, and no review records a run by hand with the mouse and keyboard.
 - The Trello board state of the cards.
 - Mermaid syntax: read by the author, not rendered.
+
+## 9. Status after the review (card 7-16)
+
+Written on 2026-11-16, documentation only. After the release of phase 7 (v0.13.0) the owner accepted the frame budget exactly as proposed in card 7-13: on the OpenGL device the CPU time of one frame call has a mean of at most 0.5 ms and a p99 of at most 1.0 ms, on the Null device a mean of at most 0.2 ms, and the ECS path adds at most 25 us per frame to the direct sample with its debug drawing off. The numbers are recorded in [ecs-and-sandbox-v0](../architecture/ecs-and-sandbox-v0.md) section 4.
+
+```mermaid
+flowchart LR
+  p["7-13: measured 0.2 ms, budget proposed"] --> a["owner: accepted as proposed (2026-11-16)"]
+  a --> c["criterion: meets the frame budget, within it on the measured laptop"]
+  a --> g["no gate: a gate would be a governance task"]
+  a --> o["still open: where the native adapters go (card 7-15), architecture edges"]
+```
+
+**Against the exit criterion.** Measured on the laptop of card 7-13: OpenGL mean 207.9 us and p99 470 us, Null mean 84.8 us, ECS path +5 to 10 us: all inside the accepted caps. The criterion is **met on that laptop**. The owner did not separately confirm the laptop as the reference machine and did not name another one. **Limits unchanged:** nothing enforces the budget, GPU time and the wait of the present are not budgeted, and only a scene of 83 entities on one machine was measured. F-BUDGET (section 5) now reads: accepted, not enforced. Of the decisions in section 7, number 1 is now made and number 3 (the release) is done, as v0.13.0; number 2 is decided as O8 (a) and only where the adapters go is open, number 5 (umbrella card) was done on the owner's order of 2026-11-16 ("move phase 7 umbrella card to Done"), and number 4 (architecture edges) is still the owner's.
