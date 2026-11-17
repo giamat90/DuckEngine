@@ -125,7 +125,7 @@ Rule from the roadmap and the exit criteria: the render port, the platform ports
 
 ## 7. How the cards follow from this
 
-Proposed; created in the Backlog after the owner accepts the note. Numbers are card ids.
+Created in the Backlog on 2026-11-17 after the owner accepted the note (section 8). Numbers are card ids.
 
 | Card | Delivers | Class |
 |---|---|---|
