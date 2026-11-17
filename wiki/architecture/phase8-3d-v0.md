@@ -125,7 +125,7 @@ Rule from the roadmap and the exit criteria: the render port, the platform ports
 
 ## 7. How the cards follow from this
 
-Proposed; created in the Backlog after the owner accepts the note. Numbers are card ids.
+Created in the Backlog on 2026-11-17 after the owner accepted the note (section 8). Numbers are card ids.
 
 | Card | Delivers | Class |
 |---|---|---|
@@ -169,6 +169,8 @@ flowchart LR
 ```
 
 ## 8. Choices for the owner
+
+**Decided (owner, 2026-11-17, "accept all recommendations"):** O1 to O9 are accepted as recommended in the last column: spike first; sphere, box, capsule and convex hull (no triangle meshes); ball-and-socket, hinge and distance joints; one directional light with Lambert shading; generated primitive meshes (card 8-16 stays optional); `d3` joins the cross-platform determinism feature; `Transform3D` next to `Transform2D`; the sample through ECS and the glue crates; budgets proposed from measurement and accepted by the owner. Cards 8-2 to 8-16 were created in the Backlog on that day. Nothing starts before the owner says which card goes first.
 
 | # | Choice | Options | Recommendation |
 |---|---|---|---|
