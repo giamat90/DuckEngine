@@ -2,28 +2,12 @@
 //! application draws them however it likes. Physics knows no renderer; the sample implements
 //! [`IPhysicsDebugDraw`] with the sprite batcher.
 
+pub use crate::core::{DebugColour, NORMAL_LENGTH};
 use crate::d2::{Body, BodyKind, Rot2, Shape2, World};
 use base::math::Vec2;
 
-/// What a drawn line or point stands for. The application picks the colours.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DebugColour {
-    /// A dynamic body that is awake.
-    Awake,
-    /// A dynamic body that sleeps.
-    Asleep,
-    /// A static body.
-    Static,
-    /// A contact point of a manifold.
-    ContactPoint,
-    /// The normal of a manifold, drawn from each of its points.
-    ContactNormal,
-}
-
 /// Segments of a circle's outline.
 pub const CIRCLE_SEGMENTS: u16 = 16;
-/// Length in metres of the line drawn for a contact normal.
-pub const NORMAL_LENGTH: f32 = 0.25;
 
 /// Where [`draw_debug`] sends what it describes. Calls come in a fixed order: for each body in
 /// slot order its outline lines then its centre point, then for each manifold in list order each

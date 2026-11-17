@@ -6,6 +6,7 @@ pub mod bounds;
 mod broadphase;
 pub(crate) mod cells;
 pub mod colouring;
+pub mod debug;
 pub mod dim;
 pub mod error;
 pub mod execution;
@@ -26,6 +27,7 @@ pub use body::{
 };
 pub use bounds::Bounds;
 pub use colouring::{Colour, Colouring, ConstraintEnds, MAX_COLOURS};
+pub use debug::{DebugColour, NORMAL_LENGTH};
 pub use dim::{Dim, Magnitude, MassProperties, Placed, Quantity};
 pub use error::PhysicsError;
 pub use execution::{DEFAULT_CHUNK, SolverExecution};

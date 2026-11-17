@@ -60,7 +60,7 @@ fn positive(size: f32) -> bool {
     size.is_finite() && size > 0.0
 }
 
-fn is_valid(shape: &Shape3) -> bool {
+pub(super) fn is_valid(shape: &Shape3) -> bool {
     match *shape {
         Shape3::Sphere { radius } => positive(radius),
         Shape3::Box { half_extents } => {
