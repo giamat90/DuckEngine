@@ -2,15 +2,19 @@
 //! `Vec3` positions, `Quat` orientations, a diagonal inverse inertia in the body frame, and the
 //! shapes of [`Shape3`].
 //!
-//! Bodies, integration, mass properties, bounds and the state hash are complete. Contacts are not
-//! yet: `collide` finds nothing until the narrowphase (card 8-4) and the solver (card 8-6) arrive, and
-//! the solver here only integrates; joints are card 8-7. Gyroscopic torque is not modelled (the
-//! integrator is semi-implicit Euler on the angular velocity). Known limitation: with no gyroscopic
-//! term a torque-free body keeps its angular velocity, which is not physical for a body whose
-//! principal moments differ (angular momentum should be what is kept). 2D has no such term to miss.
+//! Bodies, integration, mass properties, bounds, the state hash, the narrowphase for spheres,
+//! capsules and boxes and the debug-draw port are complete. The contact solver (card 8-6) is not:
+//! the solver here only integrates, so bodies do not yet push each other apart; convex hulls are
+//! card 8-5 and joints card 8-7. Gyroscopic torque is not modelled (the integrator is semi-implicit
+//! Euler on the angular velocity). Known limitation: with no gyroscopic term a torque-free body keeps
+//! its angular velocity, which is not physical for a body whose principal moments differ (angular
+//! momentum should be what is kept). 2D has no such term to miss.
 
 mod aabb;
+mod box_box;
+mod debug_draw;
 mod manifold;
+mod narrowphase;
 mod shape;
 
 use crate::core::{
@@ -27,6 +31,7 @@ pub use crate::core::{
     MAX_SUB_STEPS, PhysicsError, SleepConfig, SolverConfig, SolverExecution, SolverStats,
 };
 pub use aabb::Aabb3;
+pub use debug_draw::{ARC_SEGMENTS, DebugColour, IPhysicsDebugDraw, NORMAL_LENGTH, draw_debug};
 pub use manifold::{ContactPoint3, MAX_MANIFOLD_POINTS, Manifold3};
 pub use shape::Shape3;
 
@@ -125,9 +130,8 @@ impl Dim for D3 {
         shape::bounds(shape, position, rot)
     }
 
-    /// No narrowphase yet (card 8-4).
-    fn collide(_a: &Placed<Self>, _b: &Placed<Self>, _margin: f32) -> Option<Manifold3> {
-        None
+    fn collide(a: &Placed<Self>, b: &Placed<Self>, margin: f32) -> Option<Manifold3> {
+        narrowphase::collide(a, b, margin)
     }
 
     fn mass_properties(shape: &Shape3, density: f32) -> Result<MassProperties<Self>, PhysicsError> {
