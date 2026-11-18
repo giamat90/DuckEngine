@@ -6,14 +6,29 @@ use base::math::{Quat, Vec3};
 use physics::core::{Dim, PhysicsError};
 use physics::d3::{
     BodyDesc, BodyKind, D3, DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN, DebugColour,
-    IPhysicsDebugDraw, Placed3, Shape3, SleepConfig, SolverConfig, World, WorldConfig, draw_debug,
+    Hull, IPhysicsDebugDraw, Placed3, Shape3, SleepConfig, SolverConfig, World, WorldConfig,
+    draw_debug,
 };
 use std::alloc::System;
 
 #[global_allocator]
 static ALLOCATOR: CountingAllocator<System> = CountingAllocator::new(System);
 
-fn shapes() -> [Shape3; 3] {
+fn hull() -> Shape3 {
+    let corners = [
+        Vec3::new(-0.5, -0.4, -0.3),
+        Vec3::new(0.5, -0.4, -0.3),
+        Vec3::new(0.0, 0.5, -0.3),
+        Vec3::new(0.0, 0.0, 0.5),
+        Vec3::new(0.3, 0.1, 0.1),
+    ];
+    match Hull::new(&corners) {
+        Ok(hull) => Shape3::Hull(hull),
+        Err(error) => panic!("a hull: {error:?}"),
+    }
+}
+
+fn shapes() -> [Shape3; 4] {
     [
         Shape3::Sphere { radius: 0.5 },
         Shape3::Capsule {
@@ -23,6 +38,7 @@ fn shapes() -> [Shape3; 3] {
         Shape3::Box {
             half_extents: Vec3::new(0.5, 0.4, 0.3),
         },
+        hull(),
     ]
 }
 
@@ -60,7 +76,7 @@ fn touching_pairs() -> usize {
 fn collide_makes_no_allocator_call_for_any_pair_of_shapes() {
     let (touching, counts) = count_allocations(touching_pairs);
     assert!(
-        touching > 20,
+        touching > 30,
         "the loop must reach the contact code: {touching}"
     );
     assert_eq!(counts.calls(), 0);

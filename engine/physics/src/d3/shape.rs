@@ -1,13 +1,17 @@
 //! 3D shape descriptors: validity, bounds and mass properties.
 
 use crate::core::{HashBits, MassProperties, PhysicsError, StateHasher};
-use crate::d3::{Aabb3, D3};
+use crate::d3::{Aabb3, D3, Hull};
 use base::math::{Quat, Vec3};
 use std::f32::consts::PI;
 
 /// A convex shape in its body's local frame, centred on the body's origin.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a hull is stored inline so that a shape stays Copy (owner decision, card 8-5)"
+)]
 pub enum Shape3 {
     /// A ball.
     Sphere {
@@ -27,11 +31,14 @@ pub enum Shape3 {
         /// Radius of the cylinder and of the end caps, positive and finite.
         radius: f32,
     },
+    /// The convex hull of a set of points, in its own principal frame (see [`Hull`]).
+    Hull(Hull),
 }
 
 const TAG_SPHERE: u8 = 1;
 const TAG_BOX: u8 = 2;
 const TAG_CAPSULE: u8 = 3;
+const TAG_HULL: u8 = 4;
 
 impl HashBits for Shape3 {
     fn write_bits(&self, hasher: &mut StateHasher) {
@@ -52,6 +59,10 @@ impl HashBits for Shape3 {
                 hasher.write_f32(*half_height);
                 hasher.write_f32(*radius);
             }
+            Self::Hull(hull) => {
+                hasher.write_u8(TAG_HULL);
+                hull.write_bits(hasher);
+            }
         }
     }
 }
@@ -70,6 +81,7 @@ pub(super) fn is_valid(shape: &Shape3) -> bool {
             half_height,
             radius,
         } => positive(half_height) && positive(radius),
+        Shape3::Hull(ref hull) => hull.is_valid(),
     }
 }
 
@@ -96,7 +108,20 @@ fn reach(shape: &Shape3, rot: Quat) -> Vec3 {
             let axis = rot.rotate(Vec3::Y).abs();
             axis * half_height + Vec3::new(radius, radius, radius)
         }
+        Shape3::Hull(ref hull) => hull_reach(hull, rot),
     }
+}
+
+/// The reach of a hull along each world axis: the largest coordinate of a turned corner.
+fn hull_reach(hull: &Hull, rot: Quat) -> Vec3 {
+    hull.vertices().iter().fold(Vec3::ZERO, |reach, vertex| {
+        let turned = rot.rotate(*vertex).abs();
+        Vec3::new(
+            reach.x.max(turned.x),
+            reach.y.max(turned.y),
+            reach.z.max(turned.z),
+        )
+    })
 }
 
 pub(super) fn bounds(shape: &Shape3, position: Vec3, rot: Quat) -> Aabb3 {
@@ -136,6 +161,7 @@ fn mass_and_moments_per_density(shape: &Shape3) -> (f32, Vec3) {
                 + ball * (0.4 * r * r + h * h + 0.75 * h * r);
             (cylinder + ball, Vec3::new(across, along, across))
         }
+        Shape3::Hull(ref hull) => hull.volume_and_moments(),
     }
 }
 

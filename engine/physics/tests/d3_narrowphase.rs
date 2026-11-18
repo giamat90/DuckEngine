@@ -6,7 +6,7 @@
 use base::math::{Quat, Vec3};
 use base::rng::Pcg32;
 use physics::core::Dim;
-use physics::d3::{D3, Manifold3, Placed3, Shape3};
+use physics::d3::{D3, Hull, Manifold3, Placed3, Shape3};
 
 const MARGIN: f32 = 0.1;
 
@@ -452,6 +452,7 @@ impl Body {
                     + dot(n, self.axes[1]).abs() * f64::from(half_height)
                     + f64::from(radius)
             }
+            Shape3::Hull(hull) => along_centre + hull_extent(&hull, &self.axes, n),
             _ => along_centre,
         }
     }
@@ -523,8 +524,24 @@ fn random_shape(rng: &mut Pcg32, kind: usize) -> Shape3 {
             half_height: size(),
             radius: size() * 0.6,
         },
-        _ => Shape3::Box {
+        2 => Shape3::Box {
             half_extents: Vec3::new(size(), size(), size()),
+        },
+        _ => random_hull(rng),
+    }
+}
+
+/// A hull of a handful of random points inside a cube of half side 0.6 (a box if they are flat).
+fn random_hull(rng: &mut Pcg32) -> Shape3 {
+    let mut coord =
+        || f32::from(i16::try_from(rng.below(1201).unwrap_or(0)).unwrap_or(0) - 600) / 1000.0;
+    let points: Vec<Vec3> = (0..9)
+        .map(|_| Vec3::new(coord(), coord(), coord()))
+        .collect();
+    match Hull::new(&points) {
+        Ok(hull) => Shape3::Hull(hull),
+        Err(_) => Shape3::Box {
+            half_extents: Vec3::new(0.5, 0.5, 0.5),
         },
     }
 }
@@ -950,5 +967,373 @@ fn an_edge_contact_between_boxes_of_different_sizes_is_between_their_own_ridges(
             "{}",
             m.active()[0].separation
         );
+    }
+}
+
+// ---- convex hulls --------------------------------------------------------------------------
+
+/// The largest dot of `n` with a corner of the hull, the corners turned by `axes`.
+fn hull_extent(hull: &Hull, axes: &[V; 3], n: V) -> f64 {
+    let along = |corner: &Vec3| {
+        let local = wide(*corner);
+        (0..3).map(|k| dot(n, axes[k]) * local[k]).sum::<f64>()
+    };
+    hull.vertices().iter().map(along).fold(f64::MIN, f64::max)
+}
+
+fn hull_of(points: &[Vec3]) -> Shape3 {
+    match Hull::new(points) {
+        Ok(hull) => Shape3::Hull(hull),
+        Err(error) => panic!("the points should make a hull: {error:?}"),
+    }
+}
+
+fn cube_corners(half: f32) -> Vec<Vec3> {
+    (0..8)
+        .map(|i| {
+            let side = |bit: usize| if (i >> bit) & 1 == 1 { half } else { -half };
+            Vec3::new(side(0), side(1), side(2))
+        })
+        .collect()
+}
+
+fn hulled(points: &[Vec3], at: [f32; 3], rotation: Quat) -> Placed3 {
+    Placed3::new(hull_of(points), Vec3::new(at[0], at[1], at[2]), rotation)
+}
+
+#[test]
+fn a_sphere_pressed_into_a_hull_face_gets_the_face_normal_and_depth() {
+    let cube = hulled(&cube_corners(1.0), [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let ball = sphere(0.5, 1.4, 0.2, -0.3);
+    let m = must(collide(&cube, &ball));
+    assert!(near_vec(m.normal, Vec3::X), "{:?}", m.normal);
+    assert_eq!(m.active().len(), 1);
+    assert!(
+        near(m.active()[0].separation, -0.1),
+        "{}",
+        m.active()[0].separation
+    );
+    assert!(
+        has_point(&m, Vec3::new(0.95, 0.2, -0.3)),
+        "{:?}",
+        m.active()[0].point
+    );
+    let back = must(collide(&ball, &cube));
+    assert!(near_vec(back.normal, -Vec3::X) && near(back.active()[0].separation, -0.1));
+}
+
+#[test]
+fn two_hull_cubes_overlapping_along_x_get_the_x_axis_and_the_overlap() {
+    let first = hulled(&cube_corners(1.0), [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let second = hulled(&cube_corners(1.0), [1.7, 0.3, 0.2], Quat::IDENTITY);
+    let m = must(collide(&first, &second));
+    assert!(near_vec(m.normal, Vec3::X), "{:?}", m.normal);
+    assert!(near(min_separation(&m), -0.3), "{}", min_separation(&m));
+    let back = must(collide(&second, &first));
+    assert!(near_vec(back.normal, -Vec3::X) && near(min_separation(&back), -0.3));
+}
+
+#[test]
+fn a_hull_of_a_boxs_corners_touches_a_box_as_the_box_does() {
+    let turn = about(Vec3::new(0.0, 0.6, 0.8), 0.4);
+    let as_hull = hulled(&cube_corners(0.5), [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let as_box = cuboid([0.5, 0.5, 0.5], [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let other = cuboid([0.4, 0.3, 0.6], [0.7, 0.1, 0.2], turn);
+    let (via_hull, via_box) = (
+        must(collide(&as_hull, &other)),
+        must(collide(&as_box, &other)),
+    );
+    assert!(
+        near_vec(via_hull.normal, via_box.normal),
+        "{:?} {:?}",
+        via_hull.normal,
+        via_box.normal
+    );
+    assert!(
+        near(min_separation(&via_hull), min_separation(&via_box)),
+        "{} {}",
+        min_separation(&via_hull),
+        min_separation(&via_box)
+    );
+}
+
+#[test]
+fn a_hull_against_a_capsule_uses_the_capsules_axis_and_radius() {
+    let cube = hulled(&cube_corners(1.0), [0.0, 0.0, 0.0], Quat::IDENTITY);
+    // Standing beside the cube, 0.2 into it, tall enough to pass its top.
+    let post = capsule(2.0, 0.5, [1.3, 0.0, 0.0], Quat::IDENTITY);
+    let m = must(collide(&cube, &post));
+    assert!(near_vec(m.normal, Vec3::X), "{:?}", m.normal);
+    assert!(near(min_separation(&m), -0.2), "{}", min_separation(&m));
+}
+
+#[test]
+fn a_hull_within_the_margin_touches_speculatively_and_beyond_it_does_not() {
+    let cube = hulled(&cube_corners(1.0), [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let near_ball = sphere(0.5, 1.55, 0.0, 0.0);
+    let far_ball = sphere(0.5, 1.7, 0.0, 0.0);
+    let m = must(collide(&cube, &near_ball));
+    assert!(near(min_separation(&m), 0.05), "{}", min_separation(&m));
+    assert!(collide(&cube, &far_ball).is_none());
+}
+
+#[test]
+fn a_hull_with_the_same_centre_as_another_shape_gets_a_unit_normal() {
+    let cube = hulled(&cube_corners(1.0), [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let inside = sphere(0.25, 0.0, 0.0, 0.0);
+    let m = must(collide(&cube, &inside));
+    assert!(near(m.normal.length(), 1.0), "{:?}", m.normal);
+    assert!(near(min_separation(&m), -1.25), "{}", min_separation(&m));
+}
+
+#[test]
+fn the_oracle_agrees_for_random_hulls_against_every_shape() {
+    let dirs = directions(20_000);
+    for kind_other in [0, 1, 2, 3] {
+        let mut rng = Pcg32::new(0x8_5, kind_other as u64);
+        let (mut touching, mut apart) = (0, 0);
+        for _ in 0..120 {
+            let (a, b) = (
+                random_placed(&mut rng, 3),
+                random_placed(&mut rng, kind_other),
+            );
+            let verdict = check_scene(&a, &b, &dirs, 4.0e-3);
+            touching += usize::from(matches!(verdict, Verdict::Touching));
+            apart += usize::from(matches!(verdict, Verdict::Apart));
+        }
+        assert!(
+            touching > 20 && apart > 5,
+            "hull against kind {kind_other}: {touching} touching, {apart} apart"
+        );
+    }
+}
+
+/// Checks a hull's answer against the box routines' answer for the same shape; `true` when both
+/// found a contact, `false` when neither did (or only the box did, by its early diagonal gap).
+fn compare_hull_and_box(kind: usize, hull: Option<Manifold3>, boxed: Option<Manifold3>) -> bool {
+    match (hull, boxed) {
+        (Some(via_hull), Some(via_box)) => {
+            let (h, b) = (min_separation(&via_hull), min_separation(&via_box));
+            assert!((h - b).abs() < 6.0e-3, "kind {kind}: hull {h}, box {b}");
+            assert!(near(via_hull.normal.length(), 1.0));
+            true
+        }
+        (None, None) => false,
+        // The box routine reports a diagonal gap early (a documented limit of card 8-4).
+        (None, Some(boxed)) if min_separation(&boxed) > MARGIN / 2.0 => false,
+        (hull, boxed) => panic!(
+            "kind {kind}: hull {:?}, box {:?}",
+            hull.map(|m| min_separation(&m)),
+            boxed.map(|m| min_separation(&m))
+        ),
+    }
+}
+
+#[test]
+fn a_hull_of_a_boxs_corners_agrees_with_the_box_routines_in_deep_and_shallow_overlaps() {
+    let half = [0.5, 0.35, 0.6];
+    let corners: Vec<Vec3> = (0..8)
+        .map(|i| {
+            let side = |bit: usize, size: f32| if (i >> bit) & 1 == 1 { size } else { -size };
+            Vec3::new(side(0, half[0]), side(1, half[1]), side(2, half[2]))
+        })
+        .collect();
+    for kind in 0..3 {
+        let mut rng = Pcg32::new(0x8_5_5, kind as u64);
+        let (mut both, mut neither) = (0, 0);
+        for _ in 0..300 {
+            let other = random_placed(&mut rng, kind);
+            let turn = random_unit_quat(&mut rng);
+            let at = other.position * -0.5;
+            let as_box = cuboid(half, [at.x, at.y, at.z], turn);
+            let as_hull = hulled(&corners, [at.x, at.y, at.z], turn);
+            let found =
+                compare_hull_and_box(kind, collide(&as_hull, &other), collide(&as_box, &other));
+            both += usize::from(found);
+            neither += usize::from(!found);
+        }
+        assert!(both > 60, "kind {kind}: {both} overlaps, {neither} apart");
+    }
+}
+
+#[test]
+fn hulls_that_touch_exactly_by_a_face_an_edge_or_a_corner_get_no_depth_and_a_unit_normal() {
+    let cube = cube_corners(1.0);
+    let first = hulled(&cube, [0.0, 0.0, 0.0], Quat::IDENTITY);
+    for (offset, name) in [
+        ([2.0, 0.0, 0.0], "face"),
+        ([2.0, 0.5, -0.25], "face, shifted"),
+        ([2.0, 2.0, 0.0], "edge"),
+        ([2.0, 2.0, 2.0], "corner"),
+        ([0.0, -2.0, 0.0], "face, below"),
+    ] {
+        let second = hulled(&cube, offset, Quat::IDENTITY);
+        let m = must(collide(&first, &second));
+        assert!(near(m.normal.length(), 1.0), "{name}: {:?}", m.normal);
+        assert!(
+            min_separation(&m).abs() < 1.0e-3,
+            "{name}: {}",
+            min_separation(&m)
+        );
+        // The normal points from the first cube towards the second.
+        let towards = Vec3::new(offset[0], offset[1], offset[2]);
+        assert!(m.normal.dot(towards) > 0.0, "{name}: {:?}", m.normal);
+        let back = must(collide(&second, &first));
+        assert!(
+            back.normal.dot(towards) < 0.0,
+            "{name} reversed: {:?}",
+            back.normal
+        );
+    }
+}
+
+#[test]
+fn a_face_touch_has_the_face_normal_and_a_capsule_or_box_can_touch_a_hull_too() {
+    let cube = cube_corners(1.0);
+    let first = hulled(&cube, [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let touching_box = cuboid([1.0, 1.0, 1.0], [2.0, 0.0, 0.0], Quat::IDENTITY);
+    let m = must(collide(&first, &touching_box));
+    assert!(near_vec(m.normal, Vec3::X), "{:?}", m.normal);
+    assert!(min_separation(&m).abs() < 1.0e-3);
+    // A capsule axis ends on the face of the cube: its round end then touches the face.
+    let post = capsule(0.5, 0.25, [0.0, 1.75, 0.0], Quat::IDENTITY);
+    let m = must(collide(&first, &post));
+    assert!(near_vec(m.normal, Vec3::Y), "{:?}", m.normal);
+    assert!(min_separation(&m).abs() < 1.0e-3, "{}", min_separation(&m));
+}
+
+#[test]
+fn a_hull_exactly_at_the_margin_still_touches_and_a_hair_beyond_does_not() {
+    // All values are exact in binary: the gap is 1.625 - 1.0 - 0.5 = 0.125, the margin 0.125.
+    let cube = hulled(&cube_corners(1.0), [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let at_margin = sphere(0.5, 1.625, 0.0, 0.0);
+    let beyond = sphere(0.5, 1.6251, 0.0, 0.0);
+    let Some(m) = D3::collide(&cube, &at_margin, 0.125) else {
+        panic!("a gap equal to the margin is within it");
+    };
+    assert!(near(min_separation(&m), 0.125), "{}", min_separation(&m));
+    assert!(D3::collide(&cube, &beyond, 0.125).is_none());
+}
+
+#[test]
+fn a_sphere_centre_inside_a_hull_has_its_point_halfway_between_the_two_surfaces() {
+    let cube = hulled(&cube_corners(1.0), [0.0, 0.0, 0.0], Quat::IDENTITY);
+    // The ball's far side is at x = 0.25 inside the cube, the cube's face at x = 1: halfway is 0.625.
+    let ball = sphere(0.25, 0.5, 0.0, 0.0);
+    let m = must(collide(&cube, &ball));
+    assert!(near_vec(m.normal, Vec3::X), "{:?}", m.normal);
+    assert!(near(min_separation(&m), -0.75), "{}", min_separation(&m));
+    assert!(
+        has_point(&m, Vec3::new(0.625, 0.0, 0.0)),
+        "{:?}",
+        m.active()[0].point
+    );
+    let back = must(collide(&ball, &cube));
+    assert!(
+        has_point(&back, Vec3::new(0.625, 0.0, 0.0)),
+        "{:?}",
+        back.active()[0].point
+    );
+}
+
+#[test]
+fn overlapping_hull_cubes_have_their_point_between_the_faces_inside_the_overlap() {
+    let first = hulled(&cube_corners(1.0), [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let second = hulled(&cube_corners(1.0), [1.7, 0.3, 0.2], Quat::IDENTITY);
+    let m = must(collide(&first, &second));
+    let point = m.active()[0].point;
+    // The faces are at x = 1 and x = 0.7; the overlap in y is [-0.7, 1], in z [-0.8, 1].
+    assert!(near(point.x, 0.85), "{point:?}");
+    assert!(
+        (-0.7..=1.0).contains(&point.y) && (-0.8..=1.0).contains(&point.z),
+        "{point:?}"
+    );
+}
+
+#[test]
+fn a_hull_contact_point_stays_inside_a_small_overlap_and_halfway_between_the_faces() {
+    let first = hulled(&cube_corners(1.0), [0.0, 0.0, 0.0], Quat::IDENTITY);
+    // The overlap is 0.2 in x, 0.1 in y and 0.05 in z: the shallowest axis is z.
+    let second = hulled(&cube_corners(1.0), [1.8, 1.9, 1.95], Quat::IDENTITY);
+    let m = must(collide(&first, &second));
+    let point = m.active()[0].point;
+    assert!(near_vec(m.normal, Vec3::Z), "{:?}", m.normal);
+    assert!(near(min_separation(&m), -0.05), "{}", min_separation(&m));
+    assert!(near(point.z, 0.975), "{point:?}");
+    assert!(
+        (0.8..=1.0).contains(&point.x) && (0.9..=1.0).contains(&point.y),
+        "{point:?}"
+    );
+}
+
+#[test]
+fn a_sphere_centre_inside_a_tetrahedron_gets_the_nearest_face_and_the_exact_point() {
+    let corners = [
+        Vec3::ZERO,
+        Vec3::new(2.0, 0.0, 0.0),
+        Vec3::new(0.0, 3.0, 0.0),
+        Vec3::new(0.0, 0.0, 6.0),
+    ];
+    let Shape3::Hull(hull) = hull_of(&corners) else {
+        panic!("a hull");
+    };
+    // The body sits where the points were given: its origin and orientation put the hull back.
+    let solid = Placed3::new(Shape3::Hull(hull), hull.origin(), hull.orientation());
+    let sqrt14 = 14.0_f32.sqrt();
+    for (centre, normal, depth) in [
+        (Vec3::new(0.4, 0.5, 0.8), -Vec3::X, 0.4),
+        (
+            Vec3::new(1.0, 0.8, 1.2),
+            Vec3::new(3.0, 2.0, 1.0) * (1.0 / sqrt14),
+            0.2 / sqrt14,
+        ),
+    ] {
+        let radius = 0.01;
+        let ball = sphere(radius, centre.x, centre.y, centre.z);
+        let m = must(collide(&solid, &ball));
+        assert!(
+            near_vec(m.normal, normal),
+            "{:?} wanted {normal:?}",
+            m.normal
+        );
+        assert!(
+            near(min_separation(&m), -(depth + radius)),
+            "{}",
+            min_separation(&m)
+        );
+        let wanted = centre + normal * ((depth - radius) * 0.5);
+        assert!(
+            has_point(&m, wanted),
+            "{:?} wanted {wanted:?}",
+            m.active()[0].point
+        );
+    }
+}
+
+#[test]
+fn hulls_with_crossing_ridges_that_are_apart_have_their_point_between_the_nearest_ridge_points() {
+    use std::f32::consts::FRAC_PI_4;
+    let ridge = 0.5 * std::f32::consts::SQRT_2;
+    let corners = cube_corners(0.5);
+    for (turn_a, turn_b) in [
+        (FRAC_PI_4, FRAC_PI_4),
+        (-FRAC_PI_4, FRAC_PI_4),
+        (FRAC_PI_4, -FRAC_PI_4),
+    ] {
+        // The ridge of the first runs along x at z = 0, the one of the second along z at x = 0.2.
+        let a = hulled(&corners, [0.0, 0.0, 0.0], about(Vec3::X, turn_a));
+        let b = hulled(&corners, [0.2, 1.45, -0.1], about(Vec3::Z, turn_b));
+        let gap = 1.45 - 2.0 * ridge;
+        let at = Vec3::new(0.2, ridge + gap / 2.0, 0.0);
+        for (first, second, flip) in [(&a, &b, 1.0), (&b, &a, -1.0)] {
+            let m = must(collide(first, second));
+            assert!(near(min_separation(&m), gap), "{}", min_separation(&m));
+            assert!(
+                has_point(&m, at),
+                "{:?} not near {at:?}",
+                m.active()[0].point
+            );
+            assert!(near(m.normal.y * flip, 1.0), "{:?}", m.normal);
+        }
     }
 }

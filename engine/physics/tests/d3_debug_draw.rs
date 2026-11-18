@@ -5,7 +5,7 @@ use base::math::{Quat, Vec3};
 use physics::core::PhysicsError;
 use physics::d3::{
     ARC_SEGMENTS, BodyDesc, BodyKind, DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN,
-    DebugColour, IPhysicsDebugDraw, NORMAL_LENGTH, STANDARD_GRAVITY, Shape3, SleepConfig,
+    DebugColour, Hull, IPhysicsDebugDraw, NORMAL_LENGTH, STANDARD_GRAVITY, Shape3, SleepConfig,
     SolverConfig, World, WorldConfig, draw_debug,
 };
 
@@ -64,8 +64,8 @@ fn world(gravity: Vec3) -> Result<World, PhysicsError> {
     })
 }
 
-fn body(kind: BodyKind, at: Vec3, shape: Shape3) -> BodyDesc {
-    BodyDesc::new(kind, at, shape)
+fn body(kind: BodyKind, at: Vec3, shape: &Shape3) -> BodyDesc {
+    BodyDesc::new(kind, at, *shape)
 }
 
 fn cuboid(x: f32, y: f32, z: f32) -> Shape3 {
@@ -105,7 +105,7 @@ fn an_empty_world_describes_nothing() -> Result<(), PhysicsError> {
 fn a_box_is_twelve_edges_between_its_eight_corners_and_a_centre() -> Result<(), PhysicsError> {
     let mut w = world(Vec3::ZERO)?;
     let centre = Vec3::new(1.0, 2.0, 3.0);
-    w.create_body(&body(BodyKind::Dynamic, centre, cuboid(2.0, 1.5, 0.5)))?;
+    w.create_body(&body(BodyKind::Dynamic, centre, &cuboid(2.0, 1.5, 0.5)))?;
     let rec = recorded(&w);
     let edges = rec.lines(DebugColour::Awake);
     assert_eq!(edges.len(), 12);
@@ -145,7 +145,7 @@ fn a_box_is_twelve_edges_between_its_eight_corners_and_a_centre() -> Result<(), 
 #[test]
 fn a_turned_box_turns_its_corners() -> Result<(), PhysicsError> {
     let mut w = world(Vec3::ZERO)?;
-    let mut desc = body(BodyKind::Dynamic, Vec3::ZERO, cuboid(2.0, 1.0, 0.5));
+    let mut desc = body(BodyKind::Dynamic, Vec3::ZERO, &cuboid(2.0, 1.0, 0.5));
     desc.rotation =
         Quat::from_axis_angle(Vec3::Z, std::f32::consts::FRAC_PI_2).unwrap_or(Quat::IDENTITY);
     w.create_body(&desc)?;
@@ -168,7 +168,7 @@ fn a_turned_box_turns_its_corners() -> Result<(), PhysicsError> {
 #[test]
 fn a_static_body_has_its_own_colour() -> Result<(), PhysicsError> {
     let mut w = world(Vec3::ZERO)?;
-    w.create_body(&body(BodyKind::Static, Vec3::ZERO, cuboid(1.0, 1.0, 1.0)))?;
+    w.create_body(&body(BodyKind::Static, Vec3::ZERO, &cuboid(1.0, 1.0, 1.0)))?;
     let rec = recorded(&w);
     assert_eq!(rec.lines(DebugColour::Static).len(), 12);
     assert_eq!(rec.points(DebugColour::Static).len(), 1);
@@ -183,7 +183,7 @@ fn a_sphere_is_three_great_circles_and_a_centre() -> Result<(), PhysicsError> {
     w.create_body(&body(
         BodyKind::Dynamic,
         centre,
-        Shape3::Sphere { radius: 2.0 },
+        &Shape3::Sphere { radius: 2.0 },
     ))?;
     let rec = recorded(&w);
     let lines = rec.lines(DebugColour::Awake);
@@ -216,7 +216,7 @@ fn a_capsule_is_rings_sides_and_cap_arcs_all_on_its_surface() -> Result<(), Phys
         half_height: 1.5,
         radius: 0.5,
     };
-    w.create_body(&body(BodyKind::Dynamic, centre, shape))?;
+    w.create_body(&body(BodyKind::Dynamic, centre, &shape))?;
     let rec = recorded(&w);
     let lines = rec.lines(DebugColour::Awake);
     let half_arcs = arc_segments() / 2;
@@ -264,7 +264,7 @@ fn a_turned_capsule_turns_with_the_body() -> Result<(), PhysicsError> {
     let mut desc = body(
         BodyKind::Dynamic,
         Vec3::ZERO,
-        Shape3::Capsule {
+        &Shape3::Capsule {
             half_height: 1.5,
             radius: 0.5,
         },
@@ -285,12 +285,12 @@ fn a_resting_sphere_shows_its_contact_point_and_normal() -> Result<(), PhysicsEr
     w.create_body(&body(
         BodyKind::Static,
         Vec3::new(0.0, -1.0, 0.0),
-        cuboid(10.0, 1.0, 10.0),
+        &cuboid(10.0, 1.0, 10.0),
     ))?;
     w.create_body(&body(
         BodyKind::Dynamic,
         Vec3::new(0.0, 0.49, 0.0),
-        Shape3::Sphere { radius: 0.5 },
+        &Shape3::Sphere { radius: 0.5 },
     ))?;
     w.step(DT)?;
     let expected: usize = w
@@ -326,12 +326,12 @@ fn bodies_come_in_slot_order_then_the_contacts() -> Result<(), PhysicsError> {
     w.create_body(&body(
         BodyKind::Static,
         Vec3::new(0.0, -1.0, 0.0),
-        cuboid(10.0, 1.0, 10.0),
+        &cuboid(10.0, 1.0, 10.0),
     ))?;
     w.create_body(&body(
         BodyKind::Dynamic,
         Vec3::new(0.0, 0.49, 0.0),
-        Shape3::Sphere { radius: 0.5 },
+        &Shape3::Sphere { radius: 0.5 },
     ))?;
     w.step(DT)?;
     let kinds: Vec<(bool, DebugColour)> = recorded(&w)
@@ -368,7 +368,7 @@ fn bodies_come_in_slot_order_then_the_contacts() -> Result<(), PhysicsError> {
 #[test]
 fn a_sleeping_body_is_drawn_as_asleep() -> Result<(), PhysicsError> {
     let mut w = world(Vec3::ZERO)?;
-    let rest = w.create_body(&body(BodyKind::Dynamic, Vec3::ZERO, cuboid(0.5, 0.5, 0.5)))?;
+    let rest = w.create_body(&body(BodyKind::Dynamic, Vec3::ZERO, &cuboid(0.5, 0.5, 0.5)))?;
     for _ in 0..240 {
         w.step(DT)?;
     }
@@ -377,5 +377,62 @@ fn a_sleeping_body_is_drawn_as_asleep() -> Result<(), PhysicsError> {
     assert_eq!(rec.lines(DebugColour::Asleep).len(), 12);
     assert_eq!(rec.points(DebugColour::Asleep).len(), 1);
     assert!(rec.lines(DebugColour::Awake).is_empty());
+    Ok(())
+}
+
+fn hull_shape(points: &[Vec3]) -> Result<Shape3, PhysicsError> {
+    Ok(Shape3::Hull(Hull::new(points)?))
+}
+
+#[test]
+fn a_hull_is_its_edges_once_each_between_its_corners_turned_with_the_body()
+-> Result<(), PhysicsError> {
+    // A tetrahedron has 6 edges, a cube 12 (the diagonals of its square faces are not edges).
+    let tetrahedron = [Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::Z];
+    let cube: Vec<Vec3> = (0..8_u8)
+        .map(|i| {
+            let side = |bit: u8| if i >> bit & 1 == 1 { 1.0 } else { -1.0 };
+            Vec3::new(side(0), side(1), side(2))
+        })
+        .collect();
+    let turn = Quat::from_axis_angle(Vec3::new(0.0, 0.6, 0.8), 0.9).unwrap_or(Quat::IDENTITY);
+    let at = Vec3::new(1.0, -2.0, 3.0);
+    for (points, wanted) in [(&tetrahedron[..], 6), (&cube[..], 12)] {
+        let shape = hull_shape(points)?;
+        let Shape3::Hull(hull) = shape else {
+            panic!("a hull");
+        };
+        let mut w = world(Vec3::ZERO)?;
+        let mut desc = body(BodyKind::Dynamic, at, &shape);
+        desc.rotation = turn;
+        w.create_body(&desc)?;
+        let rec = recorded(&w);
+        let edges = rec.lines(DebugColour::Awake);
+        assert_eq!(edges.len(), wanted);
+        let corners: Vec<Vec3> = hull
+            .vertices()
+            .iter()
+            .map(|v| at + turn.rotate(*v))
+            .collect();
+        for (from, to) in &edges {
+            assert!(
+                [from, to]
+                    .iter()
+                    .all(|end| corners.iter().any(|c| near(*c, **end))),
+                "{from:?} {to:?}"
+            );
+            assert!(!near(*from, *to));
+        }
+        // No edge twice, in either direction.
+        for (index, (from, to)) in edges.iter().enumerate() {
+            assert!(
+                !edges[index + 1..]
+                    .iter()
+                    .any(|(a, b)| (near(*a, *from) && near(*b, *to))
+                        || (near(*a, *to) && near(*b, *from)))
+            );
+        }
+        assert_eq!(rec.points(DebugColour::Awake), [at]);
+    }
     Ok(())
 }
