@@ -13,7 +13,9 @@
 
 mod aabb;
 mod box_box;
+mod clip;
 mod debug_draw;
+mod face_clip;
 mod gjk;
 mod hull;
 mod joint;

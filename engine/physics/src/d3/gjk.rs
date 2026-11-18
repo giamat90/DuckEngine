@@ -8,8 +8,8 @@
 //! GJK walks a simplex (up to four points) over the difference of the two cores, towards the point of
 //! it nearest the origin. When that point is the origin the cores overlap and EPA grows the simplex
 //! into a solid that wraps the origin until its nearest face is on the boundary of the difference;
-//! that face gives the normal and the depth. The result is one contact point; up to four points by
-//! clipping is card 8-18.
+//! that face gives the normal and the depth. The result is one contact point; the up to four points
+//! of a face contact are made from it by [`super::face_clip`] (card 8-18).
 //!
 //! No heap allocation: the simplex and the solid are fixed arrays. Only `+ - * /` and `sqrt` are
 //! used, in a fixed order, with ties broken by index, so the result is the same on every run.

@@ -512,6 +512,57 @@ fn a_hull_dropped_on_the_floor_does_not_fall_through_it() -> Result<(), PhysicsE
     Ok(())
 }
 
+/// Card 8-18: a hull on a face has up to four contact points, so it rests like a box does.
+#[test]
+fn a_hull_cube_dropped_on_the_floor_comes_to_rest_flat_and_still() -> Result<(), PhysicsError> {
+    let mut w = world(STANDARD_GRAVITY)?;
+    floor(&mut w)?;
+    let piece = dynamic(&mut w, Vec3::new(0.0, 2.0, 0.0), &hull_cube()?, |_| {})?;
+    run(&mut w, 240)?;
+    let at = position(&w, piece)?;
+    assert!((at.y - 0.5).abs() < 0.005, "the hull is at {at:?}");
+    assert!(
+        velocity(&w, piece)?.length() < 0.01,
+        "the hull still moves: {:?} at {at:?}",
+        velocity(&w, piece)?
+    );
+    assert!(w.body(piece)?.angular_velocity().length() < 0.01);
+    Ok(())
+}
+
+#[test]
+fn a_tilted_hull_cube_dropped_on_the_floor_ends_up_lying_flat() -> Result<(), PhysicsError> {
+    let mut w = world(STANDARD_GRAVITY)?;
+    floor(&mut w)?;
+    let tilt = Quat::from_axis_angle(Vec3::new(1.0, 0.0, 1.0), 0.5).unwrap_or(Quat::IDENTITY);
+    let piece = dynamic(&mut w, Vec3::new(0.0, 1.5, 0.0), &hull_cube()?, |d| {
+        d.rotation = tilt;
+    })?;
+    run(&mut w, 360)?;
+    let up = w.body(piece)?.rotation().rotate(Vec3::Y);
+    assert!(up.dot(Vec3::Y) > 0.999, "its up axis is {up:?}");
+    assert!((position(&w, piece)?.y - 0.5).abs() < 0.01);
+    Ok(())
+}
+
+#[test]
+fn a_stack_of_five_hull_cubes_stands() -> Result<(), PhysicsError> {
+    let mut w = world(STANDARD_GRAVITY)?;
+    floor(&mut w)?;
+    let mut cubes = Vec::new();
+    for level in 0..5_u8 {
+        let height = 0.5 + f32::from(level) + 0.001;
+        cubes.push(dynamic(
+            &mut w,
+            Vec3::new(0.0, height, 0.0),
+            &hull_cube()?,
+            |_| {},
+        )?);
+    }
+    run(&mut w, 240)?;
+    stays_in_a_column(&w, &cubes, (0.02, 0.02))
+}
+
 trait FiniteVec {
     fn is_finite_vec(&self) -> bool;
 }

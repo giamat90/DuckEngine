@@ -29,7 +29,20 @@ fn hull() -> Shape3 {
     }
 }
 
-fn shapes() -> [Shape3; 4] {
+/// A cube of half side 0.5: its faces line up with a box's, so the face clipping of card 8-18 runs.
+fn cube_hull() -> Shape3 {
+    let corner = |n: u8| {
+        let side = |bit: u8| if n >> bit & 1 == 1 { 0.5 } else { -0.5 };
+        Vec3::new(side(0), side(1), side(2))
+    };
+    let corners = [0, 1, 2, 3, 4, 5, 6, 7].map(corner);
+    match Hull::new(&corners) {
+        Ok(hull) => Shape3::Hull(hull),
+        Err(error) => panic!("a cube hull: {error:?}"),
+    }
+}
+
+fn shapes() -> [Shape3; 5] {
     [
         Shape3::Sphere { radius: 0.5 },
         Shape3::Capsule {
@@ -40,6 +53,7 @@ fn shapes() -> [Shape3; 4] {
             half_extents: Vec3::new(0.5, 0.4, 0.3),
         },
         hull(),
+        cube_hull(),
     ]
 }
 
@@ -64,7 +78,7 @@ fn touching_pairs() -> usize {
     let turn = Quat::from_axis_angle(Vec3::new(1.0, 2.0, 3.0), 0.7).unwrap_or(Quat::IDENTITY);
     let mut touching = 0;
     for (first, second) in shape_pairs() {
-        for offset in [0.2, 0.6, 0.9, 1.2] {
+        for offset in [0.2, 0.6, 0.9, 1.2, 0.0] {
             let a = Placed3::new(first, Vec3::ZERO, Quat::IDENTITY);
             let b = Placed3::new(second, Vec3::new(offset, 0.3, 0.1), turn);
             touching += usize::from(D3::collide(&a, &b, 0.1).is_some());
