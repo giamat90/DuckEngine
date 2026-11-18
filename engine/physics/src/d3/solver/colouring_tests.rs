@@ -1,0 +1,365 @@
+//! Tests of the colouring of the 3D solver and of the order inside a colour (card 8-19).
+
+use super::{Reorder, Solver3};
+use crate::core::{Colour, MAX_COLOURS, PhysicsError, SolverExecution};
+use crate::d3::{BodyDesc, BodyKind, Shape3, SleepConfig, SolverConfig, World, WorldConfig};
+use base::math::Vec3;
+use base::rng::Pcg32;
+use jobs::error::JobError;
+use jobs::inline::InlineScheduler;
+use jobs::reversed::ReversedScheduler;
+use jobs::scheduler::{IScheduler, RangeBody, Task};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+fn big_world(sleep: SleepConfig) -> Result<World, PhysicsError> {
+    World::new(WorldConfig {
+        max_bodies: 256,
+        gravity: Vec3::new(0.0, -9.8, 0.0),
+        max_pairs: 4096,
+        broadphase_margin: crate::d3::DEFAULT_BROADPHASE_MARGIN,
+        max_manifolds: 4096,
+        max_joints: 0,
+        speculative_margin: crate::d3::DEFAULT_SPECULATIVE_MARGIN,
+        solver: SolverConfig::DEFAULT,
+        sleep,
+    })
+}
+
+fn static_box(w: &mut World, at: Vec3, half: Vec3) -> Result<(), PhysicsError> {
+    let shape = Shape3::Box { half_extents: half };
+    w.create_body(&BodyDesc::new(BodyKind::Static, at, shape))?;
+    Ok(())
+}
+
+/// A ball for an even `index`, a cube for an odd one, of size `size`.
+fn shape_of(index: u32, size: f32) -> Shape3 {
+    if index.is_multiple_of(2) {
+        Shape3::Sphere { radius: size }
+    } else {
+        Shape3::Box {
+            half_extents: Vec3::new(size, size, size),
+        }
+    }
+}
+
+/// Random boxes and balls dropped between a floor and two walls.
+fn random_scene(seed: u64, count: u32, sleep: SleepConfig) -> Result<World, PhysicsError> {
+    let mut w = big_world(sleep)?;
+    static_box(&mut w, Vec3::new(0.0, -1.0, 0.0), Vec3::new(8.0, 1.0, 8.0))?;
+    static_box(&mut w, Vec3::new(-4.5, 4.0, 0.0), Vec3::new(0.5, 6.0, 8.0))?;
+    static_box(&mut w, Vec3::new(4.5, 4.0, 0.0), Vec3::new(0.5, 6.0, 8.0))?;
+    let mut rng = Pcg32::new(seed, 11);
+    for index in 0..count {
+        let at = Vec3::new(
+            rng.next_f32() * 6.0 - 3.0,
+            0.5 + rng.next_f32() * 6.0,
+            rng.next_f32() * 6.0 - 3.0,
+        );
+        let shape = shape_of(index, 0.25 + rng.next_f32() * 0.25);
+        w.create_body(&BodyDesc::new(BodyKind::Dynamic, at, shape))?;
+    }
+    Ok(w)
+}
+
+/// One row of a pyramid of unit boxes: `rows - row` boxes at height `row`.
+fn add_row(w: &mut World, row: u8, rows: u8, shape: &Shape3) -> Result<(), PhysicsError> {
+    let count = rows - row;
+    for i in 0..count {
+        let x = f32::from(i) - f32::from(count - 1) / 2.0;
+        let at = Vec3::new(x, 0.5 + f32::from(row), 0.0);
+        w.create_body(&BodyDesc::new(BodyKind::Dynamic, at, *shape))?;
+    }
+    Ok(())
+}
+
+/// A pyramid of unit boxes, `rows` high, one box deep.
+fn pyramid(rows: u8) -> Result<World, PhysicsError> {
+    let mut w = big_world(SleepConfig::DEFAULT)?;
+    static_box(
+        &mut w,
+        Vec3::new(0.0, -1.0, 0.0),
+        Vec3::new(20.0, 1.0, 20.0),
+    )?;
+    let shape = Shape3::Box {
+        half_extents: Vec3::new(0.5, 0.5, 0.5),
+    };
+    for row in 0..rows {
+        add_row(&mut w, row, rows, &shape)?;
+    }
+    Ok(w)
+}
+
+/// The bodies of constraint `index` that move, as solver slots.
+fn moving_ends(solver: &Solver3, index: u32) -> Vec<usize> {
+    let Some(constraint) = solver.constraints.get(index as usize) else {
+        return Vec::new();
+    };
+    [constraint.shape.a, constraint.shape.b]
+        .into_iter()
+        .filter(|&slot| solver.bodies.get(slot).is_some_and(|b| !b.is_static()))
+        .collect()
+}
+
+/// Counts constraint `index` once more in `listed`.
+fn tally(listed: &mut [u32], index: u32) {
+    if let Some(count) = listed.get_mut(index as usize) {
+        *count += 1;
+    }
+}
+
+/// Checks colour `colour` of the last solve: the colour of each member, and no shared body.
+/// Counts each member in `listed`.
+fn check_colour(solver: &Solver3, colour: usize, listed: &mut [u32]) {
+    let colouring = &solver.colouring;
+    let expected = Colour::Index(u8::try_from(colour).unwrap_or(u8::MAX));
+    let mut slots = Vec::new();
+    for &index in colouring.members(colour) {
+        tally(listed, index);
+        assert_eq!(colouring.colour_of(index as usize), expected);
+        slots.extend(moving_ends(solver, index));
+    }
+    let repeated = (0..slots.len()).any(|i| slots[..i].contains(&slots[i]));
+    assert!(!repeated, "colour {colour} shares a body");
+}
+
+/// Checks the colouring the solver used in its last solve against the constraints it solved.
+fn check_colouring(solver: &Solver3) {
+    let colouring = &solver.colouring;
+    let mut listed = vec![0_u32; solver.constraints.len()];
+    for colour in 0..colouring.colour_count() {
+        check_colour(solver, colour, &mut listed);
+    }
+    for &index in colouring.overflow() {
+        if let Some(count) = listed.get_mut(index as usize) {
+            *count += 1;
+        }
+    }
+    for (index, constraint) in solver.constraints.iter().enumerate() {
+        let moves = [constraint.shape.a, constraint.shape.b]
+            .into_iter()
+            .any(|slot| solver.active.contains(&slot));
+        assert_eq!(
+            listed.get(index).copied(),
+            Some(u32::from(moves)),
+            "constraint {index}"
+        );
+    }
+}
+
+/// Steps a random scene and checks its colouring after every step.
+fn check_random_scene(seed: u64) -> Result<(), PhysicsError> {
+    let mut w = random_scene(seed, 24, SleepConfig::DEFAULT)?;
+    let mut busiest = 0;
+    for _ in 0..120 {
+        w.step(1.0 / 60.0)?;
+        let stats = w.solver_stats();
+        busiest = busiest.max(stats.solved);
+        assert!(stats.colours <= MAX_COLOURS);
+        check_colouring(w.solver_mut());
+    }
+    assert!(busiest > 5, "seed {seed}: the scene has too few contacts");
+    Ok(())
+}
+
+#[test]
+fn the_colouring_of_random_scenes_is_valid_and_complete_at_every_step() -> Result<(), PhysicsError>
+{
+    for seed in 0..4 {
+        check_random_scene(seed)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn the_colouring_of_a_pyramid_is_valid_and_uses_few_colours() -> Result<(), PhysicsError> {
+    let mut w = pyramid(6)?;
+    for _ in 0..20 {
+        w.step(1.0 / 60.0)?;
+        check_colouring(w.solver_mut());
+    }
+    let stats = w.solver_stats();
+    assert_eq!(stats.overflow, 0);
+    assert!(stats.colours >= 2 && stats.colours <= 12, "{stats:?}");
+    Ok(())
+}
+
+/// The state hash after each of `steps` steps with the constraints reordered inside the
+/// colours, and the solve order of each step.
+fn run_reordered(
+    mut w: World,
+    reorder: Option<Reorder>,
+    steps: u32,
+) -> Result<(Vec<u64>, Vec<Vec<u32>>), PhysicsError> {
+    w.solver_mut().set_reorder(reorder);
+    let (mut hashes, mut orders) = (Vec::new(), Vec::new());
+    for _ in 0..steps {
+        w.step(1.0 / 60.0)?;
+        hashes.push(w.state_hash());
+        orders.push(w.solver_mut().colouring.order().to_vec());
+    }
+    Ok((hashes, orders))
+}
+
+/// Runs `scene` in the canonical order and reordered three ways; the hashes must be equal.
+fn check_reordering(
+    n: usize,
+    scene: fn() -> Result<World, PhysicsError>,
+) -> Result<(), PhysicsError> {
+    let (reference, plain) = run_reordered(scene()?, None, 80)?;
+    for reorder in [Reorder::Reverse, Reorder::Shuffle(1), Reorder::Shuffle(99)] {
+        let (other, orders) = run_reordered(scene()?, Some(reorder), 80)?;
+        assert_eq!(reference, other, "scene {n}, {reorder:?}");
+        let differs = plain.iter().zip(&orders).any(|(a, b)| a != b);
+        assert!(differs, "scene {n}, {reorder:?}: nothing was reordered");
+    }
+    Ok(())
+}
+
+#[test]
+fn the_order_inside_a_colour_does_not_change_a_single_bit() -> Result<(), PhysicsError> {
+    let scenes: [fn() -> Result<World, PhysicsError>; 2] =
+        [|| pyramid(5), || random_scene(1, 24, SleepConfig::DEFAULT)];
+    for (n, scene) in scenes.iter().enumerate() {
+        check_reordering(n, *scene)?;
+    }
+    Ok(())
+}
+
+// ---- the staged path (card 8-19) ---------------------------------------------------------------
+
+/// The state hash after each of `steps` steps of `scene` with `execution`.
+fn staged_run(
+    scene: fn() -> Result<World, PhysicsError>,
+    execution: SolverExecution,
+    steps: u32,
+) -> Result<Vec<u64>, PhysicsError> {
+    let mut w = scene()?;
+    w.set_execution(execution);
+    (0..steps)
+        .map(|_| w.step(1.0 / 60.0).map(|()| w.state_hash()))
+        .collect()
+}
+
+fn scheduled(scheduler: Arc<dyn IScheduler>, chunk: u32) -> SolverExecution {
+    SolverExecution {
+        scheduler: Some(scheduler),
+        simd: false,
+        chunk,
+    }
+}
+
+/// Counts the calls to `parallel_for` and runs the loops on the calling thread.
+#[derive(Default)]
+struct Counting {
+    calls: AtomicUsize,
+}
+
+impl IScheduler for Counting {
+    fn worker_count(&self) -> u32 {
+        1
+    }
+
+    fn parallel_for(&self, count: u32, grain: u32, body: &RangeBody<'_>) -> Result<(), JobError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        InlineScheduler.parallel_for(count, grain, body)
+    }
+
+    fn run_scope(&self, tasks: &[&Task<'_>]) -> Result<(), JobError> {
+        InlineScheduler.run_scope(tasks)
+    }
+}
+
+/// Refuses every call, as a busy scheduler does.
+struct Refusing;
+
+impl IScheduler for Refusing {
+    fn worker_count(&self) -> u32 {
+        1
+    }
+
+    fn parallel_for(&self, _: u32, _: u32, _: &RangeBody<'_>) -> Result<(), JobError> {
+        Err(JobError::Busy)
+    }
+
+    fn run_scope(&self, _: &[&Task<'_>]) -> Result<(), JobError> {
+        Err(JobError::Busy)
+    }
+}
+
+#[test]
+fn the_staged_path_gives_the_bits_of_the_serial_reference() -> Result<(), PhysicsError> {
+    let scenes: [fn() -> Result<World, PhysicsError>; 2] =
+        [|| pyramid(4), || random_scene(3, 20, SleepConfig::DEFAULT)];
+    for scene in scenes {
+        let expected = staged_run(scene, SolverExecution::SERIAL, 40)?;
+        for chunk in [1, 3, 1000] {
+            let inline = scheduled(Arc::new(InlineScheduler), chunk);
+            assert_eq!(staged_run(scene, inline, 40)?, expected, "inline {chunk}");
+            let reversed = scheduled(Arc::new(ReversedScheduler), chunk);
+            assert_eq!(
+                staged_run(scene, reversed, 40)?,
+                expected,
+                "reversed {chunk}"
+            );
+            let refusing = scheduled(Arc::new(Refusing), chunk);
+            assert_eq!(
+                staged_run(scene, refusing, 40)?,
+                expected,
+                "refusing {chunk}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn colours_with_several_chunks_reach_the_scheduler_and_a_single_chunk_does_not()
+-> Result<(), PhysicsError> {
+    let counting = Arc::new(Counting::default());
+    staged_run(
+        || pyramid(4),
+        scheduled(Arc::clone(&counting) as Arc<dyn IScheduler>, 2),
+        5,
+    )?;
+    assert!(counting.calls.load(Ordering::Relaxed) > 0, "chunks of two");
+    let single = Arc::new(Counting::default());
+    staged_run(
+        || pyramid(4),
+        scheduled(Arc::clone(&single) as Arc<dyn IScheduler>, 1000),
+        5,
+    )?;
+    assert_eq!(
+        single.calls.load(Ordering::Relaxed),
+        0,
+        "one chunk per colour"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_buffers_of_the_staged_path_follow_the_execution() -> Result<(), PhysicsError> {
+    let mut w = pyramid(3)?;
+    assert!(
+        w.solver_mut().outputs.is_empty(),
+        "nothing staged by default"
+    );
+    w.set_execution(scheduled(Arc::new(InlineScheduler), 4));
+    let sized = w.solver_mut().outputs.len();
+    assert!(sized > 0 && w.solver_mut().outputs_chunk == 4);
+    w.set_execution(scheduled(Arc::new(InlineScheduler), 4));
+    assert_eq!(
+        w.solver_mut().outputs.len(),
+        sized,
+        "same chunk, same buffers"
+    );
+    w.set_execution(scheduled(Arc::new(InlineScheduler), 8));
+    assert!(
+        w.solver_mut().outputs.len() < sized,
+        "bigger chunks, fewer buffers"
+    );
+    w.set_execution(SolverExecution::SERIAL);
+    assert!(w.solver_mut().outputs.is_empty());
+    assert_eq!(w.solver_mut().outputs_chunk, 0);
+    Ok(())
+}
