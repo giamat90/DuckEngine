@@ -604,12 +604,12 @@ fn add_outer_products(matrix: &mut Matrix, weight: f32, vectors: [Vec3; 4]) {
 }
 
 /// A small count as a float (at most 255, so exact).
-fn small_count(n: usize) -> f32 {
+pub(super) fn small_count(n: usize) -> f32 {
     u8::try_from(n).map_or(f32::from(u8::MAX), f32::from)
 }
 
 /// Every `(i, j, k)` with `i < j < k < n`, in order.
-fn triples(n: usize) -> impl Iterator<Item = (usize, usize, usize)> {
+pub(super) fn triples(n: usize) -> impl Iterator<Item = (usize, usize, usize)> {
     (0..n).flat_map(move |i| ((i + 1)..n).flat_map(move |j| ((j + 1)..n).map(move |k| (i, j, k))))
 }
 

@@ -5,13 +5,17 @@
 //! | sphere, capsule | closest points of two segments, widened by the radii | the segment against the box, result flipped |
 //! | box | the segment against the box | separating axes, reference face, clipping ([`super::box_box`]) |
 //!
+//! Every pair with a convex hull in it goes to [`super::face_clip`] (GJK and EPA for the normal, then the
+//! support faces clipped, up to four points; card 8-18).
+//!
 //! A sphere is a capsule whose segment has length zero, so one routine serves both. Only `+ - * /`
 //! and `sqrt` are used, in a fixed order; no `sin`, `cos` or `atan2`. Any input that is not valid
 //! (a shape out of range, a value that is not finite, a negative margin) and any result that is not
 //! finite gives `None`, never a manifold with a NaN in it.
 
 use super::box_box;
-use super::gjk::{self, Convex, Core};
+use super::face_clip;
+use super::gjk::{Convex, Core};
 use super::manifold::{ContactPoint3, Manifold3};
 use super::{D3, Shape3};
 use crate::core::{Placed, Quantity};
@@ -480,7 +484,7 @@ fn has_hull(placed: &Placed<D3>) -> bool {
 
 fn dispatch(a: &Placed<D3>, b: &Placed<D3>, margin: f32) -> Option<Manifold3> {
     if has_hull(a) || has_hull(b) {
-        return gjk::contact(&convex_of(a), &convex_of(b), margin);
+        return face_clip::contact(&convex_of(a), &convex_of(b), margin);
     }
     match (frame_of(a), frame_of(b)) {
         (Some(first), Some(second)) => box_box::collide(&first, &second, margin),

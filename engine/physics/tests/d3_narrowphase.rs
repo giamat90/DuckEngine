@@ -1256,14 +1256,20 @@ fn a_hull_contact_point_stays_inside_a_small_overlap_and_halfway_between_the_fac
     // The overlap is 0.2 in x, 0.1 in y and 0.05 in z: the shallowest axis is z.
     let second = hulled(&cube_corners(1.0), [1.8, 1.9, 1.95], Quat::IDENTITY);
     let m = must(collide(&first, &second));
-    let point = m.active()[0].point;
     assert!(near_vec(m.normal, Vec3::Z), "{:?}", m.normal);
     assert!(near(min_separation(&m), -0.05), "{}", min_separation(&m));
-    assert!(near(point.z, 0.975), "{point:?}");
-    assert!(
-        (0.8..=1.0).contains(&point.x) && (0.9..=1.0).contains(&point.y),
-        "{point:?}"
-    );
+    // Card 8-18: the face contact has a point at each corner of the overlap, so a point can lie on
+    // the edge of the range (to within rounding).
+    let slack = 1.0e-5;
+    for contact in m.active() {
+        let point = contact.point;
+        assert!(near(point.z, 0.975), "{point:?}");
+        assert!(
+            (0.8 - slack..=1.0 + slack).contains(&point.x)
+                && (0.9 - slack..=1.0 + slack).contains(&point.y),
+            "{point:?}"
+        );
+    }
 }
 
 #[test]

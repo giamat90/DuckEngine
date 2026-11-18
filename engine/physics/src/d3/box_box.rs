@@ -7,6 +7,7 @@
 //! the second's, and a face to an edge, unless the other axis is better by [`AXIS_BIAS`], so that
 //! the choice does not flicker from step to step.
 
+use super::clip::{BOX_CAPACITY, Candidates as AnyCandidates, Polygon as AnyPolygon};
 use super::manifold::{ContactPoint3, MAX_MANIFOLD_POINTS, Manifold3};
 use super::narrowphase::{BoxFrame, sign};
 use base::math::Vec3;
@@ -15,8 +16,9 @@ use base::math::Vec3;
 const AXIS_BIAS: f32 = 5.0e-4;
 /// A cross product of two edge directions shorter than this (squared) is no axis: they are parallel.
 const MIN_EDGE_AXIS_SQUARED: f32 = 1.0e-6;
-/// A convex polygon with four corners clipped by four planes has at most eight.
-const CAPACITY: usize = 8;
+
+type Polygon = AnyPolygon<BOX_CAPACITY>;
+type Candidates = AnyCandidates<BOX_CAPACITY>;
 
 /// A box as the test sees it: centre, unit axes in the world, half sizes along them.
 struct Obb {
@@ -112,60 +114,6 @@ fn edge_axis(a: &Obb, b: &Obb, i: usize, j: usize) -> Option<Axis> {
     Some(axis_along(a, b, direction, Feature::Edges(i, j)))
 }
 
-/// A convex polygon of at most [`CAPACITY`] corners.
-#[derive(Clone, Copy)]
-struct Polygon {
-    corners: [Vec3; CAPACITY],
-    len: usize,
-}
-
-impl Polygon {
-    fn empty() -> Self {
-        Self {
-            corners: [Vec3::ZERO; CAPACITY],
-            len: 0,
-        }
-    }
-
-    fn push(&mut self, corner: Vec3) {
-        if self.len < CAPACITY {
-            self.corners[self.len] = corner;
-            self.len += 1;
-        }
-    }
-
-    fn as_slice(&self) -> &[Vec3] {
-        &self.corners[..self.len]
-    }
-
-    /// The part of the polygon on the side of the plane where `distance` is not positive.
-    fn clipped(&self, distance: impl Fn(Vec3) -> f32) -> Self {
-        let mut out = Self::empty();
-        let corners = self.as_slice();
-        for (i, current) in corners.iter().enumerate() {
-            let next = corners[(i + 1) % corners.len()];
-            clip_edge(
-                &mut out,
-                (*current, next),
-                (distance(*current), distance(next)),
-            );
-        }
-        out
-    }
-}
-
-/// Adds to `out` what the edge `from_to` leaves of the polygon on the kept side of the plane, given
-/// the distances of its two ends from the plane (kept when not positive).
-fn clip_edge(out: &mut Polygon, from_to: (Vec3, Vec3), distances: (f32, f32)) {
-    let ((from, to), (d_from, d_to)) = (from_to, distances);
-    if d_from <= 0.0 {
-        out.push(from);
-    }
-    if (d_from <= 0.0) != (d_to <= 0.0) {
-        out.push(from + (to - from) * (d_from / (d_from - d_to)));
-    }
-}
-
 /// The face of `incident` that is the most opposite to the direction `n`.
 fn incident_face(incident: &Obb, n: Vec3) -> Polygon {
     let mut j = 0;
@@ -194,8 +142,8 @@ fn incident_face(incident: &Obb, n: Vec3) -> Polygon {
 }
 
 /// `face` cut to the four side planes of the reference face number `face_axis` of `reference`.
-fn clip_to_sides(reference: &Obb, face_axis: usize, face: Polygon) -> Polygon {
-    let mut polygon = face;
+fn clip_to_sides(reference: &Obb, face_axis: usize, face: &Polygon) -> Polygon {
+    let mut polygon = *face;
     for k in [(face_axis + 1) % 3, (face_axis + 2) % 3] {
         for direction in [1.0, -1.0] {
             let side = reference.axes[k] * direction;
@@ -204,65 +152,6 @@ fn clip_to_sides(reference: &Obb, face_axis: usize, face: Polygon) -> Polygon {
         }
     }
     polygon
-}
-
-/// Contact points kept before they are cut down to four.
-struct Candidates {
-    items: [ContactPoint3; CAPACITY],
-    len: usize,
-}
-
-impl Candidates {
-    fn from_polygon(polygon: &Polygon, plane_point: Vec3, n: Vec3, margin: f32) -> Self {
-        let mut list = Self {
-            items: [ContactPoint3::default(); CAPACITY],
-            len: 0,
-        };
-        let kept = polygon
-            .as_slice()
-            .iter()
-            .map(|corner| {
-                let separation = (*corner - plane_point).dot(n);
-                ContactPoint3 {
-                    point: *corner - n * (separation * 0.5),
-                    separation,
-                }
-            })
-            .filter(|contact| contact.separation <= margin);
-        for contact in kept {
-            list.items[list.len] = contact;
-            list.len += 1;
-        }
-        list
-    }
-
-    fn as_slice(&self) -> &[ContactPoint3] {
-        &self.items[..self.len]
-    }
-
-    /// The index not in `taken` with the largest `key`.
-    fn best_by(&self, taken: &[usize], key: impl Fn(&ContactPoint3) -> f32) -> usize {
-        self.as_slice()
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !taken.contains(i))
-            .map(|(i, item)| (i, key(item)))
-            .max_by(|x, y| x.1.total_cmp(&y.1))
-            .map_or(0, |(i, _)| i)
-    }
-
-    /// Four points that spread over the contact: the deepest, the farthest from it, and the two that
-    /// enclose the largest area on either side of the line between them.
-    fn reduced(&self, n: Vec3) -> [ContactPoint3; MAX_MANIFOLD_POINTS] {
-        let deepest = self.best_by(&[], |p| -p.separation);
-        let from = self.items[deepest].point;
-        let far = self.best_by(&[deepest], |p| (p.point - from).length_squared());
-        let line = self.items[far].point - from;
-        let side = |p: &ContactPoint3| line.cross(p.point - from).dot(n);
-        let third = self.best_by(&[deepest, far], side);
-        let fourth = self.best_by(&[deepest, far, third], |p| -side(p));
-        [deepest, far, third, fourth].map(|i| self.items[i])
-    }
 }
 
 /// The face contact with face `face` of `reference` as the reference face; `n` points from the
@@ -277,7 +166,7 @@ fn face_contact(
     let plane_point = reference.centre + n * reference.half[face];
     let whole = incident_face(incident, n);
     let mut candidates = Candidates::from_polygon(
-        &clip_to_sides(reference, face, whole),
+        &clip_to_sides(reference, face, &whole),
         plane_point,
         n,
         margin,
@@ -335,6 +224,7 @@ pub(super) fn collide(first: &BoxFrame, second: &BoxFrame, margin: f32) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::d3::clip::BOX_CAPACITY as CAPACITY;
 
     fn candidate(x: f32, z: f32, separation: f32) -> ContactPoint3 {
         ContactPoint3 {
