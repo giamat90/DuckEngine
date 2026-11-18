@@ -95,15 +95,26 @@ fn a_step_with_bodies_in_contact_makes_no_allocator_call() -> Result<(), Physics
         solver: SolverConfig::DEFAULT,
         sleep: SleepConfig::DEFAULT,
     })?;
+    // The solver pushes overlapping bodies apart (card 8-6), so the bodies rest on a floor and
+    // keep touching it, and each other where they are close, through the measured steps.
+    world.create_body(&BodyDesc::new(
+        BodyKind::Static,
+        Vec3::new(0.0, -1.0, 0.0),
+        Shape3::Box {
+            half_extents: Vec3::new(20.0, 1.0, 20.0),
+        },
+    ))?;
     for (i, shape) in shapes().into_iter().enumerate() {
         let x = f32::from(u8::try_from(i).unwrap_or(0)) * 0.6;
         world.create_body(&BodyDesc::new(
             BodyKind::Dynamic,
-            Vec3::new(x, 0.0, 0.0),
+            Vec3::new(x, 1.0, 0.0),
             shape,
         ))?;
     }
-    world.step(1.0 / 60.0)?; // warm-up
+    for _ in 0..120 {
+        world.step(1.0 / 60.0)?; // warm-up: land and settle
+    }
     let (result, counts) = count_allocations(|| {
         for _ in 0..100 {
             world.step(1.0 / 60.0)?;

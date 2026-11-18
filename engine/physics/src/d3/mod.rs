@@ -3,9 +3,9 @@
 //! shapes of [`Shape3`].
 //!
 //! Bodies, integration, mass properties, bounds, the state hash, the narrowphase for spheres,
-//! capsules and boxes and the debug-draw port are complete. The contact solver (card 8-6) is not:
-//! the solver here only integrates, so bodies do not yet push each other apart; convex hulls are
-//! card 8-5 and joints card 8-7. Gyroscopic torque is not modelled (the integrator is semi-implicit
+//! capsules, boxes and convex hulls, the debug-draw port and the contact solver ([`Solver3`], card
+//! 8-6: soft step, friction, warm start, restitution, sleeping; serial, joints are card 8-7 and the
+//! parallel solve card 8-19) are complete. Gyroscopic torque is not modelled (the integrator is semi-implicit
 //! Euler on the angular velocity). Known limitation: with no gyroscopic term a torque-free body keeps
 //! its angular velocity, which is not physical for a body whose principal moments differ (angular
 //! momentum should be what is kept). 2D has no such term to miss.
@@ -18,10 +18,9 @@ mod hull;
 mod manifold;
 mod narrowphase;
 mod shape;
+mod solver;
 
-use crate::core::{
-    Dim, FreeSolver, HashBits, MassProperties, NoJoint, Placed, Quantity, StateHasher,
-};
+use crate::core::{Dim, HashBits, MassProperties, NoJoint, Placed, Quantity, StateHasher};
 use base::math::{Quat, Vec3};
 
 pub use crate::core::{
@@ -37,6 +36,7 @@ pub use debug_draw::{ARC_SEGMENTS, DebugColour, IPhysicsDebugDraw, NORMAL_LENGTH
 pub use hull::{Hull, MAX_HULL_VERTICES};
 pub use manifold::{ContactPoint3, MAX_MANIFOLD_POINTS, Manifold3};
 pub use shape::Shape3;
+pub use solver::Solver3;
 
 /// The world of 3D bodies.
 pub type World = crate::core::World<D3>;
@@ -101,7 +101,7 @@ impl Dim for D3 {
     type Shape = Shape3;
     type Bounds = Aabb3;
     type Manifold = Manifold3;
-    type Solver = FreeSolver;
+    type Solver = Solver3;
     type Joint = NoJoint;
 
     fn apply_inverse_inertia(rot: Quat, inv_inertia: Vec3, torque: Vec3) -> Vec3 {

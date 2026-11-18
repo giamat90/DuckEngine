@@ -16,6 +16,7 @@ pub mod joint;
 pub mod manifolds;
 pub mod pairs;
 pub mod sleep;
+pub(crate) mod soft;
 pub mod solver;
 pub(crate) mod sort;
 pub mod tree;
