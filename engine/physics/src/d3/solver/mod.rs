@@ -1,6 +1,6 @@
 //! The 3D contact solver: a soft step in the manner of the 2D one (`d2::solver`), on the same
-//! `ContactSolver` seam. Scalar and serial: the constraints are solved one after the other in
-//! manifold-list order, on the calling thread. Graph colouring and the parallel solve are card 8-19.
+//! `ContactSolver` seam. Scalar: the constraints are swept colour by colour (card 8-19,
+//! `core::colouring`), and with a scheduler in the execution the chunks of a colour run in parallel.
 //!
 //! One step, with `n` sub-steps of length `h = dt / n`:
 //!
@@ -16,27 +16,41 @@
 //! A constraint with no awake dynamic body (all its bodies sleep or are static) is not solved; its
 //! warm start is kept as it is. A body that no constraint touches takes one semi-implicit Euler
 //! step of length `dt`, exactly as before the solver existed. Joints (card 8-7) are
-//! solved first in every pass, see `joint`. The integrator has no gyroscopic term (card 8-3).
+//! solved first in every pass, serially, see `joint`. The integrator has no gyroscopic term
+//! (card 8-3).
+//!
+//! The constraints are swept colour by colour: no two constraints of a colour share a moving body,
+//! so inside a colour the order does not matter (the tests shuffle it and compare state hashes) and
+//! a colour can be solved in parallel (`stage`, the same as the 2D solver, without lanes). The
+//! colours are visited in order, the constraints of a colour in manifold-list order, the overflow
+//! set (constraints that found no colour) last, serially. The serial colour order is the
+//! reference: every execution gives the same bits.
 
 mod body;
 mod constraint;
 mod joint;
+mod stage;
 mod warm;
+
+#[cfg(test)]
+mod colouring_tests;
 
 use self::body::{SolverBody, StepTerms};
 use self::constraint::{Constraint, Ends, Link, Pass, Setup, Surface};
 use self::joint::{JointConstraint, JointPass, JointSet, JointSetup};
+use self::stage::{ChunkOut, ColourJob, make_outputs, scatter};
 use self::warm::WarmCache;
 use crate::core::cells::index_u32;
 use crate::core::soft::{
     HERTZ_LIMIT_FRACTION, JointSweep, STATIC_STIFFNESS_FACTOR, Softness, Sweep, rigid_softness,
 };
 use crate::core::{
-    Body, BodyKind, ContactManifold, ContactSolver, JointEntry, Motion, PhysicsError, SolverConfig,
-    SolverStats, StateHasher, StepFrame,
+    Body, BodyKind, Colouring, ConstraintEnds, ContactManifold, ContactSolver, JointEntry, Motion,
+    PhysicsError, SolverConfig, SolverExecution, SolverStats, StateHasher, StepFrame,
 };
 use crate::d3::{D3, Joint3};
 use base::fpenv::FpGuard;
+use std::sync::Mutex;
 
 /// The scalar contact solver of the 3D instance. All storage is allocated by [`Solver3::new`].
 pub struct Solver3 {
@@ -49,8 +63,15 @@ pub struct Solver3 {
     /// Slot indices of the touched dynamic bodies.
     active: Vec<usize>,
     constraints: Vec<Constraint>,
-    /// Indices into `constraints` of those that are solved, in manifold-list order.
-    order: Vec<u32>,
+    /// The buffers of the staged path, one per chunk of the largest possible colour; empty while
+    /// the execution is the plain serial reference.
+    outputs: Vec<Mutex<ChunkOut>>,
+    /// The chunk size `outputs` was made for.
+    outputs_chunk: usize,
+    /// How the sweeps execute (serial reference, scheduler).
+    execution: SolverExecution,
+    /// The colours of the constraints; the sweeps follow its order.
+    colouring: Colouring,
     /// The most constraints one step can hold: the manifold capacity.
     max_constraints: usize,
     /// The impulses of the last committed step.
@@ -59,6 +80,19 @@ pub struct Solver3 {
     next: WarmCache,
     /// The joints of the step. They are solved serially, before the contacts, in every pass.
     joints: JointSet,
+    /// Reorders the constraints inside each colour after the colouring (tests only).
+    #[cfg(test)]
+    reorder: Option<Reorder>,
+}
+
+/// How a test reorders the constraints inside a colour.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Reorder {
+    /// A Fisher-Yates shuffle from the seed.
+    Shuffle(u64),
+    /// The reverse order.
+    Reverse,
 }
 
 /// The two ends of a constraint, or `None` when a body is missing (cannot happen for manifolds the
@@ -102,9 +136,24 @@ fn visit_member(constraints: &mut [Constraint], bodies: &mut [SolverBody], index
     }
 }
 
+/// Runs `pass` on the constraints `members` one after the other.
+fn visit_members(
+    constraints: &mut [Constraint],
+    bodies: &mut [SolverBody],
+    members: &[u32],
+    pass: Pass,
+) {
+    for &index in members {
+        visit_member(constraints, bodies, index, pass);
+    }
+}
+
 /// Runs `pass` on `constraint` with copies of its two bodies, which are stored back afterwards.
 fn visit(bodies: &mut [SolverBody], constraint: &mut Constraint, pass: Pass) {
-    let (Some(&first), Some(&second)) = (bodies.get(constraint.a), bodies.get(constraint.b)) else {
+    let (Some(&first), Some(&second)) = (
+        bodies.get(constraint.shape.a),
+        bodies.get(constraint.shape.b),
+    ) else {
         return;
     };
     let (mut a, mut b) = (first, second);
@@ -115,8 +164,8 @@ fn visit(bodies: &mut [SolverBody], constraint: &mut Constraint, pass: Pass) {
             b: &mut b,
         },
     );
-    store(bodies, constraint.a, a);
-    store(bodies, constraint.b, b);
+    store(bodies, constraint.shape.a, a);
+    store(bodies, constraint.shape.b, b);
 }
 
 /// Stores `body` at `index` unless it is a static body, which did not change.
@@ -148,11 +197,16 @@ impl ContactSolver<D3> for Solver3 {
             touched: vec![false; bodies],
             active: Vec::with_capacity(bodies),
             constraints: Vec::with_capacity(manifolds),
-            order: Vec::with_capacity(manifolds),
+            outputs: Vec::new(),
+            outputs_chunk: 0,
+            execution: SolverExecution::SERIAL,
+            colouring: Colouring::new(bodies, manifolds),
             max_constraints: manifolds,
             warm: WarmCache::new(manifolds),
             next: WarmCache::new(manifolds),
             joints: JointSet::new(max_joints as usize),
+            #[cfg(test)]
+            reorder: None,
         })
     }
 
@@ -171,8 +225,16 @@ impl ContactSolver<D3> for Solver3 {
             h,
         };
         self.prepare(bodies, contacts, joints, terms);
+        self.colouring.assign();
+        #[cfg(test)]
+        self.apply_reorder();
         self.run_sub_steps(h);
         self.finish(bodies, &frame);
+    }
+
+    fn set_execution(&mut self, execution: SolverExecution) {
+        self.execution = execution;
+        self.size_outputs();
     }
 
     fn is_finite(&self) -> bool {
@@ -182,11 +244,12 @@ impl ContactSolver<D3> for Solver3 {
     fn stats(&self) -> SolverStats {
         let (joints_solved, joints_frozen) = self.joints.counts();
         SolverStats {
-            solved: self.order.len(),
-            frozen: self.constraints.len() - self.order.len(),
+            solved: self.colouring.order().len(),
+            frozen: self.constraints.len() - self.colouring.order().len(),
+            colours: self.colouring.colour_count(),
+            overflow: self.colouring.overflow().len(),
             joints_solved,
             joints_frozen,
-            ..SolverStats::default()
         }
     }
 
@@ -202,6 +265,22 @@ impl ContactSolver<D3> for Solver3 {
 }
 
 impl Solver3 {
+    /// Applies the reordering a test asked for, if any.
+    #[cfg(test)]
+    fn apply_reorder(&mut self) {
+        match self.reorder {
+            Some(Reorder::Shuffle(seed)) => self.colouring.shuffle_within_colours(seed),
+            Some(Reorder::Reverse) => self.colouring.reverse_within_colours(),
+            None => {}
+        }
+    }
+
+    /// Asks the next solves to reorder the constraints inside each colour (tests only).
+    #[cfg(test)]
+    pub(crate) fn set_reorder(&mut self, reorder: Option<Reorder>) {
+        self.reorder = reorder;
+    }
+
     /// The contact softness for dynamic and static partners at sub-step length `h`.
     fn softness(&self, h: f32) -> (Softness, Softness) {
         let hertz = self.config.contact_hertz.min(HERTZ_LIMIT_FRACTION / h);
@@ -239,7 +318,7 @@ impl Solver3 {
         self.touched.fill(false);
         self.active.clear();
         self.constraints.clear();
-        self.order.clear();
+        self.colouring.clear();
         self.joints.clear();
         let (soft, stiff) = self.softness(terms.h);
         let context = Prepare {
@@ -320,12 +399,13 @@ impl Solver3 {
             a,
             b,
         };
+        self.colouring.push(ConstraintEnds {
+            a: is_awake(first).then(|| index_u32(a)),
+            b: is_awake(second).then(|| index_u32(b)),
+        });
         let mut constraint = Constraint::new(link, &entry.manifold, &setup);
         if let Some(cached) = self.warm.find(cursor, entry.first, entry.second) {
             constraint.warm_from(cached);
-        }
-        if is_awake(first) || is_awake(second) {
-            self.order.push(index_u32(self.constraints.len()));
         }
         self.constraints.push(constraint);
     }
@@ -394,11 +474,62 @@ impl Solver3 {
         }
     }
 
-    /// Runs `pass` over the constraints that are solved, one after the other.
+    /// Runs `pass` over the constraints that are solved, colour by colour (see the module
+    /// comment). The reference visits them one by one; with a scheduler in the execution each
+    /// colour is solved as chunks (`stage`) and the overflow set follows serially.
     fn sweep_constraints(&mut self, pass: Pass) {
-        for &index in &self.order {
-            visit_member(&mut self.constraints, &mut self.bodies, index, pass);
+        let total = self.colouring.order().len();
+        if !self.execution.is_staged() {
+            return self.visit_order(0..total, pass);
         }
+        for colour in 0..self.colouring.colour_count() {
+            self.stage_colour(colour, pass);
+        }
+        self.visit_order(total - self.colouring.overflow().len()..total, pass);
+    }
+
+    /// The reference loop over the positions `range` of the solve order: one constraint after the
+    /// other on the calling thread.
+    fn visit_order(&mut self, range: std::ops::Range<usize>, pass: Pass) {
+        let part = self.colouring.order().get(range).unwrap_or(&[]);
+        visit_members(&mut self.constraints, &mut self.bodies, part, pass);
+    }
+
+    /// Makes the buffers of the staged path for the current execution (once per change of the
+    /// chunk size; setting the same execution again allocates nothing).
+    fn size_outputs(&mut self) {
+        if !self.execution.is_staged() {
+            self.outputs = Vec::new();
+            self.outputs_chunk = 0;
+        } else if self.outputs_chunk != self.execution.chunk_size() {
+            self.outputs_chunk = self.execution.chunk_size();
+            self.outputs = make_outputs(self.max_constraints, self.outputs_chunk);
+        }
+    }
+
+    /// Solves colour `colour` as fixed chunks, then stores the results back in canonical order.
+    fn stage_colour(&mut self, colour: usize, pass: Pass) {
+        let members = self.colouring.members(colour);
+        let job = ColourJob {
+            constraints: &self.constraints,
+            bodies: &self.bodies,
+            members,
+            pass,
+            chunk: self.execution.chunk_size(),
+            outputs: &self.outputs,
+        };
+        if !job.has_room() {
+            // Not reachable for a solver that sized its buffers, kept so that no chunk is lost.
+            return visit_members(&mut self.constraints, &mut self.bodies, members, pass);
+        }
+        let chunks = job.chunk_count();
+        job.run(self.execution.scheduler.as_deref());
+        scatter(
+            &mut self.outputs,
+            chunks,
+            &mut self.constraints,
+            &mut self.bodies,
+        );
     }
 
     /// Keeps the impulses and writes the new motion into the bodies.

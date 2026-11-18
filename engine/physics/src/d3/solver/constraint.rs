@@ -96,10 +96,19 @@ struct Point {
     tangent_mass: [f32; 2],
     /// The approach speed along the normal before the solve, for restitution.
     relative_velocity: f32,
-    normal_impulse: f32,
-    tangent_impulse: [f32; 2],
-    max_normal_impulse: f32,
 }
+
+/// What a solve changes at one point: the impulses accumulated so far.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Impulse {
+    normal: f32,
+    tangent: [f32; 2],
+    /// The largest normal impulse of the step, for restitution.
+    max_normal: f32,
+}
+
+/// The impulses of the points of one constraint.
+pub(super) type Impulses = [Impulse; MAX_MANIFOLD_POINTS];
 
 impl Point {
     fn new(source: &ContactPoint3, frame: &Frame, setup: &Setup) -> Self {
@@ -127,21 +136,39 @@ impl Point {
             relative_velocity: frame
                 .normal
                 .dot(body_b.velocity_at(rb) - body_a.velocity_at(ra)),
-            ..Self::default()
         }
     }
 
-    /// Takes over the impulses of the kept point that is where this point is, if there is one.
-    fn warm_from(&mut self, cached: &CachedManifold, tangents: &[Vec3; 2], taken: &mut u8) {
+    /// The impulses of the kept point that is where this point is, if there is one.
+    fn warmed_from(
+        &self,
+        cached: &CachedManifold,
+        tangents: &[Vec3; 2],
+        taken: &mut u8,
+    ) -> Impulse {
+        let mut impulse = Impulse::default();
         if let Some(kept) = cached.take_near(self.at, taken) {
-            self.normal_impulse = kept.normal;
-            self.tangent_impulse = tangents.map(|tangent| kept.tangent.dot(tangent));
+            impulse.normal = kept.normal;
+            impulse.tangent = tangents.map(|tangent| kept.tangent.dot(tangent));
         }
+        impulse
+    }
+}
+
+impl Impulse {
+    /// Adds `delta` to the accumulated normal impulse, which may not go below zero (a contact
+    /// pushes, never pulls); returns the impulse that was applied.
+    fn accumulate(&mut self, delta: f32) -> f32 {
+        let total = (self.normal + delta).max(0.0);
+        let applied = total - self.normal;
+        self.normal = total;
+        self.max_normal = self.max_normal.max(total);
+        applied
     }
 
     /// The impulse across the normal as a vector in world axes.
     fn tangent_vector(&self, tangents: &[Vec3; 2]) -> Vec3 {
-        tangents[0] * self.tangent_impulse[0] + tangents[1] * self.tangent_impulse[1]
+        tangents[0] * self.tangent[0] + tangents[1] * self.tangent[1]
     }
 }
 
@@ -178,17 +205,87 @@ pub(super) enum Pass<'a> {
 impl Pass<'_> {
     /// Runs the pass on one constraint and its two bodies.
     pub(super) fn apply(self, constraint: &mut Constraint, ends: &mut Ends) {
+        self.apply_to(&constraint.shape, &mut constraint.impulses, ends);
+    }
+
+    /// Runs the pass on the shape of a constraint and its impulses (the staged solve keeps the
+    /// two apart: the shape is shared and read only, the impulses are copied).
+    pub(super) fn apply_to(self, shape: &Shape, impulses: &mut Impulses, ends: &mut Ends) {
         match self {
-            Self::WarmStart => constraint.warm_start(ends),
-            Self::Solve(sweep) => constraint.solve(ends, sweep),
-            Self::Restitute(sweep) => constraint.restitute(ends, sweep),
+            Self::WarmStart => shape.warm_start(impulses, ends),
+            Self::Solve(sweep) => shape.solve(impulses, ends, sweep),
+            Self::Restitute(sweep) => shape.restitute(impulses, ends, sweep),
         }
     }
 }
 
-/// A prepared manifold: the contact between two bodies.
+/// The impulses of a constraint with copies of its two bodies: what a chunk of the staged colour
+/// solve works on (`stage`). The copies are read when the chunk starts and stored back, after the
+/// whole colour has run, in the order of the reference.
+#[derive(Clone, Copy)]
+pub(super) struct Staged {
+    pub impulses: Impulses,
+    pub a: SolverBody,
+    pub b: SolverBody,
+}
+
+impl Staged {
+    /// The scalar reference on the copies.
+    pub(super) fn run(&mut self, shape: &Shape, pass: Pass) {
+        let mut ends = Ends {
+            a: &mut self.a,
+            b: &mut self.b,
+        };
+        pass.apply_to(shape, &mut self.impulses, &mut ends);
+    }
+}
+
+/// A prepared manifold: the contact between two bodies, with the impulses it has accumulated.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Constraint {
+    pub shape: Shape,
+    pub impulses: Impulses,
+}
+
+impl Constraint {
+    pub(super) fn new(link: Link, manifold: &Manifold3, setup: &Setup) -> Self {
+        Self {
+            shape: Shape::new(link, manifold, setup),
+            impulses: Impulses::default(),
+        }
+    }
+
+    /// Takes over the impulses of the points of the last step that are where these points are.
+    pub(super) fn warm_from(&mut self, cached: &CachedManifold) {
+        self.impulses = self.shape.warmed_from(cached);
+    }
+
+    /// The softness this constraint was made with.
+    #[cfg(test)]
+    pub(super) fn softness(&self) -> Softness {
+        self.shape.softness
+    }
+
+    /// What is kept for the next step.
+    pub(super) fn cached(&self) -> CachedManifold {
+        self.shape.cached(&self.impulses)
+    }
+
+    #[cfg(test)]
+    pub(super) fn solve(&mut self, ends: &mut Ends, sweep: &Sweep) {
+        self.shape.solve(&mut self.impulses, ends, sweep);
+    }
+
+    #[cfg(test)]
+    pub(super) fn restitute(&mut self, ends: &mut Ends, sweep: &Sweep) {
+        self.shape.restitute(&mut self.impulses, ends, sweep);
+    }
+}
+
+/// What a pass reads of a constraint and never changes: the bodies it joins, the frame, the
+/// material and the points as prepared.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Shape {
     pub a: usize,
     pub b: usize,
     first: BodyHandle<D3>,
@@ -202,8 +299,8 @@ pub(super) struct Constraint {
     points: [Point; MAX_MANIFOLD_POINTS],
 }
 
-impl Constraint {
-    pub(super) fn new(link: Link, manifold: &Manifold3, setup: &Setup) -> Self {
+impl Shape {
+    fn new(link: Link, manifold: &Manifold3, setup: &Setup) -> Self {
         let frame = Frame {
             normal: manifold.normal,
             tangents: tangents_of(manifold.normal),
@@ -228,28 +325,29 @@ impl Constraint {
         }
     }
 
-    /// Takes over the impulses of the points of the last step that are where these points are.
-    pub(super) fn warm_from(&mut self, cached: &CachedManifold) {
+    /// The impulses of the points of the last step that are where these points are.
+    fn warmed_from(&self, cached: &CachedManifold) -> Impulses {
         let mut taken = 0_u8;
-        for point in self.points.iter_mut().take(self.count) {
-            point.warm_from(cached, &self.tangents, &mut taken);
+        let mut impulses = Impulses::default();
+        for (slot, point) in impulses.iter_mut().zip(&self.points).take(self.count) {
+            *slot = point.warmed_from(cached, &self.tangents, &mut taken);
         }
-    }
-
-    /// The softness this constraint was made with.
-    #[cfg(test)]
-    pub(super) fn softness(&self) -> Softness {
-        self.softness
+        impulses
     }
 
     /// What is kept for the next step.
-    pub(super) fn cached(&self) -> CachedManifold {
+    fn cached(&self, impulses: &Impulses) -> CachedManifold {
         let mut kept = [CachedPoint::default(); MAX_MANIFOLD_POINTS];
-        for (slot, point) in kept.iter_mut().zip(&self.points).take(self.count) {
+        for ((slot, point), impulse) in kept
+            .iter_mut()
+            .zip(&self.points)
+            .zip(impulses)
+            .take(self.count)
+        {
             *slot = CachedPoint {
                 at: point.at,
-                normal: point.normal_impulse,
-                tangent: point.tangent_vector(&self.tangents),
+                normal: impulse.normal,
+                tangent: impulse.tangent_vector(&self.tangents),
             };
         }
         CachedManifold::new(
@@ -260,72 +358,69 @@ impl Constraint {
     }
 
     /// Applies the impulses of the last step at the start of a sub-step.
-    pub(super) fn warm_start(&self, ends: &mut Ends) {
-        for point in self.points.iter().take(self.count) {
-            let impulse = self.normal * point.normal_impulse + point.tangent_vector(&self.tangents);
+    fn warm_start(&self, impulses: &Impulses, ends: &mut Ends) {
+        for (point, accumulated) in self.points.iter().zip(impulses).take(self.count) {
+            let impulse =
+                self.normal * accumulated.normal + accumulated.tangent_vector(&self.tangents);
             ends.push_apart(point, impulse);
         }
     }
 
     /// One sweep: friction first, then the normal, which is the more important one and so gets the
     /// last word.
-    pub(super) fn solve(&mut self, ends: &mut Ends, sweep: &Sweep) {
-        self.solve_friction(ends);
-        self.solve_normal(ends, sweep);
+    fn solve(&self, impulses: &mut Impulses, ends: &mut Ends, sweep: &Sweep) {
+        self.solve_friction(impulses, ends);
+        self.solve_normal(impulses, ends, sweep);
     }
 
-    fn solve_friction(&mut self, ends: &mut Ends) {
-        for point in self.points.iter_mut().take(self.count) {
+    fn solve_friction(&self, impulses: &mut Impulses, ends: &mut Ends) {
+        for (point, accumulated) in self.points.iter().zip(impulses).take(self.count) {
             let relative = ends.relative_velocity(point);
-            let before = point.tangent_impulse;
+            let before = accumulated.tangent;
             let wanted =
                 [0, 1].map(|i| before[i] - point.tangent_mass[i] * relative.dot(self.tangents[i]));
-            let after = within_cone(wanted, self.friction * point.normal_impulse);
-            point.tangent_impulse = after;
+            let after = within_cone(wanted, self.friction * accumulated.normal);
+            accumulated.tangent = after;
             let applied = [0, 1].map(|i| after[i] - before[i]);
             let impulse = self.tangents[0] * applied[0] + self.tangents[1] * applied[1];
             ends.push_apart(point, impulse);
         }
     }
 
-    fn solve_normal(&mut self, ends: &mut Ends, sweep: &Sweep) {
-        for point in self.points.iter_mut().take(self.count) {
+    fn solve_normal(&self, impulses: &mut Impulses, ends: &mut Ends, sweep: &Sweep) {
+        for (point, accumulated) in self.points.iter().zip(impulses).take(self.count) {
             let moved = (ends.b.shift - ends.a.shift)
                 + (ends.b.turn.rotate(point.anchor_b) - ends.a.turn.rotate(point.anchor_a));
             let separation = moved.dot(self.normal) + point.base_separation;
             let (bias, mass_scale, impulse_scale) = sweep.terms(separation, &self.softness);
             let approach = self.normal.dot(ends.relative_velocity(point));
             let delta = -point.normal_mass * mass_scale * (approach + bias)
-                - impulse_scale * point.normal_impulse;
-            let applied = Self::accumulate(point, delta);
+                - impulse_scale * accumulated.normal;
+            let applied = accumulated.accumulate(delta);
             ends.push_apart(point, self.normal * applied);
         }
     }
 
-    /// Adds `delta` to the accumulated normal impulse of `point`, which may not go below zero (a
-    /// contact pushes, never pulls); returns the impulse that was applied.
-    fn accumulate(point: &mut Point, delta: f32) -> f32 {
-        let total = (point.normal_impulse + delta).max(0.0);
-        let applied = total - point.normal_impulse;
-        point.normal_impulse = total;
-        point.max_normal_impulse = point.max_normal_impulse.max(total);
-        applied
-    }
-
     /// Bounce: after the last sub-step, a point that approached faster than the threshold and
     /// pushed at all gets the speed `restitution` times its approach speed away from the other body.
-    pub(super) fn restitute(&mut self, ends: &mut Ends, sweep: &Sweep) {
+    fn restitute(&self, impulses: &mut Impulses, ends: &mut Ends, sweep: &Sweep) {
         if self.restitution == 0.0 {
             return;
         }
         let approach = -sweep.restitution_threshold;
-        let bounces = |point: &&mut Point| {
-            point.relative_velocity <= approach && point.max_normal_impulse != 0.0
+        let bounces = |(point, accumulated): &(&Point, &mut Impulse)| {
+            point.relative_velocity <= approach && accumulated.max_normal != 0.0
         };
-        for point in self.points.iter_mut().take(self.count).filter(bounces) {
+        for (point, accumulated) in self
+            .points
+            .iter()
+            .zip(impulses)
+            .take(self.count)
+            .filter(bounces)
+        {
             let speed = self.normal.dot(ends.relative_velocity(point));
             let delta = -point.normal_mass * (speed + self.restitution * point.relative_velocity);
-            let applied = Self::accumulate(point, delta);
+            let applied = accumulated.accumulate(delta);
             ends.push_apart(point, self.normal * applied);
         }
     }
@@ -492,9 +587,9 @@ mod tests {
         // Touching at a point 0.5 to the side of the ball's centre. The ball turns a quarter about
         // z, which carries that point to 0.5 below the centre, into the other body: an overlap.
         let (mut contact, mut fixed, mut ball) = constraint(0.0, 0.0, 0.0);
-        contact.points[0].anchor_a = Vec3::ZERO;
-        contact.points[0].anchor_b = Vec3::new(0.5, 0.0, 0.0);
-        contact.points[0].base_separation = 0.0;
+        contact.shape.points[0].anchor_a = Vec3::ZERO;
+        contact.shape.points[0].anchor_b = Vec3::new(0.5, 0.0, 0.0);
+        contact.shape.points[0].base_separation = 0.0;
         ball.turn =
             Quat::from_axis_angle(Vec3::Z, -std::f32::consts::FRAC_PI_2).unwrap_or(Quat::IDENTITY);
         solve_once(&mut contact, &mut fixed, &mut ball, true);
@@ -505,7 +600,7 @@ mod tests {
     fn friction_stops_a_sliding_ball_up_to_the_cone() {
         let (mut contact, mut fixed, mut ball) = constraint(0.0, 0.5, 0.0);
         // Pressed down so that the normal impulse is known and the cone has a size.
-        contact.points[0].normal_impulse = 1.0;
+        contact.impulses[0].normal = 1.0;
         ball.velocity = Vec3::new(0.3, 0.0, 0.4);
         solve_once(&mut contact, &mut fixed, &mut ball, true);
         // The ball is a unit mass at the point, so a tangent impulse changes its velocity by that
@@ -520,8 +615,8 @@ mod tests {
     fn a_slow_approach_does_not_bounce_and_a_fast_one_does() {
         for (approach, bounces) in [(-0.5_f32, false), (-5.0, true)] {
             let (mut contact, mut fixed, mut ball) = constraint(0.0, 0.0, 1.0);
-            contact.points[0].relative_velocity = approach;
-            contact.points[0].max_normal_impulse = 1.0;
+            contact.shape.points[0].relative_velocity = approach;
+            contact.impulses[0].max_normal = 1.0;
             ball.velocity = Vec3::ZERO;
             let mut ends = Ends {
                 a: &mut fixed,
@@ -540,8 +635,8 @@ mod tests {
     #[test]
     fn nothing_bounces_that_never_pushed() {
         let (mut contact, mut fixed, mut ball) = constraint(0.0, 0.0, 1.0);
-        contact.points[0].relative_velocity = -5.0;
-        contact.points[0].max_normal_impulse = 0.0;
+        contact.shape.points[0].relative_velocity = -5.0;
+        contact.impulses[0].max_normal = 0.0;
         let mut ends = Ends {
             a: &mut fixed,
             b: &mut ball,
@@ -555,8 +650,8 @@ mod tests {
         // Approach slower than the threshold but with a push in the record: the second condition
         // alone must not trigger a bounce.
         let (mut contact, mut fixed, mut ball) = constraint(0.0, 0.0, 1.0);
-        contact.points[0].relative_velocity = -0.2;
-        contact.points[0].max_normal_impulse = 2.0;
+        contact.shape.points[0].relative_velocity = -0.2;
+        contact.impulses[0].max_normal = 2.0;
         let mut ends = Ends {
             a: &mut fixed,
             b: &mut ball,
