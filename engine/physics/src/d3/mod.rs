@@ -13,6 +13,8 @@
 mod aabb;
 mod box_box;
 mod debug_draw;
+mod gjk;
+mod hull;
 mod manifold;
 mod narrowphase;
 mod shape;
@@ -32,6 +34,7 @@ pub use crate::core::{
 };
 pub use aabb::Aabb3;
 pub use debug_draw::{ARC_SEGMENTS, DebugColour, IPhysicsDebugDraw, NORMAL_LENGTH, draw_debug};
+pub use hull::{Hull, MAX_HULL_VERTICES};
 pub use manifold::{ContactPoint3, MAX_MANIFOLD_POINTS, Manifold3};
 pub use shape::Shape3;
 

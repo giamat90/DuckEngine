@@ -58,7 +58,7 @@ fn about_y(angle: f32) -> Quat {
     about(Vec3::Y, angle)
 }
 
-fn valid(shape: Shape3, density: f32) -> (f32, Vec3) {
+fn valid(shape: &Shape3, density: f32) -> (f32, Vec3) {
     let Some(props) = mass_and_inertia(shape, density) else {
         panic!("{shape:?} at {density} is a valid body");
     };
@@ -192,8 +192,8 @@ fn the_hash_sees_orientation_shape_and_angular_velocity() -> Result<(), PhysicsE
 
 // ---- mass properties ------------------------------------------------------------------------
 
-fn mass_and_inertia(shape: Shape3, density: f32) -> Option<(f32, Vec3)> {
-    D3::mass_properties(&shape, density).ok().map(|p| {
+fn mass_and_inertia(shape: &Shape3, density: f32) -> Option<(f32, Vec3)> {
+    D3::mass_properties(shape, density).ok().map(|p| {
         (
             p.mass,
             Vec3::new(
@@ -210,7 +210,7 @@ fn a_sphere_has_the_closed_form_mass_and_inertia() {
     let (r, rho) = (0.5_f32, 3.0_f32);
     let mass = rho * 4.0 / 3.0 * PI * r * r * r;
     let inertia = 0.4 * mass * r * r;
-    let (m, i) = valid(sphere(r), rho);
+    let (m, i) = valid(&sphere(r), rho);
     assert!(near(m, mass, 1e-5));
     for component in [i.x, i.y, i.z] {
         assert!(near(component, inertia, 1e-5), "{i:?} vs {inertia}");
@@ -221,7 +221,7 @@ fn a_sphere_has_the_closed_form_mass_and_inertia() {
 fn a_box_has_the_closed_form_mass_and_inertia() {
     let (hx, hy, hz, rho) = (0.5_f32, 1.5_f32, 1.25_f32, 2.0_f32);
     let mass = rho * 8.0 * hx * hy * hz;
-    let (m, i) = valid(cuboid(hx, hy, hz), rho);
+    let (m, i) = valid(&cuboid(hx, hy, hz), rho);
     assert!(near(m, mass, 1e-5));
     // I_x = m (w_y^2 + w_z^2) / 12 with full widths w = 2 h, that is m (h_y^2 + h_z^2) / 3.
     assert!(near(i.x, mass * (hy * hy + hz * hz) / 3.0, 1e-5));
@@ -234,7 +234,7 @@ fn a_capsule_is_a_cylinder_plus_a_sphere_about_its_axis() {
     let (h, r, rho) = (0.75_f32, 0.25_f32, 2.0_f32);
     let cylinder = rho * PI * r * r * 2.0 * h;
     let ball = rho * 4.0 / 3.0 * PI * r * r * r;
-    let (m, i) = valid(capsule(h, r), rho);
+    let (m, i) = valid(&capsule(h, r), rho);
     assert!(near(m, cylinder + ball, 1e-5));
     // About the local Y axis: cylinder m r^2 / 2 plus sphere 2 m r^2 / 5.
     assert!(
@@ -251,8 +251,8 @@ fn a_capsule_is_a_cylinder_plus_a_sphere_about_its_axis() {
 
 #[test]
 fn a_very_short_capsule_is_nearly_a_sphere() {
-    let (m, i) = valid(capsule(1.0e-4, 0.5), 1.0);
-    let (sm, si) = valid(sphere(0.5), 1.0);
+    let (m, i) = valid(&capsule(1.0e-4, 0.5), 1.0);
+    let (sm, si) = valid(&sphere(0.5), 1.0);
     assert!(near(m, sm, 1e-3));
     assert!(near(i.x, si.x, 1e-3) && near(i.y, si.y, 1e-3) && near(i.z, si.z, 1e-3));
 }
@@ -261,42 +261,42 @@ fn a_very_short_capsule_is_nearly_a_sphere() {
 fn shapes_and_densities_that_are_not_positive_and_finite_are_refused() {
     let bad = [0.0, -1.0, f32::NAN, f32::INFINITY];
     for v in bad {
-        assert!(mass_and_inertia(sphere(v), 1.0).is_none(), "radius {v}");
+        assert!(mass_and_inertia(&sphere(v), 1.0).is_none(), "radius {v}");
         assert!(
-            mass_and_inertia(cuboid(v, 1.0, 1.0), 1.0).is_none(),
+            mass_and_inertia(&cuboid(v, 1.0, 1.0), 1.0).is_none(),
             "box x {v}"
         );
         assert!(
-            mass_and_inertia(cuboid(1.0, v, 1.0), 1.0).is_none(),
+            mass_and_inertia(&cuboid(1.0, v, 1.0), 1.0).is_none(),
             "box y {v}"
         );
         assert!(
-            mass_and_inertia(cuboid(1.0, 1.0, v), 1.0).is_none(),
+            mass_and_inertia(&cuboid(1.0, 1.0, v), 1.0).is_none(),
             "box z {v}"
         );
         assert!(
-            mass_and_inertia(capsule(v, 1.0), 1.0).is_none(),
+            mass_and_inertia(&capsule(v, 1.0), 1.0).is_none(),
             "half height {v}"
         );
         assert!(
-            mass_and_inertia(capsule(1.0, v), 1.0).is_none(),
+            mass_and_inertia(&capsule(1.0, v), 1.0).is_none(),
             "capsule radius {v}"
         );
-        assert!(mass_and_inertia(sphere(1.0), v).is_none(), "density {v}");
+        assert!(mass_and_inertia(&sphere(1.0), v).is_none(), "density {v}");
     }
     // The mass is finite but the moment of inertia overflows.
-    assert!(mass_and_inertia(sphere(1.0e10), 1.0).is_none());
+    assert!(mass_and_inertia(&sphere(1.0e10), 1.0).is_none());
     // Two negative sides make a positive volume: the shape must still be refused.
-    assert!(mass_and_inertia(cuboid(-1.0, -2.0, 3.0), 1.0).is_none());
-    assert!(mass_and_inertia(cuboid(-1.0, 2.0, -3.0), 1.0).is_none());
-    assert!(mass_and_inertia(cuboid(1.0, -2.0, -3.0), 1.0).is_none());
-    assert!(mass_and_inertia(capsule(-1.5, -2.5), 1.0).is_none());
+    assert!(mass_and_inertia(&cuboid(-1.0, -2.0, 3.0), 1.0).is_none());
+    assert!(mass_and_inertia(&cuboid(-1.0, 2.0, -3.0), 1.0).is_none());
+    assert!(mass_and_inertia(&cuboid(1.0, -2.0, -3.0), 1.0).is_none());
+    assert!(mass_and_inertia(&capsule(-1.5, -2.5), 1.0).is_none());
     assert!(
-        mass_and_inertia(sphere(1.0e20), 1.0).is_none(),
+        mass_and_inertia(&sphere(1.0e20), 1.0).is_none(),
         "mass overflows"
     );
     assert!(
-        mass_and_inertia(sphere(1.0e-20), 1.0).is_none(),
+        mass_and_inertia(&sphere(1.0e-20), 1.0).is_none(),
         "inertia underflows"
     );
 }
@@ -311,8 +311,8 @@ fn a_world_refuses_an_invalid_shape() -> Result<(), PhysicsError> {
 
 // ---- bounds ---------------------------------------------------------------------------------
 
-fn bounds_of(shape: Shape3, position: Vec3, rotation: Quat) -> Aabb3 {
-    D3::shape_bounds(&shape, position, rotation)
+fn bounds_of(shape: &Shape3, position: Vec3, rotation: Quat) -> Aabb3 {
+    D3::shape_bounds(shape, position, rotation)
 }
 
 fn corners_match(b: Aabb3, min: Vec3, max: Vec3) -> bool {
@@ -324,7 +324,7 @@ fn corners_match(b: Aabb3, min: Vec3, max: Vec3) -> bool {
 #[test]
 fn a_sphere_is_bounded_by_its_radius_at_any_orientation() {
     for q in [Quat::IDENTITY, about_y(0.7)] {
-        let b = bounds_of(sphere(2.0), Vec3::new(1.0, -3.0, 4.0), q);
+        let b = bounds_of(&sphere(2.0), Vec3::new(1.0, -3.0, 4.0), q);
         assert!(
             corners_match(b, Vec3::new(-1.0, -5.0, 2.0), Vec3::new(3.0, -1.0, 6.0)),
             "{b:?}"
@@ -335,7 +335,7 @@ fn a_sphere_is_bounded_by_its_radius_at_any_orientation() {
 #[test]
 fn an_unturned_box_is_bounded_by_its_half_extents() {
     let b = bounds_of(
-        cuboid(2.0, 1.0, 0.5),
+        &cuboid(2.0, 1.0, 0.5),
         Vec3::new(10.0, 5.0, 0.0),
         Quat::IDENTITY,
     );
@@ -347,7 +347,7 @@ fn an_unturned_box_is_bounded_by_its_half_extents() {
 
 #[test]
 fn a_box_turned_a_quarter_turn_about_y_swaps_x_and_z() {
-    let b = bounds_of(cuboid(2.0, 1.0, 0.5), Vec3::ZERO, about_y(FRAC_PI_2));
+    let b = bounds_of(&cuboid(2.0, 1.0, 0.5), Vec3::ZERO, about_y(FRAC_PI_2));
     assert!(
         corners_match(b, Vec3::new(-0.5, -1.0, -2.0), Vec3::new(0.5, 1.0, 2.0)),
         "{b:?}"
@@ -356,7 +356,7 @@ fn a_box_turned_a_quarter_turn_about_y_swaps_x_and_z() {
 
 #[test]
 fn a_box_turned_an_eighth_of_a_turn_grows_by_the_sum_of_its_extents() {
-    let b = bounds_of(cuboid(2.0, 1.0, 0.5), Vec3::ZERO, about_y(FRAC_PI_4));
+    let b = bounds_of(&cuboid(2.0, 1.0, 0.5), Vec3::ZERO, about_y(FRAC_PI_4));
     let reach = 2.5 * std::f32::consts::FRAC_1_SQRT_2;
     assert!(
         corners_match(
@@ -371,14 +371,14 @@ fn a_box_turned_an_eighth_of_a_turn_grows_by_the_sum_of_its_extents() {
 #[test]
 fn a_capsule_is_bounded_along_its_turned_axis_plus_its_radius() {
     // Upright: the axis is Y.
-    let b = bounds_of(capsule(1.0, 0.5), Vec3::ZERO, Quat::IDENTITY);
+    let b = bounds_of(&capsule(1.0, 0.5), Vec3::ZERO, Quat::IDENTITY);
     assert!(
         corners_match(b, Vec3::new(-0.5, -1.5, -0.5), Vec3::new(0.5, 1.5, 0.5)),
         "{b:?}"
     );
     // Turned a quarter turn about Z: the axis is -X, and the extent along X is half_height + radius.
     let turned = about(Vec3::Z, FRAC_PI_2);
-    let b = bounds_of(capsule(1.0, 0.5), Vec3::new(0.0, 2.0, 0.0), turned);
+    let b = bounds_of(&capsule(1.0, 0.5), Vec3::new(0.0, 2.0, 0.0), turned);
     assert!(
         corners_match(b, Vec3::new(-1.5, 1.5, -0.5), Vec3::new(1.5, 2.5, 0.5)),
         "{b:?}"
@@ -388,13 +388,13 @@ fn a_capsule_is_bounded_along_its_turned_axis_plus_its_radius() {
 #[test]
 fn a_position_that_is_not_finite_or_overflows_gives_invalid_bounds() {
     let s = sphere(1.0);
-    assert!(bounds_of(s, Vec3::ZERO, Quat::IDENTITY).is_valid());
-    assert!(!bounds_of(s, Vec3::new(f32::NAN, 0.0, 0.0), Quat::IDENTITY).is_valid());
-    assert!(!bounds_of(s, Vec3::new(0.0, f32::INFINITY, 0.0), Quat::IDENTITY).is_valid());
-    assert!(!bounds_of(s, Vec3::new(0.0, 0.0, f32::NAN), Quat::IDENTITY).is_valid());
+    assert!(bounds_of(&s, Vec3::ZERO, Quat::IDENTITY).is_valid());
+    assert!(!bounds_of(&s, Vec3::new(f32::NAN, 0.0, 0.0), Quat::IDENTITY).is_valid());
+    assert!(!bounds_of(&s, Vec3::new(0.0, f32::INFINITY, 0.0), Quat::IDENTITY).is_valid());
+    assert!(!bounds_of(&s, Vec3::new(0.0, 0.0, f32::NAN), Quat::IDENTITY).is_valid());
     let huge = sphere(3.0e38);
-    assert!(!bounds_of(huge, Vec3::new(f32::MAX, 0.0, 0.0), Quat::IDENTITY).is_valid());
-    assert!(!bounds_of(huge, Vec3::new(-f32::MAX, 0.0, 0.0), Quat::IDENTITY).is_valid());
+    assert!(!bounds_of(&huge, Vec3::new(f32::MAX, 0.0, 0.0), Quat::IDENTITY).is_valid());
+    assert!(!bounds_of(&huge, Vec3::new(-f32::MAX, 0.0, 0.0), Quat::IDENTITY).is_valid());
 }
 
 // ---- the box type ---------------------------------------------------------------------------
@@ -619,7 +619,7 @@ fn bounds_of_a_turned_box_and_capsule_match_the_extreme_points() {
         lo = lo.min(c);
         hi = hi.max(c);
     }
-    let b = bounds_of(cuboid(h.x, h.y, h.z), position, q);
+    let b = bounds_of(&cuboid(h.x, h.y, h.z), position, q);
     assert!(corners_match(b, lo, hi), "{b:?} against {lo:?} {hi:?}");
     // A capsule: the two cap centres, each pushed out by the radius on every axis.
     let (half_height, radius) = (1.5, 0.75);
@@ -629,17 +629,17 @@ fn bounds_of_a_turned_box_and_capsule_match_the_extreme_points() {
         (position + tip).min(position - tip) - r,
         (position + tip).max(position - tip) + r,
     );
-    let b = bounds_of(capsule(half_height, radius), position, q);
+    let b = bounds_of(&capsule(half_height, radius), position, q);
     assert!(corners_match(b, lo, hi), "{b:?} against {lo:?} {hi:?}");
 }
 
 #[test]
 fn a_sphere_and_a_capsule_with_non_unit_sizes_have_the_closed_form_mass() {
-    let (m, i) = valid(sphere(1.5), 2.0);
+    let (m, i) = valid(&sphere(1.5), 2.0);
     let mass = 2.0 * 4.0 / 3.0 * PI * 1.5 * 1.5 * 1.5;
     assert!(near(m, mass, 1e-5) && near(i.x, 0.4 * mass * 2.25, 1e-5));
     let (h, r) = (1.5_f32, 0.75_f32);
-    let (m, _) = valid(capsule(h, r), 2.0);
+    let (m, _) = valid(&capsule(h, r), 2.0);
     let expected = 2.0 * (PI * r * r * 2.0 * h + 4.0 / 3.0 * PI * r * r * r);
     assert!(near(m, expected, 1e-5));
 }
@@ -699,7 +699,7 @@ fn sliced_capsule(half_height: f64, radius: f64, density: f64) -> (f64, f64, f64
 #[test]
 fn a_capsule_matches_a_numerical_integration_of_its_slices() {
     for (h, r) in [(1.5_f32, 0.75_f32), (0.2, 0.5), (3.0, 0.1)] {
-        let (m, i) = valid(capsule(h, r), 2.0);
+        let (m, i) = valid(&capsule(h, r), 2.0);
         let (rm, ralong, racross) = sliced_capsule(f64::from(h), f64::from(r), 2.0);
         let close = |a: f32, b: f64| (f64::from(a) - b).abs() <= 1e-4 * b;
         assert!(close(m, rm), "mass {m} against {rm}");

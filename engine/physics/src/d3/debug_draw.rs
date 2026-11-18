@@ -171,6 +171,11 @@ fn draw_body(body: &Body, sink: &mut dyn IPhysicsDebugDraw) {
             half_height,
             radius,
         } => draw_capsule(sink, &frame, (half_height, radius), colour),
+        Shape3::Hull(hull) => {
+            hull.for_each_edge(|from, to| {
+                sink.line(frame.world(from), frame.world(to), colour);
+            });
+        }
     }
     sink.point(frame.centre, colour);
 }

@@ -11,6 +11,7 @@
 //! finite gives `None`, never a manifold with a NaN in it.
 
 use super::box_box;
+use super::gjk::{self, Convex, Core};
 use super::manifold::{ContactPoint3, Manifold3};
 use super::{D3, Shape3};
 use crate::core::{Placed, Quantity};
@@ -436,7 +437,51 @@ fn frame_of(placed: &Placed<D3>) -> Option<BoxFrame> {
     }
 }
 
+/// A shape as GJK sees it: a core and a radius.
+fn convex_of(placed: &Placed<D3>) -> Convex<'_> {
+    let at = placed.position;
+    match placed.shape {
+        Shape3::Sphere { radius } => Convex {
+            core: Core::Point(at),
+            radius,
+        },
+        Shape3::Capsule {
+            half_height,
+            radius,
+        } => {
+            let along = placed.rotation.rotate(Vec3::Y) * half_height;
+            Convex {
+                core: Core::Segment(at - along, at + along),
+                radius,
+            }
+        }
+        Shape3::Box { half_extents } => Convex {
+            core: Core::Box(BoxFrame {
+                centre: at,
+                rotation: placed.rotation,
+                half: half_extents,
+            }),
+            radius: 0.0,
+        },
+        Shape3::Hull(ref hull) => Convex {
+            core: Core::Hull {
+                vertices: hull.vertices(),
+                centre: at,
+                rotation: placed.rotation,
+            },
+            radius: 0.0,
+        },
+    }
+}
+
+fn has_hull(placed: &Placed<D3>) -> bool {
+    matches!(placed.shape, Shape3::Hull(_))
+}
+
 fn dispatch(a: &Placed<D3>, b: &Placed<D3>, margin: f32) -> Option<Manifold3> {
+    if has_hull(a) || has_hull(b) {
+        return gjk::contact(&convex_of(a), &convex_of(b), margin);
+    }
     match (frame_of(a), frame_of(b)) {
         (Some(first), Some(second)) => box_box::collide(&first, &second, margin),
         (Some(frame), None) => round_box(&Round::of(b)?, &frame, margin),
