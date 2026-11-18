@@ -15,23 +15,27 @@
 //!
 //! A constraint with no awake dynamic body (all its bodies sleep or are static) is not solved; its
 //! warm start is kept as it is. A body that no constraint touches takes one semi-implicit Euler
-//! step of length `dt`, exactly as before the solver existed. Joints are card 8-7: the joint list
-//! is not read. The integrator has no gyroscopic term (card 8-3).
+//! step of length `dt`, exactly as before the solver existed. Joints (card 8-7) are
+//! solved first in every pass, see `joint`. The integrator has no gyroscopic term (card 8-3).
 
 mod body;
 mod constraint;
+mod joint;
 mod warm;
 
 use self::body::{SolverBody, StepTerms};
 use self::constraint::{Constraint, Ends, Link, Pass, Setup, Surface};
+use self::joint::{JointConstraint, JointPass, JointSet, JointSetup};
 use self::warm::WarmCache;
 use crate::core::cells::index_u32;
-use crate::core::soft::{HERTZ_LIMIT_FRACTION, STATIC_STIFFNESS_FACTOR, Softness, Sweep};
+use crate::core::soft::{
+    HERTZ_LIMIT_FRACTION, JointSweep, STATIC_STIFFNESS_FACTOR, Softness, Sweep, rigid_softness,
+};
 use crate::core::{
     Body, BodyKind, ContactManifold, ContactSolver, JointEntry, Motion, PhysicsError, SolverConfig,
     SolverStats, StateHasher, StepFrame,
 };
-use crate::d3::D3;
+use crate::d3::{D3, Joint3};
 use base::fpenv::FpGuard;
 
 /// The scalar contact solver of the 3D instance. All storage is allocated by [`Solver3::new`].
@@ -53,6 +57,8 @@ pub struct Solver3 {
     warm: WarmCache,
     /// The impulses of the step being solved.
     next: WarmCache,
+    /// The joints of the step. They are solved serially, before the contacts, in every pass.
+    joints: JointSet,
 }
 
 /// The two ends of a constraint, or `None` when a body is missing (cannot happen for manifolds the
@@ -128,7 +134,7 @@ impl ContactSolver<D3> for Solver3 {
         config: SolverConfig,
         max_bodies: u32,
         max_manifolds: u32,
-        _max_joints: u32,
+        max_joints: u32,
     ) -> Result<Self, PhysicsError> {
         config.validate()?;
         let bodies = max_bodies as usize;
@@ -146,6 +152,7 @@ impl ContactSolver<D3> for Solver3 {
             max_constraints: manifolds,
             warm: WarmCache::new(manifolds),
             next: WarmCache::new(manifolds),
+            joints: JointSet::new(max_joints as usize),
         })
     }
 
@@ -153,7 +160,7 @@ impl ContactSolver<D3> for Solver3 {
         &mut self,
         bodies: &mut [Option<Body<D3>>],
         contacts: &[ContactManifold<D3>],
-        _joints: &[JointEntry<D3>],
+        joints: &[JointEntry<D3>],
         frame: StepFrame<D3>,
     ) {
         // One deterministic floating-point state for the whole solve; restores what it found.
@@ -163,29 +170,34 @@ impl ContactSolver<D3> for Solver3 {
             gravity: frame.gravity,
             h,
         };
-        self.prepare(bodies, contacts, terms);
+        self.prepare(bodies, contacts, joints, terms);
         self.run_sub_steps(h);
         self.finish(bodies, &frame);
     }
 
     fn is_finite(&self) -> bool {
-        self.next.is_finite()
+        self.next.is_finite() && self.joints.is_finite()
     }
 
     fn stats(&self) -> SolverStats {
+        let (joints_solved, joints_frozen) = self.joints.counts();
         SolverStats {
             solved: self.order.len(),
             frozen: self.constraints.len() - self.order.len(),
+            joints_solved,
+            joints_frozen,
             ..SolverStats::default()
         }
     }
 
     fn commit(&mut self) {
         std::mem::swap(&mut self.warm, &mut self.next);
+        self.joints.commit();
     }
 
     fn write_bits(&self, hasher: &mut StateHasher) {
         self.warm.write_bits(hasher);
+        self.joints.write_bits(hasher);
     }
 }
 
@@ -221,12 +233,14 @@ impl Solver3 {
         &mut self,
         bodies: &[Option<Body<D3>>],
         contacts: &[ContactManifold<D3>],
+        joints: &[JointEntry<D3>],
         terms: StepTerms,
     ) {
         self.touched.fill(false);
         self.active.clear();
         self.constraints.clear();
         self.order.clear();
+        self.joints.clear();
         let (soft, stiff) = self.softness(terms.h);
         let context = Prepare {
             bodies,
@@ -238,6 +252,34 @@ impl Solver3 {
         for entry in contacts {
             self.add_constraint(&context, entry, &mut cursor);
         }
+        for entry in joints {
+            self.add_joint(&context, entry);
+        }
+    }
+
+    /// Adds the joint of `entry`, which is solved when one of its bodies is awake. Joints come after
+    /// the contacts, so the bodies a world without joints touches are touched in the same order.
+    fn add_joint(&mut self, context: &Prepare, entry: &JointEntry<D3>) {
+        let (a, b) = (entry.first.index() as usize, entry.second.index() as usize);
+        let (Some(Some(first)), Some(Some(second))) =
+            (context.bodies.get(a), context.bodies.get(b))
+        else {
+            return;
+        };
+        self.touch(a, first, context.terms);
+        self.touch(b, second, context.terms);
+        let setup = JointSetup {
+            handle: entry.handle,
+            slots: (a, b),
+            bodies: [first, second],
+        };
+        let mut joint = match entry.shape {
+            Joint3::Ball(shape) => JointConstraint::ball(&setup, &shape),
+            Joint3::Hinge(shape) => JointConstraint::hinge(&setup, &shape),
+            Joint3::Distance(shape) => JointConstraint::rod(&setup, &shape),
+        };
+        joint.solved = is_awake(first) || is_awake(second);
+        self.joints.add(joint);
     }
 
     /// Adds the constraint of one manifold; a manifold of a missing body, or one that does not fit
@@ -292,19 +334,31 @@ impl Solver3 {
     fn run_sub_steps(&mut self, h: f32) {
         let solve = self.sweep(h, true);
         let relax = self.sweep(h, false);
+        let joint_solve = self.joint_sweep(h, true);
+        let joint_relax = self.joint_sweep(h, false);
         for _ in 0..self.config.sub_steps {
-            self.sub_step(h, [&solve, &relax]);
+            self.sub_step(h, [&solve, &relax], [&joint_solve, &joint_relax]);
         }
         self.sweep_constraints(Pass::Restitute(&relax));
     }
 
     /// One sub-step: velocities, warm start, soft solve, positions, relax.
-    fn sub_step(&mut self, h: f32, [solve, relax]: [&Sweep; 2]) {
+    fn sub_step(
+        &mut self,
+        h: f32,
+        [solve, relax]: [&Sweep; 2],
+        [joint_solve, joint_relax]: [&JointSweep; 2],
+    ) {
         self.each_active(|body| body.integrate_velocity(h));
+        self.joints.sweep(&mut self.bodies, JointPass::WarmStart);
         self.sweep_constraints(Pass::WarmStart);
+        self.joints
+            .sweep(&mut self.bodies, JointPass::Solve(joint_solve));
         self.sweep_constraints(Pass::Solve(solve));
         self.each_active(|body| body.integrate_position(h));
         for _ in 0..self.config.relax_iterations {
+            self.joints
+                .sweep(&mut self.bodies, JointPass::Solve(joint_relax));
             self.sweep_constraints(Pass::Solve(relax));
         }
     }
@@ -316,6 +370,20 @@ impl Solver3 {
             push_speed: self.config.contact_push_speed,
             slop: self.config.linear_slop,
             restitution_threshold: self.config.restitution_threshold,
+        }
+    }
+
+    fn joint_sweep(&self, h: f32, use_bias: bool) -> JointSweep {
+        JointSweep {
+            h,
+            inv_h: 1.0 / h,
+            use_bias,
+            rigid: rigid_softness(
+                self.config.joint_hertz,
+                self.config.joint_damping_ratio,
+                HERTZ_LIMIT_FRACTION,
+                h,
+            ),
         }
     }
 
@@ -339,6 +407,7 @@ impl Solver3 {
         for constraint in &self.constraints {
             self.next.push(constraint.cached());
         }
+        self.joints.finish();
         for (index, slot) in bodies.iter_mut().enumerate() {
             self.write_back(index, slot, frame);
         }
@@ -521,10 +590,10 @@ mod tests {
             h: H,
         };
         let (soft, stiff) = solver.softness(H);
-        solver.prepare(&bodies, with_floor.manifolds().as_slice(), terms);
+        solver.prepare(&bodies, with_floor.manifolds().as_slice(), &[], terms);
         assert_eq!(solver.constraints[0].softness(), stiff);
         let loose_bodies: Vec<Option<Body<D3>>> = loose.iter().map(|(_, b)| Some(*b)).collect();
-        solver.prepare(&loose_bodies, loose.manifolds().as_slice(), terms);
+        solver.prepare(&loose_bodies, loose.manifolds().as_slice(), &[], terms);
         assert_eq!(solver.constraints[0].softness(), soft);
         Ok(())
     }

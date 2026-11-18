@@ -4,8 +4,9 @@
 //!
 //! Bodies, integration, mass properties, bounds, the state hash, the narrowphase for spheres,
 //! capsules, boxes and convex hulls, the debug-draw port and the contact solver ([`Solver3`], card
-//! 8-6: soft step, friction, warm start, restitution, sleeping; serial, joints are card 8-7 and the
-//! parallel solve card 8-19) are complete. Gyroscopic torque is not modelled (the integrator is semi-implicit
+//! 8-6: soft step, friction, warm start, restitution, sleeping; serial; the parallel solve is card 8-19)
+//! and the joints ([`Joint3`], card 8-7: ball-and-socket, hinge with limits, distance) are complete.
+//! Gyroscopic torque is not modelled (the integrator is semi-implicit
 //! Euler on the angular velocity). Known limitation: with no gyroscopic term a torque-free body keeps
 //! its angular velocity, which is not physical for a body whose principal moments differ (angular
 //! momentum should be what is kept). 2D has no such term to miss.
@@ -15,12 +16,13 @@ mod box_box;
 mod debug_draw;
 mod gjk;
 mod hull;
+mod joint;
 mod manifold;
 mod narrowphase;
 mod shape;
 mod solver;
 
-use crate::core::{Dim, HashBits, MassProperties, NoJoint, Placed, Quantity, StateHasher};
+use crate::core::{Dim, HashBits, MassProperties, Placed, Quantity, StateHasher};
 use base::math::{Quat, Vec3};
 
 pub use crate::core::{
@@ -34,6 +36,7 @@ pub use crate::core::{
 pub use aabb::Aabb3;
 pub use debug_draw::{ARC_SEGMENTS, DebugColour, IPhysicsDebugDraw, NORMAL_LENGTH, draw_debug};
 pub use hull::{Hull, MAX_HULL_VERTICES};
+pub use joint::{AngleLimits, BallJoint3, DistanceJoint3, HingeJoint3, Joint3, LengthLimits};
 pub use manifold::{ContactPoint3, MAX_MANIFOLD_POINTS, Manifold3};
 pub use shape::Shape3;
 pub use solver::Solver3;
@@ -58,6 +61,12 @@ pub type ContactManifold = crate::core::ContactManifold<D3>;
 pub type ManifoldList = crate::core::ManifoldList<D3>;
 /// A handle to a 3D body.
 pub type BodyHandle = crate::core::BodyHandle<D3>;
+/// Names one joint of a 3D world.
+pub type JointHandle = crate::core::JointHandle<D3>;
+/// The description a 3D joint is created from.
+pub type JointDesc = crate::core::JointDesc<D3>;
+/// A live joint of a 3D world.
+pub type JointEntry = crate::core::JointEntry<D3>;
 
 /// Standard gravity, 9.80665 m/s^2 along -Y (right-handed, Y up).
 pub const STANDARD_GRAVITY: Vec3 = Vec3::new(0.0, -9.806_65, 0.0);
@@ -102,7 +111,7 @@ impl Dim for D3 {
     type Bounds = Aabb3;
     type Manifold = Manifold3;
     type Solver = Solver3;
-    type Joint = NoJoint;
+    type Joint = Joint3;
 
     fn apply_inverse_inertia(rot: Quat, inv_inertia: Vec3, torque: Vec3) -> Vec3 {
         world_inverse_inertia(rot, inv_inertia, torque)
