@@ -1,7 +1,8 @@
 //! The built program: a bad command line is refused on any machine; the headless run (`--null`)
 //! needs no window and no GPU and exits 0 with the same state hash every time; a run in a window
-//! needs GLFW, a display and an OpenGL 4.5 driver. Without them it exits with code 3 and the test
-//! reports `not run`; `DUCK_REQUIRE_GL=1` or `DUCK_REQUIRE_GLFW=1` makes that a failure.
+//! needs GLFW, a display and an OpenGL 4.5 driver (`--vulkan`: a Vulkan 1.3 driver). Without them it exits
+//! with code 3 and the test reports `not run`; `DUCK_REQUIRE_GL=1` (OpenGL window), `DUCK_REQUIRE_VK=1`
+//! (Vulkan window) or `DUCK_REQUIRE_GLFW=1` (both) makes that a failure.
 
 use std::process::{Command, Output};
 
@@ -29,6 +30,7 @@ fn a_bad_command_line_exits_two_with_the_usage_of_this_program() {
         &["--frames", "0"][..],
         &["--nope"][..],
         &["--null"][..],
+        &["--vulkan", "--null", "--frames", "3"][..],
         &["--scene", "pyramid"][..],
     ] {
         let output = run(bad);
@@ -61,6 +63,25 @@ fn three_frames_are_drawn_in_a_window_where_a_device_exists() {
         Some(EXIT_NO_DEVICE) => {
             assert!(stderr.starts_with("not run: device not set up"), "{stderr}");
             let strict = required("DUCK_REQUIRE_GL") || required("DUCK_REQUIRE_GLFW");
+            assert!(!strict, "a device is required here: {stderr}");
+            eprintln!("not run: {stderr}");
+        }
+        other => panic!("exit {other:?}: {stdout} {stderr}"),
+    }
+}
+
+#[test]
+fn three_frames_are_drawn_in_a_vulkan_window_where_a_device_exists() {
+    let output = run(&["--vulkan", "--frames", "3"]);
+    let (stdout, stderr) = (
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    match output.status.code() {
+        Some(0) => assert!(stdout.starts_with("drew 3 frames"), "{stdout} {stderr}"),
+        Some(EXIT_NO_DEVICE) => {
+            assert!(stderr.starts_with("not run: device not set up"), "{stderr}");
+            let strict = required("DUCK_REQUIRE_VK") || required("DUCK_REQUIRE_GLFW");
             assert!(!strict, "a device is required here: {stderr}");
             eprintln!("not run: {stderr}");
         }

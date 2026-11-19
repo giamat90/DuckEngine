@@ -10,8 +10,7 @@ pub use app_sprite_sample::cli::{EXIT_FAILED, EXIT_NO_DEVICE, EXIT_OK, EXIT_USAG
 /// The most frames `--frames` accepts.
 pub const MAX_FRAMES: u32 = 1_000_000;
 /// The usage line, printed after an argument error.
-pub const USAGE: &str =
-    "usage: app_sandbox3d [--frames N] [--null]  (--null: no window, needs --frames)";
+pub const USAGE: &str = "usage: app_sandbox3d [--frames N] [--null] [--vulkan]  (--null: no window, needs --frames; --vulkan: draw with Vulkan 1.3 instead of OpenGL 4.5)";
 
 /// What the command line asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -20,6 +19,8 @@ pub struct Args {
     pub frames: Option<u32>,
     /// Run on the Null render device without a window.
     pub null: bool,
+    /// Draw in the window with the Vulkan 1.3 device instead of the OpenGL 4.5 one.
+    pub vulkan: bool,
 }
 
 /// A command line the sandbox refuses.
@@ -33,6 +34,8 @@ pub enum ArgsError {
     BadValue(String),
     /// `--null` without `--frames`.
     NullNeedsFrames,
+    /// `--vulkan` together with `--null` (the Null device has no graphics API to choose).
+    VulkanWithNull,
 }
 
 impl fmt::Display for ArgsError {
@@ -47,6 +50,7 @@ impl fmt::Display for ArgsError {
                 )
             }
             Self::NullNeedsFrames => f.write_str("`--null` needs `--frames N`"),
+            Self::VulkanWithNull => f.write_str("`--vulkan` cannot be combined with `--null`"),
         }
     }
 }
@@ -84,8 +88,8 @@ impl Args {
     /// Parses the arguments after the program name.
     ///
     /// # Errors
-    /// [`ArgsError`] for an unknown argument, a missing or bad `--frames` value, or `--null`
-    /// without `--frames`.
+    /// [`ArgsError`] for an unknown argument, a missing or bad `--frames` value, `--null`
+    /// without `--frames`, or `--null` together with `--vulkan`.
     pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Self, ArgsError> {
         let mut parsed = Self::default();
         let mut args = args.into_iter();
@@ -93,11 +97,15 @@ impl Args {
             match flag.as_str() {
                 "--frames" => parsed.frames = Some(frames_value(args.next())?),
                 "--null" => parsed.null = true,
+                "--vulkan" => parsed.vulkan = true,
                 _ => return Err(ArgsError::Unknown(flag)),
             }
         }
         if parsed.null && parsed.frames.is_none() {
             return Err(ArgsError::NullNeedsFrames);
+        }
+        if parsed.null && parsed.vulkan {
+            return Err(ArgsError::VulkanWithNull);
         }
         Ok(parsed)
     }
@@ -153,11 +161,44 @@ mod tests {
             both,
             Ok(Args {
                 frames: Some(5),
-                null: true
+                null: true,
+                vulkan: false
             })
         );
         let top = Args::parse(words(&["--frames", "1000000"]));
         assert_eq!(top.map(|a| a.frames), Ok(Some(MAX_FRAMES)));
+    }
+
+    #[test]
+    fn vulkan_is_chosen_by_its_flag_and_opengl_is_the_default() {
+        assert!(!Args::default().vulkan);
+        let vulkan = Args::parse(words(&["--vulkan", "--frames", "7"]));
+        assert_eq!(
+            vulkan,
+            Ok(Args {
+                frames: Some(7),
+                null: false,
+                vulkan: true
+            })
+        );
+        assert_eq!(
+            Args::parse(words(&["--vulkan"])).map(|a| a.vulkan),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn vulkan_cannot_be_asked_for_on_the_null_device() {
+        let bad = Args::parse(words(&["--vulkan", "--null", "--frames", "3"]));
+        assert_eq!(bad, Err(ArgsError::VulkanWithNull));
+        let other_order = Args::parse(words(&["--null", "--frames", "3", "--vulkan"]));
+        assert_eq!(other_order, Err(ArgsError::VulkanWithNull));
+        assert!(ArgsError::VulkanWithNull.to_string().contains("--vulkan"));
+    }
+
+    #[test]
+    fn the_usage_line_names_the_vulkan_flag() {
+        assert!(USAGE.contains("[--vulkan]"), "{USAGE}");
     }
 
     #[test]
