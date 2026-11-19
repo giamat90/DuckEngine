@@ -396,6 +396,114 @@ class Cli(unittest.TestCase):
         os.environ["RUSTFLAGS"] = "-C target-cpu=native"
         self.assertEqual(self.run_cli("flags", "--repo", str(repo))[0], 1)
 
+class MarkerPresence(unittest.TestCase):
+    """Card 8-13: a second golden target (the 3D recorder) is present when its recorder file is."""
+
+    MARKER = "engine/physics/tests/golden3d.rs"
+
+    def make(self, trusted_has, head_has):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(root, ignore_errors=True))
+        for name, has in (("trusted", trusted_has), ("head", head_has)):
+            folder = root / name / "engine" / "physics" / "tests"
+            folder.mkdir(parents=True)
+            if has:
+                (folder / "golden3d.rs").write_text("// recorder" + chr(10))
+        return root / "trusted", root / "head"
+
+    def presence(self, trusted_has, head_has):
+        trusted, head = self.make(trusted_has, head_has)
+        return gc.marker_presence(trusted, head, Path(self.MARKER), "3D golden recorder")
+
+    def test_a_recorder_in_the_head_runs_the_job(self):
+        self.assertEqual(self.presence(False, True)[0], "run")
+        self.assertEqual(self.presence(True, True)[0], "run")
+
+    def test_no_recorder_anywhere_is_the_only_skip_and_says_which_file(self):
+        state, message = self.presence(False, False)
+        self.assertEqual(state, "skip")
+        self.assertIn("not run: 3D golden recorder absent", message)
+        self.assertIn(self.MARKER, message)
+
+    def test_a_recorder_on_main_that_the_head_lacks_is_a_failure_not_a_skip(self):
+        state, message = self.presence(True, False)
+        self.assertEqual(state, "fail")
+        self.assertIn("deleted or moved", message)
+
+    def test_a_marker_outside_the_tree_is_refused(self):
+        trusted, head = self.make(False, False)
+        for bad in ("/etc/passwd", "../x", "a/../../x", ""):
+            with self.subTest(bad=bad), self.assertRaises(gc.GoldenError):
+                gc.marker_presence(trusted, head, Path(bad), "x")
+
+    def test_the_default_golden_file_text_is_the_one_of_the_2d_recorder(self):
+        rendered = gc.render_golden(parsed(), toolchain="1.94.1", recorded="test")
+        self.assertIn("# D2 golden hashes of the physics crate (card 4-20).", rendered)
+        self.assertIn("--test determinism -- golden:: --nocapture", rendered)
+
+    def test_a_named_recorder_and_title_go_into_the_golden_file(self):
+        rendered = gc.render_golden(parsed(), toolchain="1.94.1", recorded="test",
+                                    recorder="cargo test -p physics --test golden3d", title="the 3D scenes of the physics crate (card 8-13)")
+        self.assertIn("# D2 golden hashes of the 3D scenes of the physics crate (card 8-13).", rendered)
+        self.assertIn('recorder = "cargo test -p physics --test golden3d"', rendered)
+        self.assertNotIn("--test determinism", rendered)
+        self.assertEqual(gc.parse_golden(rendered).scenes.keys(), parsed().scenes.keys())
+
+
+class MarkerCli(unittest.TestCase):
+    def run_cli(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = gc.main(list(argv))
+        return code, out.getvalue(), err.getvalue()
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.dir, ignore_errors=True))
+        for name in ("trusted", "head"):
+            (self.dir / name / "engine" / "physics" / "tests").mkdir(parents=True)
+
+    def args(self, *extra):
+        return ("presence", "--trusted", str(self.dir / "trusted"), "--head", str(self.dir / "head"),
+                "--marker", "engine/physics/tests/golden3d.rs", "--label", "3D golden recorder", *extra)
+
+    def test_presence_with_a_marker_skips_and_writes_the_output(self):
+        gh = self.dir / "gh.txt"
+        summary = self.dir / "s.md"
+        code, out, _ = self.run_cli(*self.args("--github-output", str(gh), "--summary", str(summary)))
+        self.assertEqual(code, 0)
+        self.assertIn("present=false", gh.read_text())
+        self.assertIn("::notice::not run: 3D golden recorder absent", out)
+        self.assertIn("not run: 3D golden recorder absent", summary.read_text())
+
+    def test_presence_with_a_marker_runs_when_the_recorder_is_in_the_head(self):
+        (self.dir / "head/engine/physics/tests/golden3d.rs").write_text("x")
+        gh = self.dir / "gh.txt"
+        self.assertEqual(self.run_cli(*self.args("--github-output", str(gh)))[0], 0)
+        self.assertIn("present=true", gh.read_text())
+
+    def test_presence_with_a_marker_fails_when_the_recorder_vanished(self):
+        (self.dir / "trusted/engine/physics/tests/golden3d.rs").write_text("x")
+        code, _, err = self.run_cli(*self.args())
+        self.assertEqual(code, 1)
+        self.assertIn("deleted or moved", err)
+
+    def test_a_marker_needs_a_label_and_the_label_needs_a_marker(self):
+        base = ("presence", "--trusted", str(self.dir / "trusted"), "--head", str(self.dir / "head"))
+        self.assertEqual(self.run_cli(*base, "--marker", "engine/physics/tests/golden3d.rs")[0], 1)
+        self.assertEqual(self.run_cli(*base, "--label", "x")[0], 1)
+
+    def test_record_takes_a_recorder_and_a_title(self):
+        output = self.dir / "out.txt"
+        output.write_text(text(output_lines()), encoding="utf-8")
+        target = self.dir / "g3.toml"
+        code, _, _ = self.run_cli("record", "--output", str(output), "--golden", str(target), "--toolchain", "1.94.1",
+                                  "--recorded", "test", "--recorder", "cargo test -p physics --test golden3d",
+                                  "--title", "the 3D scenes of the physics crate (card 8-13)", "--i-am-changing-the-golden-file")
+        self.assertEqual(code, 0)
+        self.assertIn("golden3d", target.read_text(encoding="utf-8"))
+        self.assertEqual(self.run_cli("verify", "--golden", str(target), "--output", str(output))[0], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

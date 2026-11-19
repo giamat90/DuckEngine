@@ -35,6 +35,7 @@ SKIP_MESSAGE = ("not run: physics benchmark tool absent (engine/tools_physics_be
 NOISE_DIVISOR = 10  # the noise limit is at most a tenth of the warn band (card 4-22, gate_feasibility)
 MAX_ROWS = 255
 MAX_WORKLOAD = 1_000_000
+MAX_LAYERS = 40  # the 3D pyramid: the tool refuses more (engine/tools_physics3d_bench)
 
 
 class GateError(Exception):
@@ -60,7 +61,11 @@ ECS = Profile("ecs", "ECS", "ecs_icount",
               "not run: ECS benchmark tool absent (engine/tools_ecs_bench/Cargo.toml is in neither "
               "the base tree nor the pushed commit)",
               (("entities", "--entities", MAX_WORKLOAD), ("frames", "--frames", MAX_WORKLOAD)))
-PROFILES = {profile.name: profile for profile in (PHYSICS, AUDIO, ECS)}
+PHYSICS3D = Profile("physics3d", "Physics 3D", "physics3d_icount",
+                      "not run: 3D physics benchmark tool absent (engine/tools_physics3d_bench/Cargo.toml is in neither "
+                      "the base tree nor the pushed commit)",
+                      (("layers", "--layers", MAX_LAYERS), ("steps", "--steps", MAX_WORKLOAD)))
+PROFILES = {profile.name: profile for profile in (PHYSICS, AUDIO, ECS, PHYSICS3D)}
 
 
 @dataclass(frozen=True)
