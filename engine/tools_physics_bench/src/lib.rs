@@ -14,6 +14,7 @@ mod overhead;
 mod report;
 mod scaling;
 mod scene;
+pub mod scene3d;
 mod stats;
 
 pub use cli::{Command, Options, USAGE, parse};
@@ -28,8 +29,8 @@ pub use overhead::{
     OverheadKind, OverheadRow, TINY_COUNT, TINY_GRAIN, run_overhead, tiny_job_checksum,
 };
 pub use report::{
-    W1_BUDGET_MS, counters_header, counters_row, overhead_table, scaling_table, stability_table,
-    w1_header, w1_row,
+    W1_BUDGET_MS, counters_header, counters_row, overhead_table, scaling_table, scene3_header,
+    scene3_row, stability_table, w1_header, w1_row,
 };
 pub use scaling::{ScalingRow, WORKER_COUNTS, make_pool, parallel_efficiency, run_scaling};
 pub use scene::{
