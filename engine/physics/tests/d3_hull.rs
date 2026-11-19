@@ -641,6 +641,233 @@ fn a_thin_prism_has_the_volume_of_its_outline_times_its_thickness() {
     }
 }
 
+type Point64 = [f64; 3];
+
+fn sub64(a: Point64, b: Point64) -> Point64 {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn add64(a: Point64, b: Point64) -> Point64 {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+fn scale64(a: Point64, factor: f64) -> Point64 {
+    [a[0] * factor, a[1] * factor, a[2] * factor]
+}
+
+fn dot64(a: Point64, b: Point64) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross64(a: Point64, b: Point64) -> Point64 {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+/// The mean of `indices` of `points`.
+fn mean64(points: &[Point64], indices: &[usize]) -> Point64 {
+    let sum = indices
+        .iter()
+        .fold([0.0; 3], |sum, &i| add64(sum, points[i]));
+    scale64(
+        sum,
+        1.0 / f64::from(u16::try_from(indices.len()).unwrap_or(u16::MAX)),
+    )
+}
+
+/// The points that lie on the plane through points `first`, `second` and `third`, when every other
+/// point is on one side of it (a face of the hull); `None` otherwise or when the three are on a line.
+fn face_through(points: &[Point64], triple: [usize; 3]) -> Option<Vec<usize>> {
+    let [first, second, third] = triple;
+    let normal = cross64(
+        sub64(points[second], points[first]),
+        sub64(points[third], points[first]),
+    );
+    let length = dot64(normal, normal).sqrt();
+    if length < 1.0e-12 {
+        return None;
+    }
+    let side = |point: Point64| dot64(sub64(point, points[first]), normal) / length;
+    let above = points.iter().any(|&point| side(point) > 1.0e-12);
+    let below = points.iter().any(|&point| side(point) < -1.0e-12);
+    if above && below {
+        return None;
+    }
+    Some(
+        (0..points.len())
+            .filter(|&index| side(points[index]).abs() <= 1.0e-12)
+            .collect(),
+    )
+}
+
+/// The distinct faces of the hull of `points`, each as the sorted indices of its points.
+fn faces_of(points: &[Point64]) -> Vec<Vec<usize>> {
+    let count = points.len();
+    let triples = (0..count).flat_map(move |first| {
+        (first + 1..count)
+            .flat_map(move |second| (second + 1..count).map(move |third| [first, second, third]))
+    });
+    let mut faces: Vec<Vec<usize>> = Vec::new();
+    for triple in triples {
+        let found = face_through(points, triple);
+        if let Some(face) = found.filter(|face| !faces.contains(face)) {
+            faces.push(face);
+        }
+    }
+    faces
+}
+
+/// The volume of the cone from `apex` over the face with the given points: the face is ordered
+/// round its middle and cut into triangles.
+fn cone_volume(points: &[Point64], face: &[usize], apex: Point64) -> f64 {
+    let middle = mean64(points, face);
+    let first_arm = sub64(points[face[0]], middle);
+    let normal = cross64(first_arm, sub64(points[face[1]], middle));
+    let normal = scale64(normal, 1.0 / dot64(normal, normal).sqrt());
+    let across = cross64(normal, first_arm);
+    // A diamond angle: grows with the angle round the middle, without a trigonometric function.
+    let angle = |index: usize| {
+        let arm = sub64(points[index], middle);
+        let (x, y) = (dot64(arm, first_arm), dot64(arm, across));
+        let share = x / (x.abs() + y.abs());
+        if y >= 0.0 { 1.0 - share } else { 3.0 + share }
+    };
+    let mut ring = face.to_vec();
+    ring.sort_by(|&a, &b| angle(a).total_cmp(&angle(b)));
+    let mut area_vector = [0.0; 3];
+    for (index, &corner) in ring.iter().enumerate() {
+        let next = ring[(index + 1) % ring.len()];
+        let wedge = cross64(sub64(points[corner], middle), sub64(points[next], middle));
+        area_vector = add64(area_vector, scale64(wedge, 0.5));
+    }
+    let height = dot64(sub64(middle, apex), normal).abs();
+    height * dot64(area_vector, normal).abs() / 3.0
+}
+
+/// The volume of the convex hull of `points`, in f64 and by brute force (every triple of points
+/// that has all the others on one side is on a face). An independent reference for the f32 build;
+/// `None` for a flat or empty set.
+fn reference_volume(points: &[Vec3]) -> Option<f64> {
+    let wide: Vec<Point64> = points
+        .iter()
+        .map(|v| [f64::from(v.x), f64::from(v.y), f64::from(v.z)])
+        .collect();
+    let all: Vec<usize> = (0..wide.len()).collect();
+    let inside = mean64(&wide, &all);
+    let volume: f64 = faces_of(&wide)
+        .iter()
+        .map(|face| cone_volume(&wide, face, inside))
+        .sum();
+    (volume > 0.0).then_some(volume)
+}
+
+#[test]
+fn the_reference_volume_is_exact_on_a_box_and_a_tetrahedron() {
+    let boxed = box_corners(
+        Vec3::new(1.0, 2.0, 3.0),
+        Vec3::new(5.0, -1.0, 0.5),
+        Quat::IDENTITY,
+    );
+    assert!((reference_volume(&boxed).unwrap_or(0.0) - 48.0).abs() < 1.0e-9);
+    let tetra = [Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::Z];
+    assert!((reference_volume(&tetra).unwrap_or(0.0) - 1.0 / 6.0).abs() < 1.0e-12);
+    assert_eq!(
+        reference_volume(&[Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::new(1.0, 1.0, 0.0)]),
+        None
+    );
+}
+
+/// `count` random points over a square of side 2, their height random within `thickness`, the
+/// whole turned by a random rotation.
+fn tilted_plate(rng: &mut Pcg32, count: usize, thickness: f32, scale: f32) -> Vec<Vec3> {
+    let turn = random_turn(rng);
+    let mut unit =
+        || f32::from(i16::try_from(rng.below(2001).unwrap_or(0)).unwrap_or(0) - 1000) / 1000.0;
+    (0..count)
+        .map(|_| turn.rotate(Vec3::new(unit(), unit(), (unit() + 1.0) * 0.5 * thickness)) * scale)
+        .collect()
+}
+
+/// How `count` random tilted plates of `thickness` come out: (right, refused, wrong), where wrong is
+/// a volume more than 3% from the f64 reference.
+fn thin_plate_tally(rng: &mut Pcg32, count: usize, thickness: f32, scale: f32) -> (u32, u32, u32) {
+    let (mut right, mut refused, mut wrong) = (0, 0, 0);
+    for _ in 0..200 {
+        let points = tilted_plate(rng, count, thickness, scale);
+        let Some(reference) = reference_volume(&points) else {
+            continue;
+        };
+        match volume_of(&points) {
+            None => refused += 1,
+            Some(v) if (f64::from(v) - reference).abs() > 0.03 * reference => wrong += 1,
+            Some(_) => right += 1,
+        }
+    }
+    (right, refused, wrong)
+}
+
+/// No plate of `thickness` and `count` points is built with a wrong volume, at three sizes: the
+/// size of the plate changes nothing (a plate of 40 and one of a fortieth are as thin).
+fn assert_no_wrong_plate(rng: &mut Pcg32, thickness: f32, count: usize) {
+    for scale in [1.0_f32, 40.0, 0.025] {
+        let (right, refused, wrong) = thin_plate_tally(rng, count, thickness, scale);
+        assert_eq!(
+            wrong, 0,
+            "thickness {thickness}, {count} points, size {scale}: {wrong} wrong, {right} right, {refused} refused"
+        );
+    }
+}
+
+#[test]
+fn a_thin_tilted_plate_is_refused_or_has_the_right_volume_and_never_a_wrong_one() {
+    // Card 8-24. Before: at a thickness of 1e-4 of the size up to 65 of 200 six-point plates came
+    // back with a volume more than 3% off (the worst 91% off), without an error; the plane
+    // tolerance was a fixed share of the size, as large as the plate, and the closed-surface check
+    // could not see a gap that is large against a plate's volume.
+    let mut rng = Pcg32::new(0x0861, 7);
+    for thickness in [1.0e-4_f32, 3.0e-4, 5.0e-4, 1.0e-3, 1.0e-2] {
+        for count in [6_usize, 8, 12, 16] {
+            assert_no_wrong_plate(&mut rng, thickness, count);
+        }
+    }
+}
+
+#[test]
+fn most_plates_of_a_third_of_a_thousandth_are_built() {
+    // Card 8-24. Before: 35% of the 8-point and 76% of the 16-point plates of this thickness were
+    // refused. The planes are now found to a share of the thickness, so far fewer are.
+    let mut rng = Pcg32::new(0x0862, 8);
+    for count in [6_usize, 8, 12, 16] {
+        let (right, refused, wrong) = thin_plate_tally(&mut rng, count, 3.0e-4, 1.0);
+        assert!(
+            refused <= 60 && wrong == 0,
+            "{count} points: {right} right, {refused} refused, {wrong} wrong"
+        );
+    }
+}
+
+#[test]
+fn points_thinner_than_the_limit_are_refused_whatever_their_number() {
+    // Below 5e-5 of the size the two faces of a plate cannot be told from the rounding of the input.
+    let mut rng = Pcg32::new(0x0863, 9);
+    for count in [6_usize, 16, 32] {
+        for _ in 0..20 {
+            assert!(Hull::new(&tilted_plate(&mut rng, count, 1.0e-5, 1.0)).is_err());
+            assert!(Hull::new(&tilted_plate(&mut rng, count, 4.0e-5, 1.0)).is_err());
+        }
+    }
+}
+
+/// A random rotation: three random angles.
+fn random_turn(rng: &mut Pcg32) -> Quat {
+    let mut angle = || f32::from(i16::try_from(rng.below(6283).unwrap_or(0)).unwrap_or(0)) / 1000.0;
+    let (a, b, c) = (angle(), angle(), angle());
+    about(Vec3::Z, a) * about(Vec3::X, b) * about(Vec3::Y, c)
+}
+
 /// The volume of the hull of `points`, or `None` when they are refused.
 fn volume_of(points: &[Vec3]) -> Option<f32> {
     let hull = Hull::new(points).ok()?;

@@ -31,6 +31,19 @@ const JACOBI_SWEEPS: usize = 12;
 /// sum means two faces overlap or a face is missing, and the volume would be wrong by about as
 /// much: the points are then refused instead.
 const CLOSED_SURFACE: f32 = 1.0e-3;
+/// The share of the thickness of the points a point may be from a plane and still lie on it, when
+/// that is less than [`PLANE_TOLERANCE`] of the size (card 8-24): on a thin plate the fixed
+/// tolerance is as large as the plate and planes of its two faces are confused.
+const THICKNESS_SHARE: f32 = 0.01;
+/// The thinnest a hull may be, as a fraction of its size (card 8-24): thinner points are refused,
+/// because the planes of the two faces cannot be told apart from the rounding of the input.
+const MIN_THICKNESS: f32 = 5.0e-5;
+/// The share of the volume that a gap in the closed surface may cost (card 8-24). Moving the
+/// reference point of the tetrahedra by `r` changes the volume by about `|area vector| r / 3`, so a
+/// surface that does not close up well enough for a thin plate gives a volume that is wrong by more
+/// than this share; the points are then refused. The check against the total area alone cannot see
+/// it, because a plate has a large area and a small volume.
+const CLOSED_VOLUME_SHARE: f32 = 0.01;
 /// An off-diagonal term below this (relative to the matrix) is zero.
 const JACOBI_EPSILON: f32 = 1.0e-12;
 
@@ -191,6 +204,40 @@ fn box_centre(points: &[Vec3]) -> Vec3 {
     (low + high) * 0.5
 }
 
+/// Adds the outer product of `d` with itself to `matrix`.
+fn add_spread(matrix: &mut Matrix, d: Vec3) {
+    for (row, line) in matrix.iter_mut().enumerate() {
+        for (cell, col) in line.iter_mut().zip(0..3) {
+            *cell += component(d, row) * component(d, col);
+        }
+    }
+}
+
+/// The smallest width of the points along the three axes of their own spread: the thickness of a
+/// plate. Found from the points alone, so it does not depend on the planes that are still to be
+/// found.
+fn thinnest_width(points: &[Vec3]) -> f32 {
+    let mean =
+        points.iter().fold(Vec3::ZERO, |sum, p| sum + *p) * (1.0 / small_count(points.len()));
+    let mut covariance: Matrix = [[0.0; 3]; 3];
+    for p in points {
+        add_spread(&mut covariance, *p - mean);
+    }
+    let (_, axes) = principal(covariance);
+    (0..3)
+        .map(|index| {
+            let along = column(axes, index);
+            let (low, high) = points
+                .iter()
+                .map(|p| p.dot(along))
+                .fold((f32::MAX, f32::MIN), |(low, high), d| {
+                    (low.min(d), high.max(d))
+                });
+            high - low
+        })
+        .fold(f32::MAX, f32::min)
+}
+
 fn size_of(points: &[Vec3]) -> f32 {
     let first = points[0];
     points
@@ -208,6 +255,10 @@ impl Solid {
         if size <= 0.0 {
             return Err(PhysicsError::InvalidShape);
         }
+        let thickness = thinnest_width(points);
+        if !thickness.is_finite() || thickness < MIN_THICKNESS * size {
+            return Err(PhysicsError::InvalidShape);
+        }
         let mut solid = Self {
             corners: [Vec3::ZERO; MAX_HULL_VERTICES],
             count: 0,
@@ -216,7 +267,7 @@ impl Solid {
                 offset: 0.0,
             }; MAX_PLANES],
             plane_count: 0,
-            tolerance: PLANE_TOLERANCE * size,
+            tolerance: (PLANE_TOLERANCE * size).min(THICKNESS_SHARE * thickness),
         };
         solid.find_planes(points, size)?;
         solid.find_corners(points)?;
@@ -451,7 +502,11 @@ impl Solid {
         for plane in &self.planes[..self.plane_count] {
             self.add_face(plane, reference, &mut sums)?;
         }
-        if !(sums.volume.is_finite() && sums.volume > 0.0 && sums.is_closed()) {
+        let reach = self.corners[..self.count]
+            .iter()
+            .map(|c| (*c - reference).length())
+            .fold(0.0, f32::max);
+        if !(sums.volume.is_finite() && sums.volume > 0.0 && sums.is_closed(reach)) {
             return Err(PhysicsError::InvalidShape);
         }
         let to_centre = sums.first_moment * (1.0 / sums.volume);
@@ -564,9 +619,11 @@ impl Sums {
     }
 
     /// Whether the faces added close up: their area vectors cancel, up to `CLOSED_SURFACE` of the
-    /// total area. Faces that overlap, or leave a gap, do not.
-    fn is_closed(&self) -> bool {
-        self.area_vector.length() <= CLOSED_SURFACE * self.area
+    /// total area, and the gap could not change the volume by more than `CLOSED_VOLUME_SHARE` when
+    /// the corners are `reach` from the reference point. Faces that overlap, or leave a gap, do not.
+    fn is_closed(&self, reach: f32) -> bool {
+        let gap = self.area_vector.length();
+        gap <= CLOSED_SURFACE * self.area && gap * reach <= 3.0 * CLOSED_VOLUME_SHARE * self.volume
     }
 
     fn add_tetrahedron(&mut self, corners: [Vec3; 3]) {
