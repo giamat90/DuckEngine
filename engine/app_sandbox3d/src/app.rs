@@ -1,15 +1,19 @@
-//! The application: opens the window with GLFW and the OpenGL 4.5 device on it, and owns the loop
-//! (pump events, draw one frame with the physics steps the elapsed time amounts to, present).
-//! Needs GLFW, a display and an OpenGL 4.5 driver; without them `run` returns
+//! The application: opens the window with GLFW and the OpenGL 4.5 or (`--vulkan`) the Vulkan 1.3
+//! device on it, and owns the loop (pump events, draw one frame with the physics steps the
+//! elapsed time amounts to, present). Needs GLFW, a display and a driver for the API; without
+//! them `run` returns
 //! [`RunError::NoDevice`] and nothing is drawn. Everything that decides what is drawn is in
 //! [`crate::session`], which the tests run on the Null device; `--null` runs the same loop with
 //! no window.
 
 use crate::cli::{Args, Report, RunError};
-use crate::renderer::LIT_GLSL;
+use crate::renderer::{LIT_GLSL, LIT_SPIRV};
 use crate::sandbox::STEP_TICKS;
 use crate::session::{DEFAULT_SEED, Session};
+use adapter_render_gl::GlDevice;
+use adapter_render_vk::VulkanDevice;
 use app_sprite_sample::app::{EVENT_CAPACITY, FRAME, HEIGHT, Opened, WIDTH, failed, first_size};
+use app_sprite_sample::backend::Backend;
 use app_sprite_sample::looping::{Step, count_frames};
 use assets::dshd::Program;
 use platform::window::EventQueue;
@@ -18,7 +22,13 @@ use render::device::IRenderDevice;
 use render::null::NullDevice;
 use std::time::Instant;
 
-const TITLE: &str = "DuckEngine 8-11: 3D sandbox";
+const TITLE_GL: &str = "DuckEngine 8-11: 3D sandbox (OpenGL)";
+const TITLE_VULKAN: &str = "DuckEngine 8-32: 3D sandbox (Vulkan)";
+
+/// The lit shader in the form the graphics API takes: GLSL text for OpenGL, SPIR-V for Vulkan.
+fn asset_for(vulkan: bool) -> &'static [u8] {
+    if vulkan { LIT_SPIRV } else { LIT_GLSL }
+}
 
 /// Nanoseconds from `earlier` to `later`, saturating (the accumulator's tick is a nanosecond).
 #[must_use]
@@ -87,10 +97,10 @@ fn plan_size(size: (u32, u32), current: (u32, u32)) -> SizePlan {
 }
 
 /// Draws one frame, following a changed framebuffer size first, with the time since `last`. A
-/// minimised window (a zero side) draws nothing and is [`Step::Skipped`]. A GL error flag after
-/// the frame is a failure.
-fn draw_frame(
-    opened: &mut Opened,
+/// minimised window (a zero side) draws nothing and is [`Step::Skipped`]. An error the API kept
+/// to itself (the GL error flag, the Vulkan validation report) after the frame is a failure.
+fn draw_frame<D: Backend>(
+    opened: &mut Opened<D>,
     session: &mut Session,
     last: &mut Instant,
 ) -> Result<Step, RunError> {
@@ -107,16 +117,18 @@ fn draw_frame(
     let ticks = ticks_between(*last, now);
     *last = now;
     session.frame(&mut opened.device, ticks).map_err(failed)?;
-    match opened.device.take_gl_error() {
-        0 => Ok(Step::Drawn),
-        code => Err(RunError::Failed(format!("OpenGL error {code:#06x}"))),
-    }
+    opened.device.check()?;
+    Ok(Step::Drawn)
 }
 
 /// The loop: until `frames` frames are drawn (a minimised window draws none and does not count),
 /// the window is closed or Escape is pressed.
-fn run_window(frames: Option<u32>) -> Result<Report, RunError> {
-    let mut opened = Opened::open(TITLE)?;
+fn run_window<D: Backend>(
+    frames: Option<u32>,
+    title: &'static str,
+    asset: &[u8],
+) -> Result<Report, RunError> {
+    let mut opened = Opened::<D>::open_with(title)?;
     let size = first_size(&mut opened)?;
     let surface = opened
         .device
@@ -126,7 +138,7 @@ fn run_window(frames: Option<u32>) -> Result<Report, RunError> {
             height: size.1,
         })
         .map_err(failed)?;
-    let program = Program::parse(LIT_GLSL).map_err(failed)?;
+    let program = Program::parse(asset).map_err(failed)?;
     let mut session =
         Session::new(&mut opened.device, &program, surface, size, DEFAULT_SEED).map_err(failed)?;
     let mut queue = EventQueue::with_capacity(EVENT_CAPACITY);
@@ -143,14 +155,18 @@ fn run_window(frames: Option<u32>) -> Result<Report, RunError> {
     Ok(report(drawn, &session))
 }
 
-/// Runs what the command line asked for: the window, or with `--null` the loop on the Null device.
+/// Runs what the command line asked for: the window on OpenGL, or with `--vulkan` on Vulkan, or
+/// with `--null` the loop on the Null device.
 ///
 /// # Errors
-/// [`RunError::NoDevice`] when GLFW, the window or the OpenGL 4.5 device is not available,
+/// [`RunError::NoDevice`] when GLFW, the window or the graphics device is not available,
 /// [`RunError::Failed`] when a later step fails.
 pub fn run(args: &Args) -> Result<Report, RunError> {
+    if args.vulkan {
+        return run_window::<VulkanDevice>(args.frames, TITLE_VULKAN, asset_for(true));
+    }
     if !args.null {
-        return run_window(args.frames);
+        return run_window::<GlDevice>(args.frames, TITLE_GL, asset_for(false));
     }
     let frames = args
         .frames
@@ -186,13 +202,22 @@ mod tests {
         let no_frames = Args {
             frames: None,
             null: true,
+            vulkan: false,
         };
         assert!(matches!(run(&no_frames), Err(RunError::Failed(_))));
         let args = Args {
             frames: Some(5),
             null: true,
+            vulkan: false,
         };
         assert_eq!(run(&args).map(|r| r.frames), Ok(5));
+    }
+
+    #[test]
+    fn the_shader_asset_follows_the_graphics_api() {
+        assert_eq!(asset_for(false), LIT_GLSL);
+        assert_eq!(asset_for(true), LIT_SPIRV);
+        assert_ne!(LIT_GLSL, LIT_SPIRV);
     }
 
     #[test]

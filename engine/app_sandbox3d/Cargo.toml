@@ -23,9 +23,9 @@ sync_render = { path = "../sync_render", version = "0.1.0" }
 app_sprite_sample = { path = "../app_sprite_sample", version = "0.1.0" }
 adapter_window_glfw = { path = "../adapter_window_glfw", version = "0.1.0" }
 adapter_render_gl = { path = "../adapter_render_gl", version = "0.1.0" }
+adapter_render_vk = { path = "../adapter_render_vk", version = "0.1.0" }
 
 [dev-dependencies]
-adapter_render_vk = { path = "../adapter_render_vk", version = "0.1.0" }
 tools_shaderc = { path = "../tools_shaderc", version = "0.1.0" }
 jobs = { path = "../jobs", version = "0.1.0" }
 
