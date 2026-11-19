@@ -3,6 +3,7 @@
 > **Status: PROPOSAL v1.64 (2026-11-17).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.76** - Phase 8 milestone review (card 8-15, Class 1, documentation only, ordinary card into `develop`): new page [spikes/phase8-milestone-review](spikes/phase8-milestone-review.md): exit criteria, metrics, open findings, retrospective, phase 9+ inputs and the editor revisit, and the decisions for the owner; closes nothing.
 > - **v1.75** - 3D benchmark measurement and proposed budget (card 8-14, Class 1, `tools_physics_bench::measure3d`, `docs/budgets/physics-benchmark-8-14.md`, ordinary card into `develop`): timed 3D scenes, scaling on the pool, cost against 2D, coverage and mutation of the phase; the budget is a proposal for the owner (O9 a), no governance file touched. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).
 > - **v1.74** - 3D stability, determinism and bench scenes (card 8-12, Class 1, `tools_physics_bench::scene3d`, ordinary card into `develop`): six judged scenes with replay hashes at 1 and N threads and a "3D scenes" table in the bench report; no governance file touched, 3D benchmark registration stays with 8-13. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).
 > - **v1.73** - 3D sandbox (card 8-11, Class 2, new crate `app_sandbox3d`, ordinary card into `develop`): spheres, boxes and capsules fall into a walled box through the ECS and the glue crates (`sync_physics::d3`, `TransformUpdater3D`, `sync_render::d3`), drawn lit with an orbit camera and `input` actions; the lit GLSL and its assets; the lit block layout of card 8-9 changes from three blocks to two (the shader tool takes one uniform block per module); golden stream, replay hash, allocation and GL/Vulkan image tests; [architecture/phase8-3d-v0](architecture/phase8-3d-v0.md), review `reviews/8-11.md`.
@@ -240,6 +241,7 @@ A game engine written from scratch whose two defining properties are **Performan
 | 47 | [spikes/phase7-milestone-review](spikes/phase7-milestone-review.md) | Phase 7 milestone review (card 7-14): exit criteria, ECS target, frame budget proposal, coverage and mutation of the phase 7 crates, open findings, retrospective |
 | 48 | [architecture/phase8-3d-v0](architecture/phase8-3d-v0.md) | Phase 8 design note (card 8-1): the `D=3` physics instance behind the ADR-0018 `Dim` trait (spike first), lit meshes on the existing render port, 3D scene and glue, the 3D sample, proposed cards 8-2 to 8-16, choices O1 to O9 for the owner |
 | 49 | [spikes/3d-core-spike](spikes/3d-core-spike.md) | 3D core spike (card 8-2): a throw-away `D=3` instance on the generic core, the ADR-0018 trigger answers, sizes, what the 3D solver still costs |
+| 50 | [spikes/phase8-milestone-review](spikes/phase8-milestone-review.md) | Phase 8 milestone review (card 8-15): exit criteria, 3D budget proposal, coverage and mutation, open findings, retrospective, phase 9+ inputs, editor revisit |
 
 ## Confidence legend used in this wiki
 
