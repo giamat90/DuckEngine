@@ -100,6 +100,9 @@ const RNG_SEED: u64 = 12;
 
 /// Layers of the pyramid, and boxes of the towers.
 const PYRAMID_LAYERS: u8 = 6;
+
+/// Layers of the large bench pyramid: 1,015 boxes, the counterpart of the 990 of W1.
+const LARGE_LAYERS: u8 = 14;
 const TALL_TOWER: u8 = 10;
 const HEAVY_TOWER: u8 = 5;
 
@@ -134,10 +137,13 @@ pub enum Scene3 {
     MixedPile,
     /// Twelve spheres on ball joints, released horizontally from a fixed anchor.
     Chain,
+    /// A square pyramid of 14 layers, 1,015 boxes: the benchmark scene, not in [`Self::ALL`].
+    LargePyramid,
 }
 
 impl Scene3 {
-    /// Every scene, in the order of the report.
+    /// Every scene of the stability catalogue, in the order of the report. The large pyramid is
+    /// not in it: it is a benchmark scene only.
     pub const ALL: [Self; 6] = [
         Self::Tower,
         Self::Pyramid,
@@ -157,6 +163,7 @@ impl Scene3 {
             Self::SpherePile => "sphere-pile",
             Self::MixedPile => "mixed-pile",
             Self::Chain => "chain",
+            Self::LargePyramid => "large-pyramid",
         }
     }
 
@@ -164,12 +171,13 @@ impl Scene3 {
     #[must_use]
     pub fn bodies(self) -> usize {
         usize::from(match self {
-            Self::Tower => TALL_TOWER,
-            Self::Pyramid => (1..=PYRAMID_LAYERS).map(|n| n * n).sum(),
-            Self::HeavyOnLight => HEAVY_TOWER,
-            Self::SpherePile => SPHERE_PILE,
-            Self::MixedPile => MIXED_PILE,
-            Self::Chain => CHAIN_LINKS,
+            Self::Tower => u16::from(TALL_TOWER),
+            Self::Pyramid => pyramid_bodies(PYRAMID_LAYERS),
+            Self::HeavyOnLight => u16::from(HEAVY_TOWER),
+            Self::SpherePile => u16::from(SPHERE_PILE),
+            Self::MixedPile => u16::from(MIXED_PILE),
+            Self::Chain => u16::from(CHAIN_LINKS),
+            Self::LargePyramid => pyramid_bodies(LARGE_LAYERS),
         })
     }
 
@@ -177,7 +185,9 @@ impl Scene3 {
     #[must_use]
     pub const fn judgement(self) -> Judgement {
         match self {
-            Self::Tower | Self::Pyramid | Self::HeavyOnLight => Judgement::Standing,
+            Self::Tower | Self::Pyramid | Self::HeavyOnLight | Self::LargePyramid => {
+                Judgement::Standing
+            }
             Self::SpherePile | Self::MixedPile => Judgement::Contained,
             Self::Chain => Judgement::Hanging,
         }
@@ -191,7 +201,7 @@ struct Builder {
 }
 
 impl Builder {
-    fn new(bodies: u8, joints: u32, sleeping: bool) -> Result<Self, PhysicsError> {
+    fn new(bodies: u16, joints: u32, sleeping: bool) -> Result<Self, PhysicsError> {
         let capacity = u32::from(bodies) * PAIRS_PER_BODY;
         let world = World::new(WorldConfig {
             max_bodies: u32::from(bodies) + SCENERY_SLOTS,
@@ -264,7 +274,7 @@ fn cube() -> Shape3 {
 
 /// `count` boxes one on the other at x = z = 0; the last has `top_density`.
 fn tower(count: u8, top_density: f32, sleeping: bool) -> Result<Builder, PhysicsError> {
-    let mut b = Builder::new(count, 0, sleeping)?;
+    let mut b = Builder::new(u16::from(count), 0, sleeping)?;
     b.floor()?;
     for level in 0..count {
         let at = Vec3::new(0.0, HALF + f32::from(level) * 2.0 * HALF, 0.0);
@@ -290,13 +300,14 @@ fn pyramid_layer(b: &mut Builder, layer: u8, side: u8) -> Result<(), PhysicsErro
     Ok(())
 }
 
+/// Boxes of a square pyramid of `layers` layers: the squares of 1 to `layers`.
+fn pyramid_bodies(layers: u8) -> u16 {
+    (1..=u16::from(layers)).map(|n| n * n).sum()
+}
+
 /// A square pyramid of `layers` layers: the bottom layer is `layers` boxes on a side.
 fn pyramid(layers: u8, sleeping: bool) -> Result<Builder, PhysicsError> {
-    let mut b = Builder::new(
-        u8::try_from(Scene3::Pyramid.bodies()).unwrap_or(u8::MAX),
-        0,
-        sleeping,
-    )?;
+    let mut b = Builder::new(pyramid_bodies(layers), 0, sleeping)?;
     b.floor()?;
     for layer in 0..layers {
         pyramid_layer(&mut b, layer, layers - layer)?;
@@ -337,7 +348,7 @@ fn pile_shape(rng: &mut Pcg32, index: u32, mixed: bool) -> Shape3 {
 
 /// `count` bodies dropped from a grid, layer by layer, into a walled box.
 fn pile(count: u8, mixed: bool, sleeping: bool) -> Result<Builder, PhysicsError> {
-    let mut b = Builder::new(count, 0, sleeping)?;
+    let mut b = Builder::new(u16::from(count), 0, sleeping)?;
     b.container()?;
     let mut rng = Pcg32::new(RNG_SEED, RNG_STREAM);
     let per_layer = GRID * GRID;
@@ -370,7 +381,7 @@ struct Link {
 
 /// A chain of `count` spheres released horizontally from a fixed anchor.
 fn chain(count: u8, sleeping: bool) -> Result<(Builder, Vec<Link>), PhysicsError> {
-    let mut b = Builder::new(count, u32::from(count), sleeping)?;
+    let mut b = Builder::new(u16::from(count), u32::from(count), sleeping)?;
     let anchor = b.fixed(
         Vec3::new(0.0, ANCHOR_HEIGHT, 0.0),
         Vec3::new(ANCHOR_HALF, ANCHOR_HALF, ANCHOR_HALF),
@@ -430,6 +441,7 @@ impl Scene3World {
             Scene3::SpherePile => (pile(SPHERE_PILE, false, sleeping)?, Vec::new()),
             Scene3::MixedPile => (pile(MIXED_PILE, true, sleeping)?, Vec::new()),
             Scene3::Chain => chain(CHAIN_LINKS, sleeping)?,
+            Scene3::LargePyramid => (pyramid(LARGE_LAYERS, sleeping)?, Vec::new()),
         };
         builder.world.set_execution(execution.clone());
         Ok(Self {

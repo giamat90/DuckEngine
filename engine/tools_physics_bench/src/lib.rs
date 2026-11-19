@@ -10,6 +10,7 @@ mod counters;
 mod error;
 mod icount;
 mod measure;
+mod measure3d;
 mod overhead;
 mod report;
 mod scaling;
@@ -25,12 +26,13 @@ pub use icount::{
     parse_instructions, relative_spread,
 };
 pub use measure::{MIN_ITERATIONS, Measured, measure_w1};
+pub use measure3d::{Measured3, measure_scene3, run_scaling3};
 pub use overhead::{
     OverheadKind, OverheadRow, TINY_COUNT, TINY_GRAIN, run_overhead, tiny_job_checksum,
 };
 pub use report::{
     W1_BUDGET_MS, counters_header, counters_row, overhead_table, scaling_table, scene3_header,
-    scene3_row, stability_table, w1_header, w1_row,
+    scene3_row, scene3_timed_header, scene3_timed_row, stability_table, w1_header, w1_row,
 };
 pub use scaling::{ScalingRow, WORKER_COUNTS, make_pool, parallel_efficiency, run_scaling};
 pub use scene::{
