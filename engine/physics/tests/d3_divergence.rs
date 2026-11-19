@@ -145,23 +145,55 @@ fn a_fast_body_below_the_bound_still_steps() -> Result<(), PhysicsError> {
     Ok(())
 }
 
-/// A body made to move faster than the bound allows is refused at the first step and the world is
-/// left as it was, in both dimensions (the check is in the shared core).
+/// Card 8-36: a speed above the bound is refused where it is given, at creation and at the
+/// setters; exactly the bound is allowed; a refused call changes nothing.
 #[test]
-fn a_body_started_beyond_the_bound_is_refused_in_3d_and_in_2d() -> Result<(), PhysicsError> {
-    let mut w = world(Vec3::ZERO)?;
-    w.create_body(&BodyDesc {
-        linear_velocity: Vec3::new(MAX_SPEED * 1.01, 0.0, 0.0),
+fn a_speed_beyond_the_bound_is_refused_at_create_and_at_set_in_3d() -> Result<(), PhysicsError> {
+    let desc3 = |linear: Vec3, angular: Vec3| BodyDesc {
+        linear_velocity: linear,
+        angular_velocity: angular,
         ..BodyDesc::new(
             BodyKind::Dynamic,
             Vec3::ZERO,
             Shape3::Sphere { radius: 0.5 },
         )
-    })?;
+    };
+    let mut w = world(Vec3::ZERO)?;
+    for (linear, angular) in [
+        (Vec3::new(MAX_SPEED * 1.01, 0.0, 0.0), Vec3::ZERO),
+        (Vec3::new(0.0, -MAX_SPEED, MAX_SPEED), Vec3::ZERO),
+        (Vec3::ZERO, Vec3::new(0.0, MAX_SPIN * 1.01, 0.0)),
+    ] {
+        assert_eq!(
+            w.create_body(&desc3(linear, angular)),
+            Err(PhysicsError::SpeedTooHigh)
+        );
+    }
+    // Exactly the bound is allowed.
+    let body = w.create_body(&desc3(
+        Vec3::new(MAX_SPEED, 0.0, 0.0),
+        Vec3::new(0.0, MAX_SPIN, 0.0),
+    ))?;
+    let calm = w.create_body(&desc3(Vec3::ZERO, Vec3::ZERO))?;
     let before = w.state_hash();
-    assert_eq!(w.step(DT), Err(PhysicsError::Diverged));
-    assert_eq!(w.state_hash(), before);
+    assert_eq!(
+        w.set_linear_velocity(calm, Vec3::new(0.0, MAX_SPEED * 1.01, 0.0)),
+        Err(PhysicsError::SpeedTooHigh)
+    );
+    assert_eq!(
+        w.set_angular_velocity(calm, Vec3::new(0.0, 0.0, MAX_SPIN * 1.01)),
+        Err(PhysicsError::SpeedTooHigh)
+    );
+    assert_eq!(w.state_hash(), before, "a refused setter changed the world");
+    w.set_linear_velocity(calm, Vec3::new(0.0, MAX_SPEED, 0.0))?;
+    w.set_angular_velocity(calm, Vec3::new(0.0, 0.0, MAX_SPIN))?;
+    assert!(w.body(body).is_ok());
+    Ok(())
+}
 
+/// The same in 2D, where the angular speed is a scalar (the check is in the shared core).
+#[test]
+fn a_speed_beyond_the_bound_is_refused_at_create_and_at_set_in_2d() -> Result<(), PhysicsError> {
     let mut w2 = physics::d2::World::new(physics::d2::WorldConfig {
         max_bodies: 4,
         gravity: base::math::Vec2::ZERO,
@@ -173,46 +205,86 @@ fn a_body_started_beyond_the_bound_is_refused_in_3d_and_in_2d() -> Result<(), Ph
         solver: physics::d2::SolverConfig::DEFAULT,
         sleep: physics::d2::SleepConfig::DISABLED,
     })?;
-    w2.create_body(&physics::d2::BodyDesc {
-        angular_velocity: MAX_SPIN * 1.01,
+    let desc2 = |linear: base::math::Vec2, angular: f32| physics::d2::BodyDesc {
+        linear_velocity: linear,
+        angular_velocity: angular,
         ..physics::d2::BodyDesc::new(
             physics::d2::BodyKind::Dynamic,
             base::math::Vec2::ZERO,
             physics::d2::Shape2::Circle { radius: 0.5 },
         )
-    })?;
+    };
+    assert_eq!(
+        w2.create_body(&desc2(base::math::Vec2::new(MAX_SPEED * 1.01, 0.0), 0.0)),
+        Err(PhysicsError::SpeedTooHigh)
+    );
+    assert_eq!(
+        w2.create_body(&desc2(base::math::Vec2::ZERO, -MAX_SPIN * 1.01)),
+        Err(PhysicsError::SpeedTooHigh)
+    );
+    let flat = w2.create_body(&desc2(base::math::Vec2::new(MAX_SPEED, 0.0), -MAX_SPIN))?;
     let before = w2.state_hash();
-    assert_eq!(w2.step(DT), Err(PhysicsError::Diverged));
+    assert_eq!(
+        w2.set_linear_velocity(flat, base::math::Vec2::new(0.0, MAX_SPEED * 1.01)),
+        Err(PhysicsError::SpeedTooHigh)
+    );
+    assert_eq!(
+        w2.set_angular_velocity(flat, MAX_SPIN * 1.01),
+        Err(PhysicsError::SpeedTooHigh)
+    );
     assert_eq!(w2.state_hash(), before);
     Ok(())
 }
 
-/// The way out of a refusal (the world is left as it was, so the cause is still in it): setting a
-/// speed below the bound, or destroying the body, lets the next step succeed.
+/// The way out of a refusal of a diverging scene: the world is left as it was, so the cause is
+/// still in it and the same call gives the same answer; destroying the body lets the next step
+/// succeed.
 #[test]
-fn a_refused_world_steps_again_after_the_speed_is_set_down_or_the_body_is_destroyed()
--> Result<(), PhysicsError> {
-    let mut w = world(Vec3::ZERO)?;
-    let fast = w.create_body(&BodyDesc {
-        linear_velocity: Vec3::new(MAX_SPEED * 2.0, 0.0, 0.0),
-        ..BodyDesc::new(
-            BodyKind::Dynamic,
-            Vec3::ZERO,
-            Shape3::Sphere { radius: 0.5 },
-        )
-    })?;
-    assert_eq!(w.step(DT), Err(PhysicsError::Diverged));
+fn a_diverging_world_steps_again_after_the_body_is_destroyed() -> Result<(), PhysicsError> {
+    let (mut w, door) = tiny_on_a_long_arm(STANDARD_GRAVITY, 3.0, 0.01, 1.0)?;
+    let label = "tiny on a long arm";
+    assert_eq!(
+        run_until_refused(&mut w, door, label)?,
+        Some(PhysicsError::Diverged)
+    );
     assert_eq!(
         w.step(DT),
         Err(PhysicsError::Diverged),
         "the same answer again"
     );
-    w.set_linear_velocity(fast, Vec3::new(10.0, 0.0, 0.0))?;
+    w.destroy_body(door)?;
     assert_eq!(w.step(DT), Ok(()));
+    Ok(())
+}
 
-    w.set_linear_velocity(fast, Vec3::new(0.0, MAX_SPEED * 2.0, 0.0))?;
-    assert_eq!(w.step(DT), Err(PhysicsError::Diverged));
-    w.destroy_body(fast)?;
-    assert_eq!(w.step(DT), Ok(()));
+/// Card 8-36: a force acts in the next step only. A huge one that makes the step diverge used to
+/// stay on the body when the step was refused, so every later step was refused too until the
+/// caller applied the opposite force or destroyed the body. A refused step now consumes the
+/// forces and torques that were applied for it.
+#[test]
+fn a_refused_step_drops_the_forces_and_torques_applied_for_it() -> Result<(), PhysicsError> {
+    let mut w = world(Vec3::ZERO)?;
+    let body = w.create_body(&BodyDesc::new(
+        BodyKind::Dynamic,
+        Vec3::ZERO,
+        Shape3::Sphere { radius: 0.5 },
+    ))?;
+    w.apply_force(body, Vec3::new(1.0e30, 0.0, 0.0))?;
+    assert!(w.step(DT).is_err(), "the huge force is refused");
+    assert_eq!(
+        w.step(DT),
+        Ok(()),
+        "the force was spent on the refused step"
+    );
+    assert!(w.body(body)?.linear_velocity().length() < 1.0);
+
+    w.apply_torque(body, Vec3::new(0.0, 1.0e30, 0.0))?;
+    assert!(w.step(DT).is_err(), "the huge torque is refused");
+    assert_eq!(w.step(DT), Ok(()), "the torque was spent too");
+
+    // A force of the next step is not lost by a step that succeeds, as before.
+    w.apply_force(body, Vec3::new(100.0, 0.0, 0.0))?;
+    w.step(DT)?;
+    assert!(w.body(body)?.linear_velocity().x > 0.0);
     Ok(())
 }

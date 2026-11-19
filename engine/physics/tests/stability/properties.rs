@@ -10,8 +10,8 @@ use super::scene::{Scene, config, hinge_at};
 use base::math::Vec2;
 use base::rng::Pcg32;
 use physics::d2::{
-    BodyDesc, BodyHandle, BodyKind, Joint2, JointDesc, PhysicsError, RevoluteJoint2, Shape2,
-    SleepConfig, SolverExecution, World,
+    BodyDesc, BodyHandle, BodyKind, Joint2, JointDesc, MAX_SPEED, PhysicsError, RevoluteJoint2,
+    Shape2, SleepConfig, SolverExecution, World,
 };
 
 /// Seeds per property.
@@ -349,18 +349,23 @@ fn refused_calls_and_a_refused_step_leave_the_state_unchanged() -> Result<(), Ph
             twin.world.state_hash(),
             "seed {seed}"
         );
-        // A finite velocity whose step overflows is accepted by the setter and refused by the step,
-        // provided the body is awake (a sleeping body is not integrated), so it is woken first.
+        // A speed within the bound is accepted by the setter; a step of 1e34 s carries it past the
+        // largest float and is refused by the step (a speed beyond the bound is refused at the
+        // setter since card 8-36). The body is woken first, as a sleeping body is not integrated.
         scene.world.wake(body)?;
         twin.world.wake(body)?;
         scene
             .world
-            .set_linear_velocity(body, Vec2::new(0.0, -f32::MAX))?;
+            .set_linear_velocity(body, Vec2::new(0.0, -MAX_SPEED))?;
         twin.world
-            .set_linear_velocity(body, Vec2::new(0.0, -f32::MAX))?;
+            .set_linear_velocity(body, Vec2::new(0.0, -MAX_SPEED))?;
         let before = scene.world.state_hash();
-        let result = scene.world.step(DT);
-        assert_eq!(result, twin.world.step(DT), "seed {seed}: twins disagree");
+        let result = scene.world.step(1.0e34);
+        assert_eq!(
+            result,
+            twin.world.step(1.0e34),
+            "seed {seed}: twins disagree"
+        );
         if result.is_err() {
             assert_eq!(
                 scene.world.state_hash(),

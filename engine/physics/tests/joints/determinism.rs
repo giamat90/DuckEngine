@@ -434,8 +434,9 @@ fn a_refused_step_with_a_limited_motorised_hinge_changes_nothing() -> Result<(),
     for _ in 0..10 {
         world.step(DT)?;
     }
-    world.set_linear_velocity(bar, Vec2::new(0.0, -3.0e38))?;
     let hash = world.state_hash();
+    // A force so large that the step overflows; the refused step spends it and changes nothing else.
+    world.apply_force(bar, Vec2::new(0.0, -3.0e38))?;
     assert_eq!(world.step(DT), Err(PhysicsError::NotFinite));
     assert_eq!(world.state_hash(), hash);
     Ok(())
@@ -452,11 +453,12 @@ fn a_refused_step_with_joints_changes_nothing() -> Result<(), PhysicsError> {
     }
     let before = world.state_hash();
     let steps = world.step_count();
-    world.set_linear_velocity(bob, Vec2::new(0.0, -3.0e38))?;
-    let hash_with_velocity = world.state_hash();
+    world.apply_force(bob, Vec2::new(0.0, -3.0e38))?;
+    let hash_with_force = world.state_hash();
+    assert_ne!(before, hash_with_force);
     assert_eq!(world.step(DT), Err(PhysicsError::NotFinite));
-    assert_eq!(world.state_hash(), hash_with_velocity);
+    // The refused step spent the force and changed nothing else.
+    assert_eq!(world.state_hash(), before);
     assert_eq!(world.step_count(), steps);
-    assert_ne!(before, hash_with_velocity);
     Ok(())
 }

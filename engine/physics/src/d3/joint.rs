@@ -44,7 +44,7 @@
 //!   diverge. A 0.1 m cube on a 10 m arm under gravity ended non-finite in one of 216 scanned scenes.
 //! - A step that diverges used to end with huge but finite values and `Ok`. Since card 8-25
 //!   `World::step` refuses a step that would leave a body faster than `MAX_SPEED` or `MAX_SPIN`
-//!   (`PhysicsError::Diverged`, nothing changes). A divergence that stays below those bounds is
+//!   (`PhysicsError::Diverged`, the forces of the step are dropped and nothing else changes). A divergence that stays below those bounds is
 //!   still not seen: the bound catches the blow-up, not a body that is merely wrong.
 //! - A body that turns faster than a step can follow can pass through a limit (no continuous check).
 //!

@@ -59,12 +59,17 @@ pub enum PhysicsError {
     InvalidJoint,
     /// A step would give a body a linear speed above [`MAX_SPEED`](crate::core::MAX_SPEED) or an
     /// angular speed above [`MAX_SPIN`](crate::core::MAX_SPIN): the simulation has diverged (a body
-    /// tiny for its joint arm, a mass ratio far beyond the stated limits, a force or velocity set
-    /// absurdly high). The step changed nothing, so the cause is still in the world and the same call
-    /// gives the same answer until the scene is changed: set the body's velocity down
-    /// ([`World::set_linear_velocity`](crate::core::World::set_linear_velocity)), clear a huge
-    /// force by applying the opposite one, or destroy the body.
+    /// tiny for its joint arm, a mass ratio far beyond the stated limits, a huge force). The step
+    /// dropped the forces and torques applied for it and changed nothing else, so a scene that
+    /// diverges by itself gives the same answer again until it is changed: set the body's velocity
+    /// down ([`World::set_linear_velocity`](crate::core::World::set_linear_velocity)) or destroy
+    /// the body. A speed given directly above the bound is [`PhysicsError::SpeedTooHigh`] instead.
     Diverged,
+    /// A body description or a setter was given a linear speed above
+    /// [`MAX_SPEED`](crate::core::MAX_SPEED) or an angular speed above
+    /// [`MAX_SPIN`](crate::core::MAX_SPIN): the next step would refuse it as
+    /// [`PhysicsError::Diverged`]. Nothing changed.
+    SpeedTooHigh,
 }
 
 impl fmt::Display for PhysicsError {
@@ -95,6 +100,7 @@ impl fmt::Display for PhysicsError {
             Self::StaleJoint => f.write_str("the handle names no live joint of this world"),
             Self::InvalidJoint => f.write_str("a joint setting is out of range"),
             Self::Diverged => f.write_str("the step would give a body a speed beyond the limit"),
+            Self::SpeedTooHigh => f.write_str("the speed is beyond the limit"),
             Self::ManifoldCapacityTooLarge { max } => {
                 write!(
                     f,
@@ -167,6 +173,7 @@ mod tests {
                 PhysicsError::Diverged,
                 "the step would give a body a speed beyond the limit",
             ),
+            (PhysicsError::SpeedTooHigh, "the speed is beyond the limit"),
         ];
         check_messages(cases);
     }

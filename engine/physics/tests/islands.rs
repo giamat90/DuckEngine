@@ -655,9 +655,11 @@ fn a_refused_step_wakes_nothing_and_changes_nothing() -> Result<(), PhysicsError
     let sleeper = crate_at(&mut world, 0.0, 0.5)?;
     step_until(&mut world, |w| w.is_asleep(sleeper).unwrap_or(false))?;
     let attacker = crate_at(&mut world, 0.0, 1.5)?;
-    world.set_linear_velocity(attacker, Vec2::new(0.0, -3.0e38))?;
     let before = world.state_hash();
     let steps = world.step_count();
+    // A force so large that the step overflows (a speed that high cannot be set since card 8-36);
+    // the refused step spends it, so the world is exactly as it was before the force.
+    world.apply_force(attacker, Vec2::new(0.0, -3.0e38))?;
     assert_eq!(world.step(DT), Err(PhysicsError::NotFinite));
     assert!(world.is_asleep(sleeper)?);
     assert_eq!(world.state_hash(), before);

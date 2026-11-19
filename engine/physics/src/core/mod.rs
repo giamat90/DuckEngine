@@ -54,7 +54,8 @@ pub use world::{DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN, World, Wo
 pub const MAX_BODIES: u32 = 1 << 20;
 
 /// The fastest linear speed, metres per second, a body may have after a step; a step that would
-/// give a body more is refused with [`PhysicsError::Diverged`] (card 8-25). A bullet is
+/// give a body more is refused with [`PhysicsError::Diverged`] (card 8-25), and a speed above it given
+/// to `create_body` or a velocity setter is refused with [`PhysicsError::SpeedTooHigh`] (card 8-36). A bullet is
 /// about a thousand metres per second: no scene of the engine comes near this bound, a diverging
 /// joint scene passes it within a few dozen steps.
 pub const MAX_SPEED: f32 = 1.0e5;

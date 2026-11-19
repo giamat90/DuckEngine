@@ -165,6 +165,13 @@ impl<D: Dim> Clone for Body<D> {
 
 impl<D: Dim> Copy for Body<D> {}
 
+/// True when `linear` is within [`MAX_SPEED`] and `angular` within [`MAX_SPIN`]; false for a speed
+/// above them or one that is not a number (squared, so an overflow is also false).
+pub(super) fn speeds_are_bounded<D: Dim>(linear: &D::Vec, angular: &D::Ang) -> bool {
+    linear.length_squared() <= MAX_SPEED * MAX_SPEED
+        && angular.length_squared() <= MAX_SPIN * MAX_SPIN
+}
+
 /// The factor a velocity is multiplied by in one step of length `dt` under `damping` per second.
 pub(crate) fn damping_factor(damping: f32, dt: f32) -> f32 {
     1.0 / (1.0 + dt * damping)
@@ -183,6 +190,9 @@ impl<D: Dim> Body<D> {
             && desc.restitution.is_finite();
         if !finite {
             return Err(PhysicsError::NotFinite);
+        }
+        if !speeds_are_bounded::<D>(&desc.linear_velocity, &desc.angular_velocity) {
+            return Err(PhysicsError::SpeedTooHigh);
         }
         if desc.linear_damping < 0.0 || desc.angular_damping < 0.0 {
             return Err(PhysicsError::InvalidShape);
@@ -334,6 +344,9 @@ impl<D: Dim> Body<D> {
     /// Sets the linear velocity.
     pub(super) fn set_linear_velocity(&mut self, velocity: D::Vec) -> Result<(), PhysicsError> {
         self.check_motion(velocity.is_finite())?;
+        if !speeds_are_bounded::<D>(&velocity, &D::Ang::default()) {
+            return Err(PhysicsError::SpeedTooHigh);
+        }
         self.linear_velocity = velocity;
         Ok(())
     }
@@ -341,8 +354,17 @@ impl<D: Dim> Body<D> {
     /// Sets the angular velocity.
     pub(super) fn set_angular_velocity(&mut self, velocity: D::Ang) -> Result<(), PhysicsError> {
         self.check_motion(velocity.is_finite())?;
+        if !speeds_are_bounded::<D>(&D::Vec::default(), &velocity) {
+            return Err(PhysicsError::SpeedTooHigh);
+        }
         self.angular_velocity = velocity;
         Ok(())
+    }
+
+    /// Drops the force and the torque applied for the next step (a refused step spends them).
+    pub(super) fn clear_forces(&mut self) {
+        self.force = D::Vec::default();
+        self.torque = D::Ang::default();
     }
 
     /// Adds `force` to what acts on the body in the next step only.
@@ -468,8 +490,7 @@ impl<D: Dim> Body<D> {
     /// True when the linear and the angular speed are within [`MAX_SPEED`] and [`MAX_SPIN`]; false
     /// for a speed above them or one that is not a number. Checked after `motion_is_finite`.
     pub(super) fn motion_is_bounded(&self) -> bool {
-        self.linear_velocity.length_squared() <= MAX_SPEED * MAX_SPEED
-            && self.angular_velocity.length_squared() <= MAX_SPIN * MAX_SPIN
+        speeds_are_bounded::<D>(&self.linear_velocity, &self.angular_velocity)
     }
 
     /// Writes every field that decides the future of the body, in a fixed order. `mass` is not
@@ -543,14 +564,17 @@ mod tests {
     fn ball_moving(linear: f32, angular: f32) -> Body<crate::d2::D2> {
         use crate::d2::{D2, Shape2};
         use base::math::Vec2;
-        let mut desc = BodyDesc::<D2>::new(
+        let desc = BodyDesc::<D2>::new(
             BodyKind::Dynamic,
             Vec2::new(0.0, 0.0),
             Shape2::Circle { radius: 0.5 },
         );
-        desc.linear_velocity = Vec2::new(linear, 0.0);
-        desc.angular_velocity = angular;
-        Body::from_desc(&desc).must("a valid body")
+        let mut body = Body::from_desc(&desc).must("a valid body");
+        // Set directly: a speed beyond the bounds is refused at creation (card 8-36), but the
+        // check of a step's result must still be told about one.
+        body.linear_velocity = Vec2::new(linear, 0.0);
+        body.angular_velocity = angular;
+        body
     }
 
     #[test]
