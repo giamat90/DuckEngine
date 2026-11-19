@@ -26,6 +26,7 @@
 
 use super::constraint::{Ends, Softness, SolverBody};
 use super::warm::JointWarm;
+pub(super) use crate::core::soft::{JointSweep, one_sided, rigid_softness};
 use crate::core::{JointHandle, StateHasher};
 use crate::d2::{AngleLimits, D2, DistanceJoint2, LengthLimits, Motor, RevoluteJoint2, Rot2};
 use base::dmath;
@@ -79,38 +80,6 @@ impl JointImpulses {
     }
 }
 
-/// How a sweep over the joints treats the soft constraint.
-#[derive(Clone, Copy)]
-pub(super) struct JointSweep {
-    /// The sub-step length.
-    pub h: f32,
-    /// One over the sub-step length.
-    pub inv_h: f32,
-    /// True for the solve, false for the relax pass.
-    pub use_bias: bool,
-    /// The softness of a rigid joint.
-    pub rigid: Softness,
-}
-
-impl JointSweep {
-    /// The velocity bias and the two scales of a one-sided limit with `error` (negative when the
-    /// limit is violated).
-    fn limit_terms(&self, error: f32) -> (f32, f32, f32) {
-        if error > 0.0 {
-            // Speculative: the bodies may close the gap within one sub-step and no more.
-            (error * self.inv_h, 1.0, 0.0)
-        } else if self.use_bias {
-            (
-                self.rigid.bias_rate * error,
-                self.rigid.mass_scale,
-                self.rigid.impulse_scale,
-            )
-        } else {
-            (0.0, 1.0, 0.0)
-        }
-    }
-}
-
 /// The passes over the joints of a sub-step.
 #[derive(Clone, Copy)]
 pub(super) enum JointPass<'a> {
@@ -118,16 +87,6 @@ pub(super) enum JointPass<'a> {
     WarmStart,
     /// One soft solve (the sweep says whether it has the bias).
     Solve(&'a JointSweep),
-}
-
-/// The rigid softness of the joints for a sub-step of `h` seconds.
-pub(super) fn rigid_softness(
-    hertz: f32,
-    damping_ratio: f32,
-    cap_fraction: f32,
-    h: f32,
-) -> Softness {
-    Softness::new(hertz.min(cap_fraction / h), damping_ratio, h)
 }
 
 /// The angle of the hinge's second body against its first, in `(-pi, pi]`, from two rotations.
@@ -384,19 +343,6 @@ impl JointConstraint {
     }
 }
 
-/// One one-sided limit: `(mass, error, speed)` is the effective mass, the distance to the limit
-/// (negative when violated) and the speed at which the distance closes (negative). Accumulates into
-/// `total`, which may not go below zero, and returns the impulse applied.
-fn one_sided(total: &mut f32, state: (f32, f32, f32), sweep: &JointSweep) -> f32 {
-    let (mass, error, speed) = state;
-    let (bias, mass_scale, impulse_scale) = sweep.limit_terms(error);
-    let impulse = -mass * mass_scale * (speed + bias) - impulse_scale * *total;
-    let new = (*total + impulse).max(0.0);
-    let applied = new - *total;
-    *total = new;
-    applied
-}
-
 /// The speed at which the second anchor moves away from the first along `axis`.
 fn closing_rate(ends: &Ends, arms: (Vec2, Vec2), axis: Vec2) -> f32 {
     axis.dot(ends.b.velocity_at(arms.1) - ends.a.velocity_at(arms.0))
@@ -572,27 +518,6 @@ mod tests {
     }
 
     #[test]
-    fn a_limit_not_reached_is_speculative_and_a_violated_one_is_soft() {
-        // Not reached: the bodies may close the gap in one sub-step; no bias scale, no softness.
-        let speculative = (0.5 * sweep(true).inv_h, 1.0, 0.0);
-        assert_eq!(sweep(true).limit_terms(0.5), speculative);
-        assert_eq!(sweep(false).limit_terms(0.5), speculative);
-        // Violated: soft with the bias in the solve pass, rigid and bias free in the relax pass.
-        assert_eq!(sweep(true).limit_terms(-0.5), (-5.0, 0.5, 0.25));
-        assert_eq!(sweep(false).limit_terms(-0.5), (0.0, 1.0, 0.0));
-        // Exactly at the limit counts as reached (the soft branch).
-        assert_eq!(sweep(true).limit_terms(0.0), (0.0, 0.5, 0.25));
-    }
-
-    #[test]
-    fn the_joint_softness_is_capped_at_a_fraction_of_the_sub_step_rate() {
-        let capped = rigid_softness(1000.0, 2.0, 0.25, H);
-        assert_eq!(capped, Softness::new(60.0, 2.0, H));
-        let below = rigid_softness(30.0, 2.0, 0.25, H);
-        assert_eq!(below, Softness::new(30.0, 2.0, H));
-    }
-
-    #[test]
     fn the_relative_angle_is_the_second_minus_the_first_and_wraps_the_short_way() {
         let angle = |a: f32, b: f32| relative_angle(Rot2::from_angle(a), Rot2::from_angle(b));
         assert!(angle(0.0, 0.0).abs() < 1e-6);
@@ -670,33 +595,6 @@ mod tests {
             b: &mut b,
         };
         assert_eq!(rod_mass(&ends, (Vec2::ZERO, Vec2::ZERO), axis), 0.0);
-    }
-
-    #[test]
-    fn a_one_sided_limit_accumulates_and_never_pulls() {
-        let mut total = 0.0;
-        // Violated by 0.1 and closing at 2 m/s the wrong way: it pushes.
-        let applied = one_sided(&mut total, (2.0, 0.0, -2.0), &sweep(false));
-        assert_eq!(applied, 4.0);
-        assert_eq!(total, 4.0);
-        // Now moving away at 1 m/s: the impulse would be negative and takes back at most the total.
-        let applied = one_sided(&mut total, (2.0, 0.0, 1.0), &sweep(false));
-        assert_eq!(applied, -2.0);
-        assert_eq!(total, 2.0);
-        let applied = one_sided(&mut total, (2.0, 0.0, 10.0), &sweep(false));
-        assert_eq!(applied, -2.0, "it stops at zero");
-        assert_eq!(total, 0.0);
-    }
-
-    #[test]
-    fn a_violated_soft_limit_scales_the_mass_and_gives_back_part_of_the_total() {
-        // mass 2, violated by 0.5, closing at 2 m/s, with 1 already accumulated; the soft terms of
-        // the solve pass are (bias -5, mass scale 0.5, impulse scale 0.25):
-        // impulse = -2 * 0.5 * (-2 - 5) - 0.25 * 1 = 6.75.
-        let mut total = 1.0;
-        let applied = one_sided(&mut total, (2.0, -0.5, -2.0), &sweep(true));
-        assert_eq!(applied, 6.75);
-        assert_eq!(total, 7.75);
     }
 
     fn hinge(

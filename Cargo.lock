@@ -115,6 +115,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "app_sandbox3d"
+version = "0.1.0"
+dependencies = [
+ "adapter_render_gl",
+ "adapter_render_vk",
+ "adapter_window_glfw",
+ "app_sprite_sample",
+ "assets",
+ "base",
+ "ecs",
+ "frame",
+ "input",
+ "jobs",
+ "physics",
+ "platform",
+ "render",
+ "scene",
+ "sync_physics",
+ "sync_render",
+ "tools_shaderc",
+]
+
+[[package]]
 name = "app_sprite_sample"
 version = "0.1.0"
 dependencies = [
@@ -320,6 +343,13 @@ name = "tools_ecs_spike"
 version = "0.1.0"
 dependencies = [
  "base",
+]
+
+[[package]]
+name = "tools_physics3d_bench"
+version = "0.1.0"
+dependencies = [
+ "tools_physics_bench",
 ]
 
 [[package]]

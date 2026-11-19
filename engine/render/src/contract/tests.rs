@@ -34,6 +34,8 @@ enum Flaw {
     UnnamedDevice,
     NoIndexTypes,
     AcceptsBadDepth,
+    OnlyUniformSlotZero,
+    SmallUniformBuffersOnly,
 }
 
 /// A Null device wrapped so one rule is broken; the contract must notice.
@@ -73,6 +75,10 @@ impl IRenderDevice for Broken {
         self.inner.destroy_surface(surface);
     }
     fn create_buffer(&mut self, desc: BufferDesc) -> Result<BufferId, RenderError> {
+        let too_big = matches!(desc.usage, BufferUsage::Uniform) && desc.size > 64;
+        if matches!(self.flaw, Flaw::SmallUniformBuffersOnly) && too_big {
+            return Err(RenderError::InvalidDescription);
+        }
         self.inner.create_buffer(desc)
     }
     fn create_texture(&mut self, desc: TextureDesc) -> Result<TextureId, RenderError> {
@@ -135,6 +141,9 @@ impl IRenderDevice for Broken {
         stream: &CommandStream,
     ) -> Result<SubmitStats, RenderError> {
         let result = self.inner.submit(frame, stream);
+        if matches!(self.flaw, Flaw::OnlyUniformSlotZero) && uses_uniform_slot_above_zero(stream) {
+            return Err(RenderError::InvalidDescription);
+        }
         match (self.flaw, result) {
             (Flaw::AcceptsUnclosedPass, Err(RenderError::InvalidDescription))
             | (Flaw::AcceptsStaleInStream, Err(RenderError::InvalidHandle)) => {
@@ -160,6 +169,12 @@ impl IRenderDevice for Broken {
     fn read_back(&mut self, texture: TextureId, out: &mut [u8]) -> Result<(), RenderError> {
         self.inner.read_back(texture, out)
     }
+}
+
+fn uses_uniform_slot_above_zero(stream: &CommandStream) -> bool {
+    stream.commands().flatten().any(
+        |command| matches!(command, crate::stream::Command::BindUniforms { slot, .. } if slot > 0),
+    )
 }
 
 fn uses_depth(stream: &CommandStream) -> bool {
@@ -231,4 +246,16 @@ fn a_device_that_accepts_a_stale_handle_in_a_stream_fails_the_contract() {
 #[should_panic(expected = "depth of another size")]
 fn a_device_that_accepts_a_wrong_depth_attachment_fails_the_contract() {
     run_broken(Flaw::AcceptsBadDepth);
+}
+
+#[test]
+#[should_panic(expected = "two uniform slots in one pass")]
+fn a_device_with_one_uniform_slot_fails_the_contract() {
+    run_broken(Flaw::OnlyUniformSlotZero);
+}
+
+#[test]
+#[should_panic(expected = "uniform buffer of the lit object block")]
+fn a_device_that_refuses_the_lit_block_sizes_fails_the_contract() {
+    run_broken(Flaw::SmallUniformBuffersOnly);
 }

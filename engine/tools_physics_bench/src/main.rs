@@ -1,5 +1,5 @@
 //! Dev-time benchmark of the physics crate (card 4-22). Prints the environment and markdown
-//! tables: workload W1 (the pyramid, one thread), the work counters, the scaling scene on the
+//! tables: workload W1 (the pyramid, one thread), the 3D scene catalogue (card 8-12), the work counters, the scaling scene on the
 //! work-stealing pool at 1, 2, 4 and 6 workers, and the scheduler overhead. Report only: no
 //! threshold is applied to a time, and the exit code is non-zero only when an argument is bad or
 //! a measurement could not run.
@@ -10,10 +10,12 @@
 
 use physics::d2::SolverExecution;
 use std::process::ExitCode;
+use tools_physics_bench::scene3d::{Scene3, run_scene3};
 use tools_physics_bench::{
     BenchError, Command, GateFeasibility, Measured, Options, USAGE, WorkCounters, counters_header,
-    counters_row, gate_feasibility, icount_workload, measure_w1, overhead_table, parse,
-    parse_instructions, relative_spread, run_overhead, run_scaling, run_scene, scaling_table,
+    counters_row, gate_feasibility, icount_workload, measure_scene3, measure_w1, overhead_table,
+    parse, parse_instructions, relative_spread, run_overhead, run_scaling, run_scaling3, run_scene,
+    scaling_table, scene3_header, scene3_row, scene3_timed_header, scene3_timed_row,
     stability_table, w1_header, w1_row,
 };
 
@@ -139,11 +141,85 @@ fn overhead_section(options: &Options) -> Result<(), BenchError> {
     Ok(())
 }
 
+fn scenes3d_section(options: &Options) -> Result<(), BenchError> {
+    println!(
+        "## 3D scenes: stability and determinism catalogue
+"
+    );
+    println!(
+        "{} steps per scene, serial, sleeping on; the hash is the replay hash; one run each.
+",
+        options.steps
+    );
+    println!("{}", scene3_header());
+    for scene in Scene3::ALL {
+        let run = run_scene3(scene, options.steps, &SolverExecution::SERIAL, true)?;
+        println!("{}", scene3_row(scene, options.steps, &run));
+    }
+    println!();
+    Ok(())
+}
+
+fn timed3d_section(options: &Options) -> Result<(), BenchError> {
+    println!(
+        "## 3D scenes timed (serial scalar solver, sleeping off)
+"
+    );
+    println!(
+        "{} steps per iteration, {} timed iterations, one warm-up run discarded.
+",
+        options.steps, options.iters
+    );
+    println!("{}", scene3_timed_header());
+    for scene in Scene3::ALL.into_iter().chain([Scene3::LargePyramid]) {
+        let measured = measure_scene3(
+            scene,
+            options.steps,
+            options.iters,
+            &SolverExecution::SERIAL,
+            false,
+        )?;
+        println!(
+            "{}",
+            scene3_timed_row(scene, options.steps, options.iters, &measured)
+        );
+    }
+    println!();
+    Ok(())
+}
+
+/// The scenes with enough contacts per colour for a pool to matter.
+const SCALED: [Scene3; 2] = [Scene3::LargePyramid, Scene3::MixedPile];
+
+fn scaling3d_section(options: &Options) -> Result<(), BenchError> {
+    println!(
+        "## 3D scaling: the heavier scenes on the work-stealing pool
+"
+    );
+    for scene in SCALED {
+        println!(
+            "### {} ({} bodies, {} steps, {} timed iterations per row; chunk 32)
+",
+            scene.name(),
+            scene.bodies(),
+            options.scale_steps,
+            options.scale_iters
+        );
+        let rows = run_scaling3(scene, options.scale_steps, options.scale_iters)?;
+        print!("{}", scaling_table(&rows, rows.first().map(|row| row.hash)));
+        println!();
+    }
+    Ok(())
+}
+
 fn report(options: &Options) -> Result<(), BenchError> {
     environment(options);
     w1_section(options)?;
     stability_section(options)?;
+    scenes3d_section(options)?;
+    timed3d_section(options)?;
     scaling_section(options)?;
+    scaling3d_section(options)?;
     overhead_section(options)
 }
 
