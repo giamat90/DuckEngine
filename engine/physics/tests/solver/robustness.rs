@@ -15,17 +15,20 @@ fn a_step_that_would_overflow_in_the_solver_is_refused_and_changes_nothing()
     ground(&mut world)?;
     let rest = crate_of(&mut world, HALF, 0.0, 0.5)?;
     step_n(&mut world, 60)?;
+    // Applying a force wakes a sleeping body; a zero force does that and nothing else.
+    world.apply_force(rest, Vec2::ZERO)?;
     let before = world.state_hash();
     let steps = world.step_count();
-    // Finite, but the impulse that would stop it overflows the spin (3e38 times a lever arm).
-    world.set_linear_velocity(rest, Vec2::new(0.0, -3.0e38))?;
-    let with_velocity = world.state_hash();
-    assert_ne!(with_velocity, before);
+    // Finite, but the impulse that would stop it overflows the spin (3e38 times a lever arm). A
+    // force, since a speed that high cannot be set any more (card 8-36).
+    world.apply_force(rest, Vec2::new(0.0, -3.0e38))?;
+    let with_force = world.state_hash();
+    assert_ne!(with_force, before);
     assert_eq!(world.step(DT), Err(PhysicsError::NotFinite));
-    assert_eq!(world.state_hash(), with_velocity);
+    // The refused step spent the force and changed nothing else.
+    assert_eq!(world.state_hash(), before);
     assert_eq!(world.step_count(), steps);
     // The world is usable afterwards: the solver kept its warm start.
-    world.set_linear_velocity(rest, Vec2::ZERO)?;
     step_n(&mut world, 60)?;
     assert!((position(&world, rest)?.y - 0.5).abs() < 0.01);
     Ok(())

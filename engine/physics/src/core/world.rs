@@ -277,7 +277,8 @@ impl<D: Dim> World<D> {
     /// Creates a body. Allocates nothing.
     ///
     /// # Errors
-    /// The errors of the description ([`PhysicsError::NotFinite`], [`PhysicsError::InvalidShape`]),
+    /// The errors of the description ([`PhysicsError::NotFinite`], [`PhysicsError::InvalidShape`],
+    /// [`PhysicsError::SpeedTooHigh`] for a speed above [`MAX_SPEED`](crate::core::MAX_SPEED) or [`MAX_SPIN`](crate::core::MAX_SPIN)),
     /// or [`PhysicsError::CapacityExhausted`] when every slot is in use. A refused call changes
     /// nothing: no slot is used up.
     pub fn create_body(&mut self, desc: &BodyDesc<D>) -> Result<BodyHandle<D>, PhysicsError> {
@@ -643,7 +644,8 @@ impl<D: Dim> World<D> {
     /// Sets the linear velocity of a dynamic body. A sleeping body wakes with its island.
     ///
     /// # Errors
-    /// [`PhysicsError::StaleHandle`], [`PhysicsError::StaticBody`], [`PhysicsError::NotFinite`].
+    /// [`PhysicsError::StaleHandle`], [`PhysicsError::StaticBody`], [`PhysicsError::NotFinite`],
+    /// [`PhysicsError::SpeedTooHigh`] for a speed above [`MAX_SPEED`](crate::core::MAX_SPEED). A refused call changes nothing.
     pub fn set_linear_velocity(
         &mut self,
         handle: BodyHandle<D>,
@@ -659,7 +661,8 @@ impl<D: Dim> World<D> {
     /// Sets the angular velocity of a dynamic body.
     ///
     /// # Errors
-    /// [`PhysicsError::StaleHandle`], [`PhysicsError::StaticBody`], [`PhysicsError::NotFinite`].
+    /// [`PhysicsError::StaleHandle`], [`PhysicsError::StaticBody`], [`PhysicsError::NotFinite`],
+    /// [`PhysicsError::SpeedTooHigh`] for a speed above [`MAX_SPIN`](crate::core::MAX_SPIN). A refused call changes nothing.
     pub fn set_angular_velocity(
         &mut self,
         handle: BodyHandle<D>,
@@ -721,9 +724,10 @@ impl<D: Dim> World<D> {
     /// [`PhysicsError::NotFinite`] when the step would make a position, rotation, velocity or
     /// impulse overflow, or a broadphase box not representable; [`PhysicsError::Diverged`] when a
     /// body would end with a speed above [`MAX_SPEED`](crate::core::MAX_SPEED) or
-    /// [`MAX_SPIN`](crate::core::MAX_SPIN). In all three cases nothing changes (the
-    /// solver works on copies of the bodies and the new state is committed only when all of it is
-    /// valid). A pair list that is too small is not an error of the step: see
+    /// [`MAX_SPIN`](crate::core::MAX_SPIN). In those two cases the forces and torques applied for
+    /// the step are dropped (they act in the next step only) and nothing else changes (the solver
+    /// works on copies of the bodies and the new state is committed only when all of it is valid).
+    /// [`PhysicsError::InvalidTimeStep`] changes nothing at all. A pair list that is too small is not an error of the step: see
     /// [`PairList::is_complete`].
     pub fn step(&mut self, dt: f32) -> Result<(), PhysicsError> {
         if !dt.is_finite() || dt <= 0.0 {
@@ -755,11 +759,11 @@ impl<D: Dim> World<D> {
                 body.motion_is_finite() && broadphase.can_hold(body.kind(), &body.bounds())
             });
         if !stays_finite {
-            return Err(PhysicsError::NotFinite);
+            return Err(self.refuse(PhysicsError::NotFinite));
         }
         // Finite but absurd: a diverged scene (card 8-25). Refused as a whole, like an overflow.
         if !self.scratch.iter().flatten().all(Body::motion_is_bounded) {
-            return Err(PhysicsError::Diverged);
+            return Err(self.refuse(PhysicsError::Diverged));
         }
         for (slot, copy) in self.slots.iter_mut().zip(&self.scratch) {
             store(slot, copy.as_ref());
@@ -778,6 +782,16 @@ impl<D: Dim> World<D> {
             self.islands.sleep(&mut self.slots, &self.sleep);
         }
         Ok(())
+    }
+
+    /// What a refused step does: the forces and torques applied for it are dropped (a force acts
+    /// in the next step only, and this one has been refused; kept, a huge force would make every
+    /// later step fail too, card 8-36); nothing else changes. Returns `error`.
+    fn refuse(&mut self, error: PhysicsError) -> PhysicsError {
+        for slot in self.slots.iter_mut().flatten() {
+            slot.body.clear_forces();
+        }
+        error
     }
 
     /// A hash of the simulation state: capacity, gravity, then every live body (handle, then all
@@ -807,8 +821,8 @@ impl<D: Dim> World<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::MAX_PAIRS;
     use crate::core::{BodyKind, Dim};
+    use crate::core::{MAX_PAIRS, MAX_SPEED};
     use crate::d2::{Aabb2, D2, Rot2, Shape2};
     use base::math::Vec2;
     use base::pool::Handle;
@@ -1442,21 +1456,23 @@ mod tests {
     fn a_step_that_would_overflow_is_refused_and_changes_nothing() {
         let mut world = world(2, Vec2::ZERO);
         let calm = create(&mut world, &dynamic(0.0, 0.0));
-        let mut fast = dynamic(1.0, 0.0);
-        fast.angular_velocity = 1e24;
-        let fast = create(&mut world, &fast);
+        let fast = create(&mut world, &dynamic(1.0, 0.0));
+        // A torque so large that the spin it gives overflows (a speed that high cannot be set any
+        // more since card 8-36). The refused step drops it and changes nothing else.
         let before = world.state_hash();
+        assert_eq!(world.apply_torque(fast, f32::MAX), Ok(()));
         assert_eq!(world.step(DT), Err(PhysicsError::NotFinite));
         assert_eq!(world.state_hash(), before);
         assert_eq!(world.step_count(), 0);
         assert!(same(state(&world, calm).position().y, 0.0));
         assert!(world.set_angular_velocity(fast, 1.0).is_ok());
         assert_eq!(world.step(DT), Ok(()));
+        // A position that a step of an enormous (but finite) length carries past the largest float.
         let mut huge = dynamic(f32::MAX, 0.0);
-        huge.linear_velocity = Vec2::new(f32::MAX, 0.0);
+        huge.linear_velocity = Vec2::new(MAX_SPEED, 0.0);
         let mut world = self::world(1, Vec2::ZERO);
         create(&mut world, &huge);
-        assert_eq!(world.step(1.0), Err(PhysicsError::NotFinite));
+        assert_eq!(world.step(1.0e34), Err(PhysicsError::NotFinite));
     }
 
     #[test]
@@ -1786,14 +1802,15 @@ mod tests {
             Vec2::ZERO,
             Shape2::Circle { radius: 1.0 },
         );
-        runner.linear_velocity = Vec2::new(3.0e38, 0.0);
+        runner.linear_velocity = Vec2::new(MAX_SPEED, 0.0);
         assert!(world.create_body(&runner).is_ok());
         let (hash, tree, steps) = (
             world.state_hash(),
             world.broadphase_hash(),
             world.step_count(),
         );
-        assert_eq!(world.step(1.0), Err(PhysicsError::NotFinite));
+        // A step of 3e33 s carries it 3e38 m, past the box the margin allows.
+        assert_eq!(world.step(3.0e33), Err(PhysicsError::NotFinite));
         assert_eq!(
             (
                 world.state_hash(),
