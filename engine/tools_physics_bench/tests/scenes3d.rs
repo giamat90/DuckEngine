@@ -122,10 +122,11 @@ fn the_standing_scenes_stand_still() -> Result<(), Failure> {
 const PILE_STEPS: u32 = 800;
 const PILE_SETTLING_SPEED: f32 = 0.25;
 /// Steps within which the whole sphere pile must be asleep (card 8-33). With the cross-platform
-/// determinism feature off the platform's own trigonometric functions decide the last digits of
-/// the rotations: the last sphere falls asleep at step 800 on Windows and at about 900 with the
-/// Linux library, so 800 had no margin and failed on Linux and ARM64. The property is unchanged:
-/// the pile comes to rest and every body sleeps.
+/// determinism feature off the platform's floating-point library (probably its trigonometric
+/// functions, not separated from fused multiply-add inside them) decides the last digits of the
+/// rotations: the last sphere is asleep at step 800 on Windows and between 800 and 900 on Linux, so
+/// 800 had no margin and failed on Linux and ARM64. At 800 steps all but one body must already
+/// sleep (the bound before the card, kept for the pile as a whole); by this many all must.
 const PILE_SLEEP_STEPS: u32 = 1200;
 
 #[test]
@@ -148,8 +149,15 @@ fn the_piles_stay_in_their_box_and_settle() -> Result<(), Failure> {
 
 #[test]
 fn the_sphere_pile_comes_to_rest_and_sleeps() -> Result<(), Failure> {
+    let bodies = Scene3::SpherePile.bodies();
+    let early = run_scene3(Scene3::SpherePile, PILE_STEPS, &serial(), true)?;
+    assert!(
+        early.asleep + 1 >= bodies,
+        "{} of {bodies} asleep",
+        early.asleep
+    );
     let found = run_scene3(Scene3::SpherePile, PILE_SLEEP_STEPS, &serial(), true)?;
-    assert_eq!(found.asleep, Scene3::SpherePile.bodies());
+    assert_eq!(found.asleep, bodies);
     assert!(found.final_speed < REST_SPEED);
     Ok(())
 }
