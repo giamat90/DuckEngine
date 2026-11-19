@@ -3,7 +3,7 @@
 
 use crate::controls::{Piece, Requests};
 use crate::error::Error;
-use crate::mesh::{BOX, CAPSULE, SPHERE};
+use crate::mesh::{BOX, CAPSULE, SCENERY_FIRST, SPHERE};
 use crate::orbit::OrbitCamera;
 use crate::spawn::{self, Made, drop_point, piece, scenery, stream_piece};
 use base::math::{Quat, Vec3};
@@ -177,7 +177,7 @@ impl Sandbox {
     /// The box: the floor and the four walls, each a static body and an entity to draw. A static
     /// body never moves, so it has no component for the glue.
     fn populate(&mut self) -> Result<(), Error> {
-        for block in scenery() {
+        for (index, block) in (0..).zip(scenery()) {
             self.physics.create_body(&BodyDesc::new(
                 BodyKind::Static,
                 block.position,
@@ -194,7 +194,7 @@ impl Sandbox {
                     scale: block.half,
                 },
             )?;
-            let mut renderer = MeshRenderer::new(MeshRef(BOX), self.texture);
+            let mut renderer = MeshRenderer::new(MeshRef(SCENERY_FIRST + index), self.texture);
             renderer.material = Material { colour: SLATE };
             self.world.insert(entity, renderer)?;
         }

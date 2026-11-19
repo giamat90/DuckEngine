@@ -3,9 +3,11 @@
 //! scale from ([`CAPSULE_RADIUS`], [`CAPSULE_HALF_HEIGHT`]). An object's `Transform3D` scale turns
 //! the unit mesh into its own size.
 
-use crate::spawn::{CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS};
+use crate::spawn::{Block, CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS, scenery};
 use base::math::Vec3;
-use render::mesh::{MESH_VERTEX_STRIDE, MeshVertex, encode_mesh_vertices};
+use render::mesh::{
+    MESH_VERTEX_STRIDE, MeshVertex, cube_indices, cube_vertices, encode_mesh_vertices,
+};
 use render::shapes::{
     Capsule, MeshCounts, capsule_counts, sphere_counts, write_box, write_capsule, write_sphere,
 };
@@ -16,6 +18,14 @@ pub const SPHERE: u32 = 0;
 pub const BOX: u32 = 1;
 /// The [`MeshRef`] number of the capsule.
 pub const CAPSULE: u32 = 2;
+/// The [`MeshRef`] number of the first block of the scenery: the floor, then the four walls.
+pub const SCENERY_FIRST: u32 = 3;
+/// Metres one tile of the texture covers on the floor and the walls, in both directions (card
+/// 8-31). The whole texture used to be stretched over each face, so a long wall and its thin
+/// rim sampled it at very different rates. 12 m makes the squares 1.5 m, about what the floor
+/// had (13 m over eight texels): no face is denser than before, because the texture has one
+/// mip level and a denser pattern would alias more when far.
+pub const TILE_METRES: f32 = 12.0;
 /// Segments around the axis of a round mesh.
 const SEGMENTS: u32 = 24;
 /// Bands from pole to pole of the sphere.
@@ -88,6 +98,39 @@ pub fn unit_meshes() -> Option<[MeshData; 3]> {
         )
     })?;
     Some([sphere, cuboid, capsule])
+}
+
+/// The mesh of one block of the scenery: the box of half extents 1 (the block's own half extents
+/// scale it, as for the pieces) with texture coordinates that run one unit per [`TILE_METRES`] of
+/// the scaled face, so the texture has the same size in metres on every face.
+fn scenery_mesh(block: &Block) -> MeshData {
+    let mut vertices = cube_vertices().to_vec();
+    let half = [block.half.x, block.half.y, block.half.z];
+    for face in vertices.chunks_exact_mut(4) {
+        // The corners of a face run: 0 top-left, 1 top-right, 2 bottom-left (see `cube_vertices`).
+        let world =
+            |v: &MeshVertex| std::array::from_fn::<f32, 3, _>(|k| v.position[k] * 2.0 * half[k]);
+        let apart = |a: [f32; 3], b: [f32; 3]| {
+            ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+        };
+        let across = apart(world(&face[1]), world(&face[0])) / TILE_METRES;
+        let down = apart(world(&face[0]), world(&face[2])) / TILE_METRES;
+        for vertex in face {
+            vertex.uv = [vertex.uv[0] * across, vertex.uv[1] * down];
+            vertex.position = vertex.position.map(|p| p * 2.0);
+        }
+    }
+    MeshData {
+        vertices,
+        indices: cube_indices().to_vec(),
+    }
+}
+
+/// One mesh per block of [`scenery`], in its order, to be drawn from [`SCENERY_FIRST`] on:
+/// the mesh of block `i` is [`SCENERY_FIRST`] + `i`.
+#[must_use]
+pub fn scenery_meshes() -> Vec<MeshData> {
+    scenery().iter().map(scenery_mesh).collect()
 }
 
 #[cfg(test)]
