@@ -417,6 +417,21 @@ fn chain(count: u8, sleeping: bool) -> Result<(Builder, Vec<Link>), PhysicsError
     Ok((b, links))
 }
 
+/// The deterministic workload of the instruction-count gate (card 8-29): a square pyramid of
+/// `layers` layers on the serial scalar solver, sleeping off, stepped `steps` times. Returns the
+/// number of boxes and the state hash, so two builds can be told to have run the same thing.
+///
+/// # Errors
+/// Any [`PhysicsError`] of the build or of a step.
+pub fn icount_workload3(layers: u8, steps: u32) -> Result<(u16, u64), PhysicsError> {
+    let mut builder = pyramid(layers, false)?;
+    builder.world.set_execution(SolverExecution::SERIAL);
+    for _ in 0..steps {
+        builder.world.step(DT)?;
+    }
+    Ok((pyramid_bodies(layers), builder.world.state_hash()))
+}
+
 /// A scene of the catalogue, built and ready to step.
 pub struct Scene3World {
     world: World,
