@@ -11,6 +11,10 @@ use crate::desc::{
 use crate::device::IRenderDevice;
 use crate::error::RenderError;
 use crate::ids::{SurfaceId, TextureId};
+use crate::lit::{
+    LIGHT_BLOCK_BYTES, MATERIAL_BLOCK_BYTES, SLOT_LIGHT, SLOT_MATERIAL, SLOT_TRANSFORM,
+    TRANSFORM_BLOCK_BYTES,
+};
 use crate::stream::CommandStream;
 
 const INVALID_HANDLE: Result<(), RenderError> = Err(RenderError::InvalidHandle);
@@ -31,6 +35,7 @@ pub fn render_device_contract(device: &mut dyn IRenderDevice, surface: SurfaceDe
     clear_contract(device, surface);
     stream_rules_contract(device, surface);
     depth_contract(device, surface);
+    lit_block_contract(device, surface);
 }
 
 fn rgba(width: u32, height: u32) -> TextureDesc {
@@ -354,6 +359,62 @@ fn depth_contract(device: &mut dyn IRenderDevice, desc: SurfaceDesc) {
     device.destroy_texture(small);
     device.destroy_texture(depth);
     device.destroy_texture(colour);
+    device.destroy_surface(surface);
+}
+
+/// What the lit mesh frontend asks of the port (card 8-9): three uniform buffers of the sizes of
+/// its blocks, each written whole and refused one byte over, bound to three slots in one pass.
+fn lit_block_contract(device: &mut dyn IRenderDevice, desc: SurfaceDesc) {
+    let surface = make_surface(device, desc);
+    let sizes = [
+        (SLOT_TRANSFORM, TRANSFORM_BLOCK_BYTES),
+        (SLOT_LIGHT, LIGHT_BLOCK_BYTES),
+        (SLOT_MATERIAL, MATERIAL_BLOCK_BYTES),
+    ];
+    let mut pass = CommandStream::new();
+    pass.begin_pass(PassDesc {
+        target: RenderTarget::Backbuffer,
+        clear_color: None,
+        clear_depth: None,
+        depth: None,
+    });
+    let mut buffers = Vec::new();
+    for (slot, size) in sizes {
+        let size = u32::try_from(size).unwrap_or(u32::MAX);
+        let made = device.create_buffer(BufferDesc {
+            size,
+            usage: BufferUsage::Uniform,
+        });
+        assert!(
+            made.is_ok(),
+            "uniform buffer of the lit transform block: {made:?}"
+        );
+        let buffer = made.unwrap_or_else(|_| unreachable!());
+        let whole = vec![0u8; size as usize];
+        assert_eq!(
+            device.write_buffer(buffer, 0, &whole),
+            Ok(()),
+            "write a whole block"
+        );
+        let over = vec![0u8; size as usize + 1];
+        assert_eq!(
+            device.write_buffer(buffer, 0, &over),
+            INVALID_DESC,
+            "write a block plus one byte"
+        );
+        pass.bind_uniforms(slot, buffer);
+        buffers.push(buffer);
+    }
+    pass.end_pass();
+    let result = submit_in_frame(device, surface, &pass);
+    assert_eq!(
+        result.map(|_| ()),
+        Ok(()),
+        "three uniform slots in one pass"
+    );
+    for buffer in buffers {
+        device.destroy_buffer(buffer);
+    }
     device.destroy_surface(surface);
 }
 
