@@ -4,6 +4,7 @@
 
 use crate::counters::WorkCounters;
 use crate::measure::Measured;
+use crate::measure3d::Measured3;
 use crate::overhead::{OverheadKind, OverheadRow};
 use crate::scaling::ScalingRow;
 use crate::scene::{DRIFT_BOUND, SceneRun, boxes_in};
@@ -182,6 +183,37 @@ pub fn scene3_row(scene: Scene3, steps: u32, run: &Run3) -> String {
         run.final_speed,
         run.escaped,
         run.asleep,
+        run.hash,
+    )
+}
+
+/// The header of the timed 3D scene table.
+#[must_use]
+pub fn scene3_timed_header() -> String {
+    "| scene | bodies | steps x iterations | min ms | median ms | p95 ms | max drift m | settled drift m | final speed m/s | replay hash |
+|---|---|---|---|---|---|---|---|---|---|".to_owned()
+}
+
+/// One row of the timed 3D scene table.
+#[must_use]
+pub fn scene3_timed_row(
+    scene: Scene3,
+    steps: u32,
+    iterations: u32,
+    measured: &Measured3,
+) -> String {
+    let time = measured.time;
+    let run = &measured.run;
+    format!(
+        "| {} | {} | {steps} x {iterations} | {} | {} | {} | {:.4} | {:.4} | {:.4} | {:016x} |",
+        scene.name(),
+        scene.bodies(),
+        ms(time.min),
+        ms(time.median),
+        ms(time.p95),
+        run.drift,
+        run.settled_drift,
+        run.final_speed,
         run.hash,
     )
 }

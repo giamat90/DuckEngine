@@ -65,15 +65,16 @@ fn path(simd: bool) -> &'static str {
     if simd { "lanes" } else { "scalar" }
 }
 
+/// Times and hash of one configuration: what a measurement hands to the scaling table.
+pub(crate) type Timed = (Summary, u64);
+
 fn measure_row(
-    rows: u8,
-    steps: u32,
-    iterations: u32,
     workers: Option<u32>,
     simd: bool,
+    measure: &dyn Fn(&SolverExecution) -> Result<Timed, BenchError>,
 ) -> Result<ScalingRow, BenchError> {
     let scheduler = workers.map(make_pool).transpose()?;
-    let measured = measure_w1(rows, steps, iterations, &execution(scheduler, simd), false)?;
+    let (time, hash) = measure(&execution(scheduler, simd))?;
     let label = match workers {
         Some(n) => format!("pool {n}, {}", path(simd)),
         None => format!("serial, {}", path(simd)),
@@ -82,8 +83,8 @@ fn measure_row(
         label,
         workers,
         simd,
-        time: measured.time,
-        hash: measured.run.hash,
+        time,
+        hash,
         efficiency: None,
     })
 }
@@ -113,9 +114,19 @@ fn add_efficiency(table: &mut [ScalingRow]) {
 /// # Errors
 /// An error of the pool or of the scene; [`BenchError::NothingToMeasure`] for a zero count.
 pub fn run_scaling(rows: u8, steps: u32, iterations: u32) -> Result<Vec<ScalingRow>, BenchError> {
+    scale_with(&|execution| {
+        let measured = measure_w1(rows, steps, iterations, execution, false)?;
+        Ok((measured.time, measured.run.hash))
+    })
+}
+
+/// The table of any scene: `measure` times one configuration and returns its summary and hash.
+pub(crate) fn scale_with(
+    measure: &dyn Fn(&SolverExecution) -> Result<Timed, BenchError>,
+) -> Result<Vec<ScalingRow>, BenchError> {
     let mut table = Vec::new();
     for (workers, simd) in configurations() {
-        table.push(measure_row(rows, steps, iterations, workers, simd)?);
+        table.push(measure_row(workers, simd, measure)?);
     }
     add_efficiency(&mut table);
     Ok(table)
