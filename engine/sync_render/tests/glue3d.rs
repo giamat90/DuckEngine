@@ -6,7 +6,7 @@ use base::pool::{Handle, Pool};
 use ecs::{Entity, World};
 use render::camera::PerspectiveCamera;
 use render::ids::{Texture, TextureId};
-use render::lit::{DirectionalLight, Material, transform_block};
+use render::lit::{DirectionalLight, Material, object_block};
 use render::mesh_scene::{MeshRef, MeshScene};
 use scene::{Transform3D, TransformUpdater3D, WorldTransform3D, set_parent};
 use sync_render::ExtractReport;
@@ -211,7 +211,7 @@ fn values_that_cannot_be_drawn_are_skipped_and_a_full_scene_drops_the_rest() -> 
 }
 
 #[test]
-fn every_extracted_instance_has_a_transform_block() -> Result<(), SyncError> {
+fn every_extracted_instance_has_an_object_block() -> Result<(), SyncError> {
     let mut world = World::new();
     for n in 0..5_u8 {
         drawable(&mut world, at(f32::from(n), 0.0, 0.0), renderer(0))?;
@@ -224,7 +224,7 @@ fn every_extracted_instance_has_a_transform_block() -> Result<(), SyncError> {
         scene
             .instances()
             .iter()
-            .all(|i| transform_block(&(vp * i.model), &i.model).is_some())
+            .all(|i| object_block(&(vp * i.model), &i.model, &i.material).is_some())
     );
     Ok(())
 }
@@ -250,7 +250,7 @@ fn a_model_that_overflows_once_the_camera_is_applied_is_skipped() -> Result<(), 
         scene
             .instances()
             .iter()
-            .all(|i| transform_block(&(vp * i.model), &i.model).is_some())
+            .all(|i| object_block(&(vp * i.model), &i.model, &i.material).is_some())
     );
     Ok(())
 }

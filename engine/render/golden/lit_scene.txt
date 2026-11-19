@@ -3,7 +3,6 @@ begin_pass target=backbuffer clear_color=[0.0, 0.0, 0.25, 1.0] clear_depth=1.0 d
 set_pipeline #0.0
 bind_uniforms slot=0 buffer=#12.0
 bind_uniforms slot=1 buffer=#13.0
-bind_uniforms slot=2 buffer=#14.0
 bind_index_buffer buffer=#11.0 offset=0 type=u16
 bind_vertex_buffer slot=0 buffer=#10.0 offset=0
 bind_texture slot=0 texture=#8.0 sampler=#15.0
@@ -11,7 +10,6 @@ draw_indexed indices=36 instances=1
 set_pipeline #1.0
 bind_uniforms slot=0 buffer=#12.0
 bind_uniforms slot=1 buffer=#13.0
-bind_uniforms slot=2 buffer=#14.0
 bind_index_buffer buffer=#11.0 offset=0 type=u16
 bind_vertex_buffer slot=0 buffer=#10.0 offset=0
 bind_texture slot=0 texture=#6.0 sampler=#15.0
@@ -19,7 +17,6 @@ draw_indexed indices=6 instances=1
 set_pipeline #1.0
 bind_uniforms slot=0 buffer=#12.0
 bind_uniforms slot=1 buffer=#13.0
-bind_uniforms slot=2 buffer=#14.0
 bind_index_buffer buffer=#11.0 offset=0 type=u16
 bind_vertex_buffer slot=0 buffer=#10.0 offset=0
 bind_texture slot=0 texture=#7.0 sampler=#15.0

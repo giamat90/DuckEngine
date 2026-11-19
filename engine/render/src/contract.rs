@@ -11,10 +11,7 @@ use crate::desc::{
 use crate::device::IRenderDevice;
 use crate::error::RenderError;
 use crate::ids::{SurfaceId, TextureId};
-use crate::lit::{
-    LIGHT_BLOCK_BYTES, MATERIAL_BLOCK_BYTES, SLOT_LIGHT, SLOT_MATERIAL, SLOT_TRANSFORM,
-    TRANSFORM_BLOCK_BYTES,
-};
+use crate::lit::{LIGHT_BLOCK_BYTES, OBJECT_BLOCK_BYTES, SLOT_LIGHT, SLOT_OBJECT};
 use crate::stream::CommandStream;
 
 const INVALID_HANDLE: Result<(), RenderError> = Err(RenderError::InvalidHandle);
@@ -362,14 +359,13 @@ fn depth_contract(device: &mut dyn IRenderDevice, desc: SurfaceDesc) {
     device.destroy_surface(surface);
 }
 
-/// What the lit mesh frontend asks of the port (card 8-9): three uniform buffers of the sizes of
-/// its blocks, each written whole and refused one byte over, bound to three slots in one pass.
+/// What the lit mesh frontend asks of the port (card 8-9): two uniform buffers of the sizes of
+/// its blocks, each written whole and refused one byte over, bound to two slots in one pass.
 fn lit_block_contract(device: &mut dyn IRenderDevice, desc: SurfaceDesc) {
     let surface = make_surface(device, desc);
     let sizes = [
-        (SLOT_TRANSFORM, TRANSFORM_BLOCK_BYTES),
+        (SLOT_OBJECT, OBJECT_BLOCK_BYTES),
         (SLOT_LIGHT, LIGHT_BLOCK_BYTES),
-        (SLOT_MATERIAL, MATERIAL_BLOCK_BYTES),
     ];
     let mut pass = CommandStream::new();
     pass.begin_pass(PassDesc {
@@ -387,7 +383,7 @@ fn lit_block_contract(device: &mut dyn IRenderDevice, desc: SurfaceDesc) {
         });
         assert!(
             made.is_ok(),
-            "uniform buffer of the lit transform block: {made:?}"
+            "uniform buffer of the lit object block: {made:?}"
         );
         let buffer = made.unwrap_or_else(|_| unreachable!());
         let whole = vec![0u8; size as usize];
@@ -407,11 +403,7 @@ fn lit_block_contract(device: &mut dyn IRenderDevice, desc: SurfaceDesc) {
     }
     pass.end_pass();
     let result = submit_in_frame(device, surface, &pass);
-    assert_eq!(
-        result.map(|_| ()),
-        Ok(()),
-        "three uniform slots in one pass"
-    );
+    assert_eq!(result.map(|_| ()), Ok(()), "two uniform slots in one pass");
     for buffer in buffers {
         device.destroy_buffer(buffer);
     }

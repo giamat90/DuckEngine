@@ -249,13 +249,13 @@ fn a_device_that_accepts_a_wrong_depth_attachment_fails_the_contract() {
 }
 
 #[test]
-#[should_panic(expected = "three uniform slots in one pass")]
+#[should_panic(expected = "two uniform slots in one pass")]
 fn a_device_with_one_uniform_slot_fails_the_contract() {
     run_broken(Flaw::OnlyUniformSlotZero);
 }
 
 #[test]
-#[should_panic(expected = "uniform buffer of the lit transform block")]
+#[should_panic(expected = "uniform buffer of the lit object block")]
 fn a_device_that_refuses_the_lit_block_sizes_fails_the_contract() {
     run_broken(Flaw::SmallUniformBuffersOnly);
 }

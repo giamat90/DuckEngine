@@ -1,5 +1,5 @@
 //! Card 8-9: the lit mesh frontend on the Null device. Four generated primitives, each with its own
-//! transform and material buffer and one shared light buffer, are drawn through the real device
+//! object buffer and one shared light buffer, are drawn through the real device
 //! calls (the Null device validates every command), and encoding the blocks and recording a
 //! frame make no allocator call once the stream and the queue are sized.
 
@@ -15,7 +15,7 @@ use render::error::RenderError;
 use render::ids::{BufferId, PipelineId, SamplerId, SurfaceId, TextureId};
 use render::lit::{
     DirectionalLight, LIGHT_BLOCK_BYTES, LitBindings, LitDraw, LitQueue, Material,
-    TRANSFORM_BLOCK_BYTES, transform_block,
+    OBJECT_BLOCK_BYTES, object_block,
 };
 use render::mesh::{MESH_VERTEX_STRIDE, MeshVertex, encode_mesh_vertices, mesh_vertex_attributes};
 use render::null::NullDevice;
@@ -143,26 +143,27 @@ fn object(
     model: &Mat4,
 ) -> (LitDraw, BufferId) {
     let mvp = camera().mvp(model).unwrap_or(Mat4::IDENTITY);
-    let block = transform_block(&mvp, model).unwrap_or([0; TRANSFORM_BLOCK_BYTES]);
-    let transform = buffer(device, BufferUsage::Uniform, &block);
-    let material = Material {
-        colour: [0.8, 0.4, 0.2, 1.0],
-    }
-    .block_bytes();
+    let block = object_block(&mvp, model, &paint()).unwrap_or([0; OBJECT_BLOCK_BYTES]);
+    let object = buffer(device, BufferUsage::Uniform, &block);
     let draw = LitDraw {
         bindings: LitBindings {
             pipeline: shared.pipeline,
             vertices: mesh.vertices,
             indices: mesh.indices,
-            transform,
+            object,
             light: shared.light,
-            material: buffer(device, BufferUsage::Uniform, &material),
             texture: shared.texture,
             sampler: shared.sampler,
         },
         index_count: mesh.index_count,
     };
-    (draw, transform)
+    (draw, object)
+}
+
+fn paint() -> Material {
+    Material {
+        colour: [0.8, 0.4, 0.2, 1.0],
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -285,7 +286,7 @@ fn a_lit_pipeline_with_depth_is_refused_in_a_pass_without_a_depth_attachment() {
 #[test]
 fn a_block_buffer_of_the_wrong_size_is_not_what_the_frame_writes() {
     let mut scene = scene();
-    let wrong = vec![0u8; TRANSFORM_BLOCK_BYTES + 1];
+    let wrong = vec![0u8; OBJECT_BLOCK_BYTES + 1];
     assert_eq!(
         scene.device.write_buffer(scene.transforms[0], 0, &wrong),
         Err(RenderError::InvalidDescription)
@@ -304,7 +305,7 @@ fn recording_a_lit_frame_and_encoding_its_blocks_makes_no_allocator_call() {
         let mut written = 0;
         for (model, transform) in scene.models.iter().zip(scene.transforms) {
             let mvp = camera().mvp(model).unwrap_or(Mat4::IDENTITY);
-            let block = transform_block(&mvp, model).unwrap_or([0; TRANSFORM_BLOCK_BYTES]);
+            let block = object_block(&mvp, model, &paint()).unwrap_or([0; OBJECT_BLOCK_BYTES]);
             written += usize::from(scene.device.write_buffer(transform, 0, &block).is_ok());
         }
         let light = sun().block_bytes().unwrap_or([0; LIGHT_BLOCK_BYTES]);
