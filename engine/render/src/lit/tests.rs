@@ -35,11 +35,16 @@ fn bindings(pipeline: u32, texture: u32) -> LitBindings {
         pipeline: h(pipeline, 0),
         vertices: h(10, 0),
         indices: h(11, 0),
-        transform: h(12, 0),
+        object: h(12, 0),
         light: h(13, 0),
-        material: h(14, 0),
         texture: h(texture, 0),
         sampler: h(15, 0),
+    }
+}
+
+fn paint() -> Material {
+    Material {
+        colour: [0.25, 0.5, 0.75, 1.0],
     }
 }
 
@@ -52,15 +57,14 @@ fn sun() -> DirectionalLight {
 }
 
 #[test]
-fn the_three_blocks_have_the_sizes_the_shader_reads() {
-    assert_eq!(TRANSFORM_BLOCK_BYTES, 176);
+fn the_two_blocks_have_the_sizes_the_shader_reads() {
+    assert_eq!(OBJECT_BLOCK_BYTES, 192);
     assert_eq!(LIGHT_BLOCK_BYTES, 48);
-    assert_eq!(MATERIAL_BLOCK_BYTES, 16);
 }
 
 #[test]
 fn the_slots_are_distinct_and_inside_the_ports_range() {
-    let slots = [SLOT_TRANSFORM, SLOT_LIGHT, SLOT_MATERIAL];
+    let slots = [SLOT_OBJECT, SLOT_LIGHT];
     for (i, a) in slots.iter().enumerate() {
         assert!(*a < MAX_BINDING_SLOTS);
         assert!(slots[i + 1..].iter().all(|b| a != b));
@@ -68,10 +72,10 @@ fn the_slots_are_distinct_and_inside_the_ports_range() {
 }
 
 #[test]
-fn the_transform_block_holds_mvp_model_and_the_normal_matrix_in_std140_order() {
+fn the_object_block_holds_mvp_model_normal_matrix_and_colour_in_std140_order() {
     let model = Mat4::from_rotation_y(0.5);
     let mvp = Mat4::from_rotation_x(0.25);
-    let bytes = transform_block(&mvp, &model).unwrap_or([0; TRANSFORM_BLOCK_BYTES]);
+    let bytes = object_block(&mvp, &model, &paint()).unwrap_or([0; OBJECT_BLOCK_BYTES]);
     assert!(near_all(&floats::<16>(&bytes, 0), &mvp.to_cols_array()));
     assert!(near_all(&floats::<16>(&bytes, 64), &model.to_cols_array()));
     let rotation = Mat3::from_rotation_y(0.5);
@@ -104,7 +108,7 @@ fn the_normal_matrix_undoes_a_non_uniform_scale() {
 }
 
 #[test]
-fn a_model_that_cannot_be_inverted_gives_no_transform_block() {
+fn a_model_that_cannot_be_inverted_gives_no_object_block() {
     let flat = Mat4::from_cols(
         base::math::Vec4::X,
         base::math::Vec4::new(0.0, 0.0, 0.0, 0.0),
@@ -112,10 +116,14 @@ fn a_model_that_cannot_be_inverted_gives_no_transform_block() {
         base::math::Vec4::W,
     );
     assert!(normal_matrix(&flat).is_none());
-    assert!(transform_block(&Mat4::IDENTITY, &flat).is_none());
+    assert!(object_block(&Mat4::IDENTITY, &flat, &paint()).is_none());
     let mut broken = Mat4::IDENTITY;
     broken.cols[3].x = f32::NAN;
-    assert!(transform_block(&Mat4::IDENTITY, &broken).is_none());
+    assert!(object_block(&Mat4::IDENTITY, &broken, &paint()).is_none());
+    let dark = Material {
+        colour: [f32::NAN, 0.0, 0.0, 1.0],
+    };
+    assert!(object_block(&Mat4::IDENTITY, &Mat4::IDENTITY, &dark).is_none());
 }
 
 #[test]
@@ -132,15 +140,6 @@ fn a_light_without_a_direction_is_refused() {
         let light = DirectionalLight { direction, ..sun() };
         assert!(light.block_bytes().is_none());
     }
-}
-
-#[test]
-fn the_material_block_is_the_colour() {
-    let bytes = Material {
-        colour: [0.25, 0.5, 0.75, 1.0],
-    }
-    .block_bytes();
-    assert!(near_all(&floats::<4>(&bytes, 0), &[0.25, 0.5, 0.75, 1.0]));
 }
 
 #[test]
