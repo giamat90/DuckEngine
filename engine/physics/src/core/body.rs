@@ -8,6 +8,7 @@
 use super::dim::{Dim, Magnitude, Placed, Quantity};
 use super::error::PhysicsError;
 use super::hash::{HashBits, StateHasher};
+use super::{MAX_SPEED, MAX_SPIN};
 use base::pool::Handle;
 use std::marker::PhantomData;
 
@@ -464,6 +465,13 @@ impl<D: Dim> Body<D> {
             && self.angular_velocity.is_finite()
     }
 
+    /// True when the linear and the angular speed are within [`MAX_SPEED`] and [`MAX_SPIN`]; false
+    /// for a speed above them or one that is not a number. Checked after `motion_is_finite`.
+    pub(super) fn motion_is_bounded(&self) -> bool {
+        self.linear_velocity.length_squared() <= MAX_SPEED * MAX_SPEED
+            && self.angular_velocity.length_squared() <= MAX_SPIN * MAX_SPIN
+    }
+
     /// Writes every field that decides the future of the body, in a fixed order. `mass` is not
     /// written: it is `1 / inv_mass` for a dynamic body and zero for a static one.
     pub(super) fn write_bits(&self, hasher: &mut StateHasher) {
@@ -530,6 +538,38 @@ mod tests {
         desc.friction = friction;
         desc.restitution = restitution;
         Body::from_desc(&desc)
+    }
+
+    fn ball_moving(linear: f32, angular: f32) -> Body<crate::d2::D2> {
+        use crate::d2::{D2, Shape2};
+        use base::math::Vec2;
+        let mut desc = BodyDesc::<D2>::new(
+            BodyKind::Dynamic,
+            Vec2::new(0.0, 0.0),
+            Shape2::Circle { radius: 0.5 },
+        );
+        desc.linear_velocity = Vec2::new(linear, 0.0);
+        desc.angular_velocity = angular;
+        Body::from_desc(&desc).must("a valid body")
+    }
+
+    #[test]
+    fn motion_is_bounded_up_to_the_two_limits_and_not_beyond() {
+        assert!(ball_moving(0.0, 0.0).motion_is_bounded());
+        assert!(ball_moving(MAX_SPEED, MAX_SPIN).motion_is_bounded());
+        assert!(ball_moving(-MAX_SPEED, -MAX_SPIN).motion_is_bounded());
+        assert!(!ball_moving(MAX_SPEED * 1.001, 0.0).motion_is_bounded());
+        assert!(!ball_moving(0.0, MAX_SPIN * 1.001).motion_is_bounded());
+        assert!(!ball_moving(0.0, -MAX_SPIN * 1.001).motion_is_bounded());
+    }
+
+    #[test]
+    fn a_speed_that_is_not_a_number_or_overflows_when_squared_is_not_bounded() {
+        assert!(!ball_moving(f32::MAX, 0.0).motion_is_bounded());
+        assert!(!ball_moving(0.0, f32::MAX).motion_is_bounded());
+        let mut body = ball_moving(1.0, 1.0);
+        body.linear_velocity.x = f32::NAN;
+        assert!(!body.motion_is_bounded());
     }
 
     fn resting_ball(kind: BodyKind) -> Body<crate::d2::D2> {

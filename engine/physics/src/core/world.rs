@@ -719,7 +719,9 @@ impl<D: Dim> World<D> {
     /// # Errors
     /// [`PhysicsError::InvalidTimeStep`] when `dt` is not finite and above zero;
     /// [`PhysicsError::NotFinite`] when the step would make a position, rotation, velocity or
-    /// impulse overflow, or a broadphase box not representable. In both cases nothing changes (the
+    /// impulse overflow, or a broadphase box not representable; [`PhysicsError::Diverged`] when a
+    /// body would end with a speed above [`MAX_SPEED`](crate::core::MAX_SPEED) or
+    /// [`MAX_SPIN`](crate::core::MAX_SPIN). In all three cases nothing changes (the
     /// solver works on copies of the bodies and the new state is committed only when all of it is
     /// valid). A pair list that is too small is not an error of the step: see
     /// [`PairList::is_complete`].
@@ -754,6 +756,10 @@ impl<D: Dim> World<D> {
             });
         if !stays_finite {
             return Err(PhysicsError::NotFinite);
+        }
+        // Finite but absurd: a diverged scene (card 8-25). Refused as a whole, like an overflow.
+        if !self.scratch.iter().flatten().all(Body::motion_is_bounded) {
+            return Err(PhysicsError::Diverged);
         }
         for (slot, copy) in self.slots.iter_mut().zip(&self.scratch) {
             store(slot, copy.as_ref());

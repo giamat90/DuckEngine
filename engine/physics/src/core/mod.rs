@@ -53,5 +53,14 @@ pub use world::{DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN, World, Wo
 /// keeps world creation from asking the allocator for an absurd block, which would abort.
 pub const MAX_BODIES: u32 = 1 << 20;
 
+/// The fastest linear speed, metres per second, a body may have after a step; a step that would
+/// give a body more is refused with [`PhysicsError::Diverged`] (card 8-25). A bullet is
+/// about a thousand metres per second: no scene of the engine comes near this bound, a diverging
+/// joint scene passes it within a few dozen steps.
+pub const MAX_SPEED: f32 = 1.0e5;
+
+/// The fastest angular speed, radians per second, a body may have after a step (see [`MAX_SPEED`]).
+pub const MAX_SPIN: f32 = 1.0e5;
+
 /// The most pairs one world may hold in its pair list (see [`PhysicsError::PairCapacityTooLarge`]).
 pub const MAX_PAIRS: u32 = 1 << 24;

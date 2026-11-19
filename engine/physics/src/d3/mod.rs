@@ -33,7 +33,8 @@ pub use crate::core::{
     DEFAULT_RELAX_ITERATIONS, DEFAULT_RESTITUTION, DEFAULT_RESTITUTION_THRESHOLD,
     DEFAULT_SLEEP_ANGULAR_SPEED, DEFAULT_SLEEP_LINEAR_SPEED, DEFAULT_SPECULATIVE_MARGIN,
     DEFAULT_SUB_STEPS, DEFAULT_TIME_TO_SLEEP, MAX_COLOURS, MAX_PAIRS, MAX_RELAX_ITERATIONS,
-    MAX_SUB_STEPS, PhysicsError, SleepConfig, SolverConfig, SolverExecution, SolverStats,
+    MAX_SPEED, MAX_SPIN, MAX_SUB_STEPS, PhysicsError, SleepConfig, SolverConfig, SolverExecution,
+    SolverStats,
 };
 pub use aabb::Aabb3;
 pub use debug_draw::{ARC_SEGMENTS, DebugColour, IPhysicsDebugDraw, NORMAL_LENGTH, draw_debug};

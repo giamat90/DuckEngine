@@ -3,6 +3,7 @@
 > **Status: PROPOSAL v1.64 (2026-11-17).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.83** - Diverging joint scenes are refused (card 8-25, Class 2, ordinary card into develop): `World::step` returns `Diverged` when a body would pass the speed bounds. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).
 > - **v1.82** - Texture of the 3D sandbox scenery (card 8-31, Class 2, ordinary card into develop): own meshes with texture coordinates in metres, linear minification, repeat. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).
 > - **v1.81** - Thin hulls (card 8-24, Class 2, ordinary card into develop): no more silently wrong volumes for thin plates. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).
 > - **v1.80** - Vulkan window for the 3D sandbox (card 8-32, Class 2, ordinary card into develop): `app_sandbox3d --vulkan`. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).
