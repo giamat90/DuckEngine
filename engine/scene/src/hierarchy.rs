@@ -18,7 +18,7 @@
 //! their number.
 
 use crate::error::SceneError;
-use crate::transform::Transform2D;
+use crate::transform::{Transform2D, Transform3D};
 use ecs::{Component, EcsError, Entity, World};
 
 /// The parent of an entity.
@@ -117,12 +117,14 @@ pub fn children(world: &World, entity: Entity) -> Children<'_> {
 /// `parent`, which moves it to the end).
 ///
 /// # Errors
-/// Refuses a despawned entity, an entity without a [`Transform2D`], and a parent that is the
+/// Refuses a despawned entity, an entity without a [`Transform2D`] or a [`Transform3D`], and a pair in different
+/// dimensions ([`SceneError::MixedDimensions`]; a tree is all 2D or all 3D), and a parent that is the
 /// child or one of its descendants; the world is unchanged then. After those checks only a
 /// storage limit of the world can fail the call.
 pub fn set_parent(world: &mut World, child: Entity, parent: Entity) -> Result<(), SceneError> {
     check_member(world, child)?;
     check_member(world, parent)?;
+    check_same_dimension(world, child, parent)?;
     if is_self_or_ancestor(world, child, parent) {
         return Err(SceneError::Cycle);
     }
@@ -176,10 +178,21 @@ fn check_alive(world: &World, entity: Entity) -> Result<(), SceneError> {
 
 fn check_member(world: &World, entity: Entity) -> Result<(), SceneError> {
     check_alive(world, entity)?;
-    if world.has::<Transform2D>(entity) {
+    if world.has::<Transform2D>(entity) || world.has::<Transform3D>(entity) {
         Ok(())
     } else {
         Err(SceneError::MissingTransform)
+    }
+}
+
+/// A tree is all 2D or all 3D: both entities have the same one transform.
+fn check_same_dimension(world: &World, child: Entity, parent: Entity) -> Result<(), SceneError> {
+    let kind = |e: Entity| (world.has::<Transform2D>(e), world.has::<Transform3D>(e));
+    let (a, b) = (kind(child), kind(parent));
+    if a == b && a.0 != a.1 {
+        Ok(())
+    } else {
+        Err(SceneError::MixedDimensions)
     }
 }
 
