@@ -346,6 +346,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tools_physics3d_bench"
+version = "0.1.0"
+dependencies = [
+ "tools_physics_bench",
+]
+
+[[package]]
 name = "tools_physics_bench"
 version = "0.1.0"
 dependencies = [
