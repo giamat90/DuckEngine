@@ -1,6 +1,6 @@
 //! Local and world transforms of the 2D scene.
 
-use base::math::{Mat3, Vec2};
+use base::math::{Mat3, Mat4, Quat, Vec2, Vec3};
 
 /// Where an entity sits relative to its parent (or to the world, without a parent): a translation,
 /// a counter-clockwise rotation in radians and a scale per axis, applied scale first, then
@@ -70,6 +70,79 @@ impl Default for WorldTransform2D {
     fn default() -> Self {
         Self {
             matrix: Mat3::IDENTITY,
+        }
+    }
+}
+
+/// Where an entity sits relative to its parent (or to the world, without a parent) in 3D: a
+/// translation, a rotation and a scale per axis, applied scale first, then rotation, then
+/// translation. Right-handed, Y up. The rotation must be a unit quaternion.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Transform3D {
+    /// Translation, in metres.
+    pub position: Vec3,
+    /// Orientation, a unit quaternion.
+    pub rotation: Quat,
+    /// Scale along the local axes.
+    pub scale: Vec3,
+}
+
+impl Transform3D {
+    /// No translation, no rotation, scale one.
+    pub const IDENTITY: Self = Self {
+        position: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+    };
+
+    /// Only a translation.
+    #[must_use]
+    pub const fn from_position(position: Vec3) -> Self {
+        Self {
+            position,
+            ..Self::IDENTITY
+        }
+    }
+
+    /// The matrix of this transform: scale, then rotation, then translation.
+    #[must_use]
+    pub fn to_mat4(self) -> Mat4 {
+        let rotation = self.rotation.to_mat3();
+        Mat4::from_cols(
+            (rotation.cols[0] * self.scale.x).extend(0.0),
+            (rotation.cols[1] * self.scale.y).extend(0.0),
+            (rotation.cols[2] * self.scale.z).extend(0.0),
+            self.position.extend(1.0),
+        )
+    }
+}
+
+impl Default for Transform3D {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
+/// The derived transform of an entity in world space (3D), written by the update from the local
+/// transforms along the hierarchy. Nothing else should write it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WorldTransform3D {
+    /// The matrix that takes a point of the entity's local space to world space.
+    pub matrix: Mat4,
+}
+
+impl WorldTransform3D {
+    /// Takes a point of the entity's local space to world space.
+    #[must_use]
+    pub fn transform_point(&self, point: Vec3) -> Vec3 {
+        self.matrix.transform_point3(point)
+    }
+}
+
+impl Default for WorldTransform3D {
+    fn default() -> Self {
+        Self {
+            matrix: Mat4::IDENTITY,
         }
     }
 }

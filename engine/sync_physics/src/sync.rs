@@ -41,7 +41,7 @@ pub struct SyncReport {
 }
 
 /// Adds one to a counter without overflow.
-fn bump(counter: &mut u32) {
+pub(crate) fn bump(counter: &mut u32) {
     *counter = counter.saturating_add(1);
 }
 
