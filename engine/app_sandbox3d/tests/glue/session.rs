@@ -31,11 +31,13 @@ fn scancode(wanted: input::KeyCode) -> u32 {
 
 /// The fingerprint of the command stream after the given frame of the session with seed 24 (one
 /// physics step per frame, no input). A change here means the picture changed: look at it before
-/// you update the number.
+/// you update the number. Card 8-31 changed them: the floor and the walls have their own meshes,
+/// so the buffers they bind have other handles (a dump of frame 1 before and after differs in
+/// those lines only).
 const GOLDEN: [(u32, u64); 3] = [
-    (1, 10_615_325_251_511_061_453),
-    (60, 2_537_191_119_467_477_856),
-    (200, 14_345_566_213_154_742_765),
+    (1, 2_258_137_936_222_959_565),
+    (60, 9_582_276_276_695_102_320),
+    (200, 487_489_509_172_978_347),
 ];
 
 #[test]

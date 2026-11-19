@@ -5,7 +5,7 @@
 //! OpenGL device in the window. After `new`, `draw` allocates nothing on its own.
 
 use crate::error::Error;
-use crate::mesh::{MeshData, unit_meshes};
+use crate::mesh::{MeshData, scenery_meshes, unit_meshes};
 use crate::sandbox::Draw;
 use app_sprite_sample::sample::{create_buffer, create_texture};
 use app_sprite_sample::scene::{CHECKER_SIDE, checker_pixels};
@@ -167,7 +167,7 @@ pub struct Renderer {
     texture: TextureId,
     sampler: SamplerId,
     light: BufferId,
-    meshes: [GpuMesh; 3],
+    meshes: Vec<GpuMesh>,
     objects: Vec<BufferId>,
     queue: LitQueue,
     stream: CommandStream,
@@ -194,6 +194,11 @@ impl Renderer {
         let pipeline = create_pipeline(device, &vertex, &fragment)?;
         let [sphere, cuboid, capsule] =
             unit_meshes().ok_or_else(|| Error::Render("a mesh cannot be made".to_owned()))?;
+        let scenery = scenery_meshes();
+        let mut meshes = Vec::with_capacity(3 + scenery.len());
+        for mesh in [&sphere, &cuboid, &capsule].into_iter().chain(&scenery) {
+            meshes.push(upload_mesh(device, mesh)?);
+        }
         let mut objects = Vec::with_capacity(MAX_OBJECTS);
         for _ in 0..MAX_OBJECTS {
             objects.push(uniform_buffer(device, OBJECT_BLOCK_BYTES)?);
@@ -206,16 +211,14 @@ impl Renderer {
             pipeline,
             texture: create_texture(device, CHECKER_SIDE, &checker_pixels())?,
             sampler: device.create_sampler(SamplerDesc {
-                min_filter: Filter::Nearest,
+                // Averaging when a face is far (card 8-31), crisp squares when it is near; the
+                // scenery repeats the texture every few metres.
+                min_filter: Filter::Linear,
                 mag_filter: Filter::Nearest,
-                address: AddressMode::Clamp,
+                address: AddressMode::Repeat,
             })?,
             light: uniform_buffer(device, LIGHT_BLOCK_BYTES)?,
-            meshes: [
-                upload_mesh(device, &sphere)?,
-                upload_mesh(device, &cuboid)?,
-                upload_mesh(device, &capsule)?,
-            ],
+            meshes,
             objects,
             queue: LitQueue::new(MAX_OBJECTS),
             stream: CommandStream::with_capacity(STREAM_BYTES),
