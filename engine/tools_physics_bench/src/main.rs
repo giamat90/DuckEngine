@@ -1,5 +1,5 @@
 //! Dev-time benchmark of the physics crate (card 4-22). Prints the environment and markdown
-//! tables: workload W1 (the pyramid, one thread), the work counters, the scaling scene on the
+//! tables: workload W1 (the pyramid, one thread), the 3D scene catalogue (card 8-12), the work counters, the scaling scene on the
 //! work-stealing pool at 1, 2, 4 and 6 workers, and the scheduler overhead. Report only: no
 //! threshold is applied to a time, and the exit code is non-zero only when an argument is bad or
 //! a measurement could not run.
@@ -10,11 +10,12 @@
 
 use physics::d2::SolverExecution;
 use std::process::ExitCode;
+use tools_physics_bench::scene3d::{Scene3, run_scene3};
 use tools_physics_bench::{
     BenchError, Command, GateFeasibility, Measured, Options, USAGE, WorkCounters, counters_header,
     counters_row, gate_feasibility, icount_workload, measure_w1, overhead_table, parse,
     parse_instructions, relative_spread, run_overhead, run_scaling, run_scene, scaling_table,
-    stability_table, w1_header, w1_row,
+    scene3_header, scene3_row, stability_table, w1_header, w1_row,
 };
 
 fn environment(options: &Options) {
@@ -139,10 +140,30 @@ fn overhead_section(options: &Options) -> Result<(), BenchError> {
     Ok(())
 }
 
+fn scenes3d_section(options: &Options) -> Result<(), BenchError> {
+    println!(
+        "## 3D scenes: stability and determinism catalogue
+"
+    );
+    println!(
+        "{} steps per scene, serial, sleeping on; the hash is the replay hash; one run each.
+",
+        options.steps
+    );
+    println!("{}", scene3_header());
+    for scene in Scene3::ALL {
+        let run = run_scene3(scene, options.steps, &SolverExecution::SERIAL, true)?;
+        println!("{}", scene3_row(scene, options.steps, &run));
+    }
+    println!();
+    Ok(())
+}
+
 fn report(options: &Options) -> Result<(), BenchError> {
     environment(options);
     w1_section(options)?;
     stability_section(options)?;
+    scenes3d_section(options)?;
     scaling_section(options)?;
     overhead_section(options)
 }
