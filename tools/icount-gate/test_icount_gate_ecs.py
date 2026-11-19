@@ -67,7 +67,7 @@ class ReadEcsConfig(unittest.TestCase):
     def test_the_other_profiles_are_unchanged(self):
         cfg = ig.read_config(REPO / "gates" / "gates.toml", REPO / "gates" / "benchmarks.toml")
         self.assertEqual((cfg.package, cfg.rows, cfg.steps), ("tools_physics_bench", 20, 30))
-        self.assertEqual(sorted(ig.PROFILES), ["audio", "ecs", "physics"])
+        self.assertEqual(sorted(ig.PROFILES), ["audio", "ecs", "physics", "physics3d"])
 
     def test_a_missing_ecs_table_is_an_error_not_a_fallback_to_physics(self):
         with self.assertRaises(ig.GateError):

@@ -1,0 +1,135 @@
+# D2 golden hashes of the 3D scenes of the physics crate (card 8-13). Protected path (gates/): a change is a governance change.
+# State hash (FNV-1a 64 bit, World::state_hash) after the listed steps of each scene, scalar serial reference,
+# feature cross-platform-determinism on. Regenerate only in a governance task: see wiki/architecture/physics.md section 3.
+format = 1
+feature = "cross-platform-determinism"
+toolchain = "1.94.1"
+recorded = "2026-11-19, Windows x86-64; identical on Linux x86-64 (WSL2)"
+recorder = "cargo test -p physics --features cross-platform-determinism --test golden3d -- print_the_golden_lines --nocapture --test-threads=1"
+
+[[scene]]
+name = "pyramid 3d"
+steps = 120
+stride = 10
+[scene.hash]
+1 = "1ae032f8a24e9d08"
+10 = "1d793a1061ff6857"
+20 = "8e54ae24824b6967"
+30 = "819f94da7f4ee631"
+40 = "d6cca7ad989c4466"
+50 = "637c84c311a27939"
+60 = "c3951c5841fe98aa"
+70 = "170c5db3d633d1b3"
+80 = "3d9966f86c362b21"
+90 = "5489f934ba9d93f0"
+100 = "b7b6bec201686a5d"
+110 = "f07a42cd15113d55"
+120 = "2fbb9abe4854a923"
+
+[[scene]]
+name = "sleeping tower 3d"
+steps = 300
+stride = 10
+[scene.hash]
+1 = "0b5063e686cea4bc"
+10 = "33a13ae7b0661aaf"
+20 = "b65dc4b58b7a796d"
+30 = "775ec9b4d5deed99"
+40 = "2ae5b28e3698c2c5"
+50 = "44c93309c1f75af3"
+60 = "c1cfd6a685e326b8"
+70 = "1b3af5b5377aa532"
+80 = "6d9f6632b47f077b"
+90 = "01becda29bd1b4f0"
+100 = "a6770d815814fab1"
+110 = "626a7c3f38c41aaf"
+120 = "5655b5319843224b"
+130 = "0664b7e40b296642"
+140 = "df239d56c9776b06"
+150 = "6cbb96202444d15c"
+160 = "9c4271b48662ec5e"
+170 = "e9f066c6e2a2fc42"
+180 = "fefb6484345a3771"
+190 = "485aece15bb23fe3"
+200 = "948b6dc76b8dfcba"
+210 = "3ecd3215a68289da"
+220 = "652ecec5de22b4fa"
+230 = "3072fa5820bacc92"
+240 = "141788ef67b8e657"
+250 = "d42be8822b76e52a"
+260 = "2cdd7abf2e0405f0"
+270 = "edbe019539bda5cc"
+280 = "ee3d83f55d2e9aa7"
+290 = "0dfb6cb9040c0bab"
+300 = "d63d8202ecbba43e"
+
+[[scene]]
+name = "heavy on light 3d"
+steps = 120
+stride = 10
+[scene.hash]
+1 = "97222a3431c89aed"
+10 = "e2fb4e719630c38a"
+20 = "80aa2fcb7fcf3602"
+30 = "3c2fe786a99144a6"
+40 = "31cdbd770b80cb44"
+50 = "0a9165809f0d67bf"
+60 = "023fb93f0085ac66"
+70 = "45bb00387ee76ea5"
+80 = "a7775bbdb6c599c1"
+90 = "0aaeb703e93951ae"
+100 = "93a056288740ad10"
+110 = "cd2d51a3e28adab0"
+120 = "8c61f19f4c16d3e3"
+
+[[scene]]
+name = "mixed pile 3d"
+steps = 200
+stride = 10
+[scene.hash]
+1 = "f6f4573dcb202972"
+10 = "2f32f2855f043035"
+20 = "b4e3cb24ce5bcf85"
+30 = "d98f67f76d8e4aab"
+40 = "908518cbfed7a4c3"
+50 = "360e5c81b07c21e1"
+60 = "6abaec69170f2086"
+70 = "2cd10eb307ad35ed"
+80 = "c0aa4173674e0bd9"
+90 = "5b0b155ab3389a1c"
+100 = "76a67da63e82fe22"
+110 = "1f2656add03302e3"
+120 = "edeb1d7e3c03d410"
+130 = "163d6ee402d2752e"
+140 = "c65bb3bd86221921"
+150 = "27cd4e9be2945091"
+160 = "b66e46b6e29f6457"
+170 = "5b2ebfaa8a53e794"
+180 = "2166325606642f61"
+190 = "92c0d3ea46a05bab"
+200 = "7f1cd0757d6bfc36"
+
+[[scene]]
+name = "joint chain 3d"
+steps = 180
+stride = 10
+[scene.hash]
+1 = "638dab3742bf9652"
+10 = "487773004b23a39e"
+20 = "cec82956312e615c"
+30 = "1ec217814d98e83e"
+40 = "f5ae4a31e302c043"
+50 = "890d125000102074"
+60 = "6fc900da0ee4b4ca"
+70 = "5892586e9d4917d9"
+80 = "82e1f0d3f6aa7f5a"
+90 = "dc2b338cffb7f806"
+100 = "507aab2060529c7d"
+110 = "5977b8d2f8928e97"
+120 = "c671b3c81ce5e53d"
+130 = "89157e55a1f99420"
+140 = "c1184684462029a2"
+150 = "4c3988628a19225d"
+160 = "7bd839204ea96eef"
+170 = "b8cff2f4a3b0ca64"
+180 = "9a24d5ac69b8d85c"
