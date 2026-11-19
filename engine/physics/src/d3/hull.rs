@@ -107,7 +107,7 @@ impl Hull {
     /// Calls `visit` with the two ends of each edge of the hull (in the principal frame), once each.
     /// Works the faces out again, so it is for drawing, not for every step.
     pub(super) fn for_each_edge(&self, mut visit: impl FnMut(Vec3, Vec3)) {
-        let Ok(solid) = Solid::of(self.vertices()) else {
+        let Ok(solid) = Solid::of_corners(self.vertices()) else {
             return;
         };
         for plane in &solid.planes[..solid.plane_count] {
@@ -250,13 +250,25 @@ fn size_of(points: &[Vec3]) -> f32 {
 }
 
 impl Solid {
+    /// The solid of `points`, refused when they are thinner than [`MIN_THICKNESS`] of their size.
     fn of(points: &[Vec3]) -> Result<Self, PhysicsError> {
+        Self::build(points, true)
+    }
+
+    /// The solid of the stored corners of a hull that was already accepted, to draw it: the thickness
+    /// limit is not applied again (the corners alone can measure thinner than all the points did).
+    fn of_corners(corners: &[Vec3]) -> Result<Self, PhysicsError> {
+        Self::build(corners, false)
+    }
+
+    fn build(points: &[Vec3], refuse_thin: bool) -> Result<Self, PhysicsError> {
         let size = size_of(points);
         if size <= 0.0 {
             return Err(PhysicsError::InvalidShape);
         }
         let thickness = thinnest_width(points);
-        if !thickness.is_finite() || thickness < MIN_THICKNESS * size {
+        let measured = thickness.is_finite() && thickness > 0.0;
+        if !measured || (refuse_thin && thickness < MIN_THICKNESS * size) {
             return Err(PhysicsError::InvalidShape);
         }
         let mut solid = Self {
@@ -786,6 +798,47 @@ fn quaternion_of(m: Matrix) -> Quat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base::rng::Pcg32;
+
+    /// Random plates just above the thickness limit, with interior points, turned at random.
+    fn plates_near_the_limit(count: usize) -> Vec<Vec<Vec3>> {
+        let mut rng = Pcg32::new(0x0864, 10);
+        let mut unit = move || {
+            f32::from(i16::try_from(rng.below(2001).unwrap_or(0)).unwrap_or(0) - 1000) / 1000.0
+        };
+        (0..count)
+            .map(|_| {
+                let (tilt, spin) = (unit() * 3.0, unit() * 3.0);
+                let turn = Quat::from_axis_angle(Vec3::X, tilt)
+                    .zip(Quat::from_axis_angle(Vec3::Y, spin))
+                    .map_or(Quat::IDENTITY, |(a, b)| a * b);
+                (0..14)
+                    .map(|_| turn.rotate(Vec3::new(unit(), unit(), (unit() + 1.0) * 0.5 * 7.0e-5)))
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_hull_that_was_built_can_always_be_drawn() {
+        // Card 8-24: drawing works the faces out again from the stored corners, which must not
+        // meet the thickness limit again and draw nothing.
+        let hulls: Vec<Hull> = plates_near_the_limit(300)
+            .iter()
+            .filter_map(|points| Hull::new(points).ok())
+            .collect();
+        for hull in &hulls {
+            let mut edges = 0;
+            hull.for_each_edge(|_, _| edges += 1);
+            assert!(
+                edges >= 6,
+                "a hull of {} corners drew {edges} edges",
+                hull.vertices().len()
+            );
+        }
+        let built = hulls.len();
+        assert!(built >= 30, "only {built} plates were built");
+    }
 
     #[test]
     fn points_on_one_line_do_not_span_a_plane_wherever_the_line_is() {
