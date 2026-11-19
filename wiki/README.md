@@ -3,6 +3,7 @@
 > **Status: PROPOSAL v1.64 (2026-11-17).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.81** - Thin hulls (card 8-24, Class 2, ordinary card into develop): no more silently wrong volumes for thin plates. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).
 > - **v1.80** - Vulkan window for the 3D sandbox (card 8-32, Class 2, ordinary card into develop): `app_sandbox3d --vulkan`. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).
 > - **v1.79** - 3D gates (card 8-13, Class 3 governance, main first): the golden file `gates/golden/physics3d-replay.toml` and the job `d3_determinism` for the 3D scenes (O6 (a)), the instruction-count profile `physics3d` and `[physics3d_icount]` in `gates/benchmarks.toml` with the job `physics3d_icount`, and the `--marker`, `--label`, `--recorder` and `--title` options of `tools/golden-check`. Pages: [ci-diagrams](workflow/ci-diagrams.md), [physics](architecture/physics.md).
 > - **v1.77** - 3D golden recorder and instruction-count workload (card 8-29, Class 2, test code and a dev tool, ordinary card into `develop`; code half of governance card 8-13): `physics/tests/golden3d.rs` and the crate `tools_physics3d_bench`; D2 for five 3D scenes checked on Windows and Linux; no gate file touched. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).

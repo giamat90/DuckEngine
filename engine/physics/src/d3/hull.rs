@@ -31,6 +31,19 @@ const JACOBI_SWEEPS: usize = 12;
 /// sum means two faces overlap or a face is missing, and the volume would be wrong by about as
 /// much: the points are then refused instead.
 const CLOSED_SURFACE: f32 = 1.0e-3;
+/// The share of the thickness of the points a point may be from a plane and still lie on it, when
+/// that is less than [`PLANE_TOLERANCE`] of the size (card 8-24): on a thin plate the fixed
+/// tolerance is as large as the plate and planes of its two faces are confused.
+const THICKNESS_SHARE: f32 = 0.01;
+/// The thinnest a hull may be, as a fraction of its size (card 8-24): thinner points are refused,
+/// because the planes of the two faces cannot be told apart from the rounding of the input.
+const MIN_THICKNESS: f32 = 5.0e-5;
+/// The share of the volume that a gap in the closed surface may cost (card 8-24). Moving the
+/// reference point of the tetrahedra by `r` changes the volume by about `|area vector| r / 3`, so a
+/// surface that does not close up well enough for a thin plate gives a volume that is wrong by more
+/// than this share; the points are then refused. The check against the total area alone cannot see
+/// it, because a plate has a large area and a small volume.
+const CLOSED_VOLUME_SHARE: f32 = 0.01;
 /// An off-diagonal term below this (relative to the matrix) is zero.
 const JACOBI_EPSILON: f32 = 1.0e-12;
 
@@ -94,7 +107,7 @@ impl Hull {
     /// Calls `visit` with the two ends of each edge of the hull (in the principal frame), once each.
     /// Works the faces out again, so it is for drawing, not for every step.
     pub(super) fn for_each_edge(&self, mut visit: impl FnMut(Vec3, Vec3)) {
-        let Ok(solid) = Solid::of(self.vertices()) else {
+        let Ok(solid) = Solid::of_corners(self.vertices()) else {
             return;
         };
         for plane in &solid.planes[..solid.plane_count] {
@@ -191,6 +204,40 @@ fn box_centre(points: &[Vec3]) -> Vec3 {
     (low + high) * 0.5
 }
 
+/// Adds the outer product of `d` with itself to `matrix`.
+fn add_spread(matrix: &mut Matrix, d: Vec3) {
+    for (row, line) in matrix.iter_mut().enumerate() {
+        for (cell, col) in line.iter_mut().zip(0..3) {
+            *cell += component(d, row) * component(d, col);
+        }
+    }
+}
+
+/// The smallest width of the points along the three axes of their own spread: the thickness of a
+/// plate. Found from the points alone, so it does not depend on the planes that are still to be
+/// found.
+fn thinnest_width(points: &[Vec3]) -> f32 {
+    let mean =
+        points.iter().fold(Vec3::ZERO, |sum, p| sum + *p) * (1.0 / small_count(points.len()));
+    let mut covariance: Matrix = [[0.0; 3]; 3];
+    for p in points {
+        add_spread(&mut covariance, *p - mean);
+    }
+    let (_, axes) = principal(covariance);
+    (0..3)
+        .map(|index| {
+            let along = column(axes, index);
+            let (low, high) = points
+                .iter()
+                .map(|p| p.dot(along))
+                .fold((f32::MAX, f32::MIN), |(low, high), d| {
+                    (low.min(d), high.max(d))
+                });
+            high - low
+        })
+        .fold(f32::MAX, f32::min)
+}
+
 fn size_of(points: &[Vec3]) -> f32 {
     let first = points[0];
     points
@@ -203,9 +250,25 @@ fn size_of(points: &[Vec3]) -> f32 {
 }
 
 impl Solid {
+    /// The solid of `points`, refused when they are thinner than [`MIN_THICKNESS`] of their size.
     fn of(points: &[Vec3]) -> Result<Self, PhysicsError> {
+        Self::build(points, true)
+    }
+
+    /// The solid of the stored corners of a hull that was already accepted, to draw it: the thickness
+    /// limit is not applied again (the corners alone can measure thinner than all the points did).
+    fn of_corners(corners: &[Vec3]) -> Result<Self, PhysicsError> {
+        Self::build(corners, false)
+    }
+
+    fn build(points: &[Vec3], refuse_thin: bool) -> Result<Self, PhysicsError> {
         let size = size_of(points);
         if size <= 0.0 {
+            return Err(PhysicsError::InvalidShape);
+        }
+        let thickness = thinnest_width(points);
+        let measured = thickness.is_finite() && thickness > 0.0;
+        if !measured || (refuse_thin && thickness < MIN_THICKNESS * size) {
             return Err(PhysicsError::InvalidShape);
         }
         let mut solid = Self {
@@ -216,7 +279,7 @@ impl Solid {
                 offset: 0.0,
             }; MAX_PLANES],
             plane_count: 0,
-            tolerance: PLANE_TOLERANCE * size,
+            tolerance: (PLANE_TOLERANCE * size).min(THICKNESS_SHARE * thickness),
         };
         solid.find_planes(points, size)?;
         solid.find_corners(points)?;
@@ -451,7 +514,11 @@ impl Solid {
         for plane in &self.planes[..self.plane_count] {
             self.add_face(plane, reference, &mut sums)?;
         }
-        if !(sums.volume.is_finite() && sums.volume > 0.0 && sums.is_closed()) {
+        let reach = self.corners[..self.count]
+            .iter()
+            .map(|c| (*c - reference).length())
+            .fold(0.0, f32::max);
+        if !(sums.volume.is_finite() && sums.volume > 0.0 && sums.is_closed(reach)) {
             return Err(PhysicsError::InvalidShape);
         }
         let to_centre = sums.first_moment * (1.0 / sums.volume);
@@ -564,9 +631,11 @@ impl Sums {
     }
 
     /// Whether the faces added close up: their area vectors cancel, up to `CLOSED_SURFACE` of the
-    /// total area. Faces that overlap, or leave a gap, do not.
-    fn is_closed(&self) -> bool {
-        self.area_vector.length() <= CLOSED_SURFACE * self.area
+    /// total area, and the gap could not change the volume by more than `CLOSED_VOLUME_SHARE` when
+    /// the corners are `reach` from the reference point. Faces that overlap, or leave a gap, do not.
+    fn is_closed(&self, reach: f32) -> bool {
+        let gap = self.area_vector.length();
+        gap <= CLOSED_SURFACE * self.area && gap * reach <= 3.0 * CLOSED_VOLUME_SHARE * self.volume
     }
 
     fn add_tetrahedron(&mut self, corners: [Vec3; 3]) {
@@ -729,6 +798,47 @@ fn quaternion_of(m: Matrix) -> Quat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base::rng::Pcg32;
+
+    /// Random plates just above the thickness limit, with interior points, turned at random.
+    fn plates_near_the_limit(count: usize) -> Vec<Vec<Vec3>> {
+        let mut rng = Pcg32::new(0x0864, 10);
+        let mut unit = move || {
+            f32::from(i16::try_from(rng.below(2001).unwrap_or(0)).unwrap_or(0) - 1000) / 1000.0
+        };
+        (0..count)
+            .map(|_| {
+                let (tilt, spin) = (unit() * 3.0, unit() * 3.0);
+                let turn = Quat::from_axis_angle(Vec3::X, tilt)
+                    .zip(Quat::from_axis_angle(Vec3::Y, spin))
+                    .map_or(Quat::IDENTITY, |(a, b)| a * b);
+                (0..14)
+                    .map(|_| turn.rotate(Vec3::new(unit(), unit(), (unit() + 1.0) * 0.5 * 7.0e-5)))
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_hull_that_was_built_can_always_be_drawn() {
+        // Card 8-24: drawing works the faces out again from the stored corners, which must not
+        // meet the thickness limit again and draw nothing.
+        let hulls: Vec<Hull> = plates_near_the_limit(300)
+            .iter()
+            .filter_map(|points| Hull::new(points).ok())
+            .collect();
+        for hull in &hulls {
+            let mut edges = 0;
+            hull.for_each_edge(|_, _| edges += 1);
+            assert!(
+                edges >= 6,
+                "a hull of {} corners drew {edges} edges",
+                hull.vertices().len()
+            );
+        }
+        let built = hulls.len();
+        assert!(built >= 30, "only {built} plates were built");
+    }
 
     #[test]
     fn points_on_one_line_do_not_span_a_plane_wherever_the_line_is() {
