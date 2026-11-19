@@ -641,6 +641,75 @@ class Ci(unittest.TestCase):
         self.assertIn("ready=false", step)
         self.assertNotIn("if:", step)
 
+    def physics3d_icount_job(self):
+        job = CI[CI.index("\n  physics3d_icount:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        return job[:following.start()] if following else job
+
+    def test_the_physics3d_icount_job_is_the_ecs_job_with_the_3d_profile(self):
+        # Card 8-13: same trusted-main, locked-checkout, base-against-head structure; only the profile and the words differ.
+        ecs, three = self.ecs_icount_job(), self.physics3d_icount_job()
+        three = "\n".join(line for line in three.splitlines() if not line.strip().startswith("# Card 8-13"))
+        ecs = ecs.replace("--benchmark ecs", "--benchmark physics3d")
+        ecs = ecs.replace("ecs_icount", "physics3d_icount").replace("ECS instruction count", "Physics 3D instruction count")
+        ecs = ecs.replace("the ECS profile", "the 3D physics profile")
+        self.assertEqual(three.strip(), ecs.strip())
+        self.assertEqual(len(re.findall(r"(?m)^\s+if:", three)), 7)
+        self.assertEqual(three.count("--benchmark physics3d"), 4)
+        self.assertNotIn("continue-on-error", three)
+
+    def test_the_physics3d_icount_job_waits_for_its_table_on_main(self):
+        step = next(s for s in self.physics3d_icount_job().split("\n      - ") if "id: gate" in s)
+        self.assertIn("physics3d_icount", step)
+        self.assertIn("ready=false", step)
+        self.assertNotIn("if:", step)
+
+    def test_the_icount_tool_states_its_3d_skip_line(self):
+        gate = (Path(__file__).resolve().parents[2] / "tools" / "icount-gate" / "icount_gate.py").read_text(encoding="utf-8")
+        self.assertIn("not run: 3D physics benchmark tool absent", gate)
+
+    def d3_job(self):
+        job = CI[CI.index("\n  d3_determinism:") + 1:]
+        following = re.search(r"\n  \w+:\n", job)
+        return job[:following.start()] if following else job
+
+    def test_the_d3_job_runs_on_windows_and_linux_with_the_feature_on_and_a_trusted_golden_file(self):
+        # Card 8-13: the 3D golden file and the checker come from main; the pushed commit is the code under test.
+        job = self.d3_job()
+        self.assertIn("os: [windows-latest, ubuntu-latest]", job)
+        self.assertIn("fail-fast: false", job)
+        self.assertIn("ref: main\n          path: trusted", job)
+        self.assertIn("path: head", job)
+        self.assertEqual(job.count("persist-credentials: false"), job.count("actions/checkout@"))
+        self.assertIn("cargo test -p physics --features cross-platform-determinism --test golden3d --locked -- print_the_golden_lines --nocapture --test-threads=1", job)
+        self.assertIn("python trusted/tools/golden-check/golden_check.py verify --golden trusted/gates/golden/physics3d-replay.toml", job)
+        self.assertIn("lint --golden trusted/gates/golden/physics3d-replay.toml", job)
+        self.assertNotIn("head/gates", job)
+        self.assertNotIn("head/tools", job)
+        self.assertNotIn("aarch64", job)
+        self.assertNotIn("continue-on-error", job)
+
+    def test_the_d3_job_skips_only_through_the_bootstrap_and_the_presence_check_and_states_it(self):
+        job = self.d3_job()
+        steps = job.split("\n      - ")
+        bootstrap = next(s for s in steps if "id: gate" in s)
+        self.assertNotIn("if:", bootstrap)
+        self.assertIn("ready=false", bootstrap)
+        self.assertIn("not run: the 3D golden file or the marker option of tools/golden-check is not on main yet", bootstrap)
+        presence = next(s for s in steps if "id: physics3d" in s)
+        self.assertIn("--marker engine/physics/tests/golden3d.rs", presence)
+        self.assertIn('--summary "$GITHUB_STEP_SUMMARY"', presence)
+        self.assertIn("if: steps.gate.outputs.ready == 'true'", presence)
+        # Every step after the presence check follows it; nothing else carries a condition.
+        self.assertEqual(job.count("if: steps.physics3d.outputs.present == 'true'"), 4)
+        self.assertEqual(job.count("if: steps.gate.outputs.ready == 'true'"), 2)
+        self.assertEqual(len(re.findall(r"(?m)^\s+if:", job)), 6)
+
+    def test_the_d3_job_checks_the_build_flags_before_it_builds_and_stops_on_a_failed_record(self):
+        job = self.d3_job()
+        self.assertLess(job.index("golden_check.py flags --repo head"), job.index("cargo test -p physics"))
+        self.assertIn("set -euo pipefail", job[job.index("Record the 3D hashes"):job.index("Compare with the 3D golden")])
+
     def test_the_icount_tool_states_its_ecs_skip_line(self):
         gate = (Path(__file__).resolve().parents[2] / "tools" / "icount-gate" / "icount_gate.py").read_text(encoding="utf-8")
         self.assertIn("not run: ECS benchmark tool absent", gate)

@@ -199,17 +199,21 @@ def _golden_scene(entry):
     return scene
 
 
-def render_golden(run, toolchain, recorded):
+DEFAULT_TITLE = "the physics crate (card 4-20)"
+DEFAULT_RECORDER = "cargo test -p physics --features cross-platform-determinism --test determinism -- golden:: --nocapture"
+
+
+def render_golden(run, toolchain, recorded, recorder=DEFAULT_RECORDER, title=DEFAULT_TITLE):
     """The golden file text for `run`: LF line endings, scenes in the order of the run."""
     out = [
-        "# D2 golden hashes of the physics crate (card 4-20). Protected path (gates/): a change is a governance change.",
+        f"# D2 golden hashes of {title}. Protected path (gates/): a change is a governance change.",
         "# State hash (FNV-1a 64 bit, World::state_hash) after the listed steps of each scene, scalar serial reference,",
         f"# feature {FEATURE} on. Regenerate only in a governance task: see wiki/architecture/physics.md section 3.",
         f"format = {FORMAT}",
         f'feature = "{FEATURE}"',
         f'toolchain = "{toolchain}"',
         f'recorded = "{recorded}"',
-        'recorder = "cargo test -p physics --features cross-platform-determinism --test determinism -- golden:: --nocapture"',
+        f'recorder = "{recorder}"',
         "",
     ]
     for name, scene in run.scenes.items():
@@ -264,6 +268,20 @@ def presence(trusted, head):
     if in_trusted:
         return "fail", "the physics crate exists on main but the pushed commit has deleted or moved it: not a skip"
     return "skip", SKIP_MESSAGE
+
+
+def marker_presence(trusted, head, marker, label):
+    """('run' | 'skip' | 'fail', message) for a golden target whose recorder is one file (card 8-13): the 3D recorder.
+    Skipped only when neither main nor the pushed commit has the file; a file on main that the push lacks is red."""
+    if marker.is_absolute() or marker.anchor or marker.as_posix().startswith("/") or ".." in marker.parts or not marker.parts:
+        raise GoldenError(f"the marker {marker.as_posix()!r} must be a relative path inside the tree")
+    in_head = (Path(head) / marker).is_file()
+    in_trusted = (Path(trusted) / marker).is_file()
+    if in_head:
+        return "run", f"{label} present"
+    if in_trusted:
+        return "fail", f"{marker.as_posix()} ({label}) exists on main but the pushed commit has deleted or moved it: not a skip"
+    return "skip", f"not run: {label} absent ({marker.as_posix()} is on neither main nor the pushed commit)"
 
 
 BAD_CPU = re.compile(r"target-cpu")
@@ -346,13 +364,18 @@ def cmd_record(args):
     recorded = args.recorded or f"{run.os} {run.arch}"
     Path(args.golden).parent.mkdir(parents=True, exist_ok=True)
     with open(args.golden, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(render_golden(run, toolchain, recorded))
+        handle.write(render_golden(run, toolchain, recorded, args.recorder or DEFAULT_RECORDER, args.title or DEFAULT_TITLE))
     print(f"wrote {args.golden}: {len(run.scenes)} scenes")
     return 0
 
 
 def cmd_presence(args):
-    state, message = presence(args.trusted, args.head)
+    if bool(args.marker) != bool(args.label):
+        return _fail("--marker and --label go together")
+    if args.marker:
+        state, message = marker_presence(args.trusted, args.head, Path(args.marker), args.label)
+    else:
+        state, message = presence(args.trusted, args.head)
     if state == "fail":
         return _fail(message)
     if state == "skip":
@@ -384,12 +407,16 @@ def main(argv=None):
     record.add_argument("--output", required=True)
     record.add_argument("--toolchain")
     record.add_argument("--recorded")
+    record.add_argument("--recorder", help="the recorder command written into the golden file (default: the 2D recorder)")
+    record.add_argument("--title", help="what the golden file is of, for its first comment (default: the 2D crate)")
     record.add_argument("--i-am-changing-the-golden-file", action="store_true")
     pres = sub.add_parser("presence")
     pres.add_argument("--trusted", required=True)
     pres.add_argument("--head", required=True)
     pres.add_argument("--github-output")
     pres.add_argument("--summary")
+    pres.add_argument("--marker", help="the recorder file of a one-file target, relative to the tree (the 3D recorder)")
+    pres.add_argument("--label", help="the name of that target in the messages")
     flags = sub.add_parser("flags")
     flags.add_argument("--repo", required=True)
     args = parser.parse_args(argv)

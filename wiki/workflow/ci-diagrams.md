@@ -46,7 +46,7 @@ Source: `.github/workflows/ci.yml`. Fourteen independent jobs run in parallel. A
 
 ```mermaid
 flowchart TB
-  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & vk_linux & arm64 & d2_determinism & tsan & physics_icount & audio_icount & ecs_icount
+  start(["push"]) --> g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & vk_linux & arm64 & d2_determinism & d3_determinism & tsan & physics_icount & audio_icount & ecs_icount & physics3d_icount
 
   subgraph g1["g1: build, test, fmt, clippy (Windows and Ubuntu)"]
     direction TB
@@ -119,6 +119,17 @@ flowchart TB
     k7 --> k8["golden_check verify against trusted golden: RED on any difference"] --> k9["cost report, feature on and off (report only)"]
   end
 
+  subgraph d3_determinism["d3_determinism (Windows and Ubuntu x86-64, card 8-13): golden hashes of the 3D scenes with the feature on"]
+    direction TB
+    q0["checkout main as trusted/, the push as head/"] --> q1{"3D golden file and the marker option of golden_check on main?"}
+    q1 -- "no (before the card is merged)" --> q2["summary: not run, not on main yet"]
+    q1 -- yes --> q3["lint the 3D golden file (trusted)"] --> q4{"engine/physics/tests/golden3d.rs: in head, in trusted"}
+    q4 -- "neither" --> q5["notice and summary: not run, 3D recorder absent (the only skip)"]
+    q4 -- "only in trusted" --> q6["RED: recorder deleted or moved"]
+    q4 -- "in head" --> q7["flags: no target-cpu, no +fma"] --> q8["cargo test -p physics --features cross-platform-determinism --test golden3d, GOLDEN lines"]
+    q8 --> q9["golden_check verify against the trusted 3D golden: RED on any difference"]
+  end
+
   subgraph tsan["tsan (Ubuntu x86-64, card 4-21): ThreadSanitizer on a dated toolchain pinned in ci.yml"]
     direction TB
     t0["checkout main as trusted/, the push as head/"] --> t1{"engine/physics/Cargo.toml: in head, in trusted"}
@@ -175,7 +186,19 @@ flowchart TB
     e5 --> e6["compare, bands from gates.toml of main: warn 5%, fail 10%, same as physics and audio"]
   end
 
-  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & vk_linux & arm64 & d2_determinism & tsan & physics_icount & audio_icount & ecs_icount --> done(["all green = the commit may merge"])
+  subgraph physics3d_icount["physics3d_icount (Ubuntu x86-64, card 8-13): instruction count of the 3D pyramid workload, base against head"]
+    direction TB
+    f0["same job as ecs_icount: trusted/ = main, base/, head/; icount_gate --benchmark physics3d"] --> f0b{"3D profile and [physics3d_icount] on main?"}
+    f0b -- "no (before the card is merged)" --> f0c["summary: not run: icount-gate is not on main yet"]
+    f0b -- yes --> f1{"engine/tools_physics3d_bench/Cargo.toml: in base, in head"}
+    f1 -- "neither" --> f2["notice and summary: not run: 3D physics benchmark tool absent (the only skip)"]
+    f1 -- "only in base" --> f3["RED: tool deleted"]
+    f1 -- "only in head" --> f4["count head only, summary: no baseline, recorded only (the first release)"]
+    f1 -- "both" --> f5["count base and head: 2 runs each under callgrind (layers and steps from benchmarks.toml), spread within the noise limit"]
+    f5 --> f6["compare, bands from gates.toml of main: warn 5%, fail 10%, same as the others"]
+  end
+
+  g1 & gates & metrics & deny & headless & glfw_linux & gl_linux & vk_linux & arm64 & d2_determinism & d3_determinism & tsan & physics_icount & audio_icount & ecs_icount & physics3d_icount --> done(["all green = the commit may merge"])
 ```
 
 ---

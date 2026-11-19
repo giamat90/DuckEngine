@@ -36,3 +36,17 @@ entities = 8192
 frames = 8
 runs = 2
 noise_max_percent = 0.5
+
+# The serial 3D pyramid of boxes (layers = the boxes on one side of the bottom layer) on the serial scalar solver,
+# counted on the base tree and on the pushed commit in the same job (job `physics3d_icount` in .github/workflows/ci.yml)
+# and compared with the same two bands. The tool `tools_physics3d_bench` is new in phase 8 (cards 8-29, 8-13), so on
+# the first release it is only in the pushed commit: "no baseline, recorded only". 10 layers are 385 boxes. The size is
+# a first choice made without a hosted callgrind run (valgrind was not available where it was set); the first runs on
+# the runner confirm the noise limit or this entry is changed in a governance task. Card 8-13.
+[physics3d_icount]
+package = "tools_physics3d_bench"
+manifest = "engine/tools_physics3d_bench/Cargo.toml"
+layers = 10
+steps = 20
+runs = 2
+noise_max_percent = 0.5
