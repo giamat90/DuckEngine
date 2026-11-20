@@ -5,7 +5,7 @@
 //! much heavier one, both moving at the given limit, can send the light body out at up to three
 //! times its speed (an elastic bounce off a body that barely moves), above the bound, and the step
 //! refuses it as `Diverged`. The owner chose to keep the bound as a ceiling and document this
-//! (2026-11-20); whether a chain of such collisions could pass any fixed headroom was not tried (card 8-48). These tests pin the
+//! (2026-11-20); chains, boxes and spin are in `collision_scenes_edge.rs` (card 8-48). These tests pin the
 //! behaviour in 2D and 3D: the refusal, that it leaves the world untouched, that the same
 //! collision at a lower speed is fine, and that the way out works (set the speed down).
 
@@ -177,5 +177,23 @@ fn a_refused_collision_steps_again_once_a_speed_is_set_down() -> Result<(), Phys
     world.set_linear_velocity(light, Vec2::new(1000.0, 0.0))?;
     world.set_linear_velocity(heavy, Vec2::new(-1000.0, 0.0))?;
     assert_eq!(world.step(DT), Ok(()));
+    Ok(())
+}
+
+/// Card 8-48: the three times holds close to the speed that is refused. At 3300 m/s with a partner
+/// a thousand times heavier the light body leaves at about 9900 m/s, just inside the bound; at the
+/// largest given speed the same hit would give 15 000 and is refused (that value cannot be seen,
+/// the refused step leaves the world unchanged).
+#[test]
+fn the_three_times_holds_at_a_speed_close_to_the_refused_one() -> Result<(), PhysicsError> {
+    let speed = 3300.0;
+    let (mut world, light, _) = head_on3(speed, 1.0e3)?;
+    assert_eq!(world.step(DT), Ok(()));
+    let after = world.body(light)?.linear_velocity().x.abs();
+    assert!(after > 2.9 * speed && after < d3::MAX_SPEED, "3D: {after}");
+    let (mut world, light, _) = head_on2(speed, 1.0e3)?;
+    assert_eq!(world.step(DT), Ok(()));
+    let after = world.body(light)?.linear_velocity().x.abs();
+    assert!(after > 2.9 * speed && after < d2::MAX_SPEED, "2D: {after}");
     Ok(())
 }
