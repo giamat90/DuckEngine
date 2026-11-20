@@ -1,18 +1,18 @@
-//! Card 8-37: how fast do 3D scenes get, and which absurd states stay below the speed bounds?
+//! Cards 8-37 and 8-41: how fast do 3D scenes get, and does the bound see the absurd ones?
 //!
-//! `MAX_SPEED` and `MAX_SPIN` (card 8-25) were chosen, not measured. These tests run scenes that a
-//! game could make (drops, spinning bodies, stacks with a heavy top, fast bullets, ball and rod
-//! chains with a heavy end) and pin what the measurement of 2026-11-19 found, with wide margins so
-//! that a machine with other rounding still passes: the healthy scenes stay far below the bounds
-//! proposed in `wiki/spikes/speed-bounds-scan.md`, and the scenes that end with an absurd but
-//! finite state are not refused yet. When the owner changes the bounds, the second test is the one
-//! to revisit (the scenes it names then fail with `Diverged`, which is the point).
+//! `MAX_SPEED` and `MAX_SPIN` were chosen at 1e5 (card 8-25) and measured by card 8-37, which found
+//! chains with an absurd mass ratio ending at thousands of radians per second with every step `Ok`;
+//! card 8-41 adopted the bounds proposed in `wiki/spikes/speed-bounds-scan.md`. These tests run the
+//! scenes of that scan and check, with wide margins so that a machine with other rounding still
+//! passes, that the scenes a game makes stay far below the bounds and that the absurd ones are
+//! now refused.
+
 use base::math::Vec3;
 use physics::core::PhysicsError;
 use physics::d3::{
     BallJoint3, BodyDesc, BodyHandle, BodyKind, DEFAULT_BROADPHASE_MARGIN,
-    DEFAULT_SPECULATIVE_MARGIN, DistanceJoint3, Joint3, JointDesc, MAX_SPIN, STANDARD_GRAVITY,
-    Shape3, SleepConfig, SolverConfig, World, WorldConfig,
+    DEFAULT_SPECULATIVE_MARGIN, DistanceJoint3, Joint3, JointDesc, MAX_SPEED, MAX_SPIN,
+    STANDARD_GRAVITY, Shape3, SleepConfig, SolverConfig, World, WorldConfig,
 };
 
 const DT: f32 = 1.0 / 60.0;
@@ -176,11 +176,6 @@ fn chain_scene(links: u8, end_density: f32, rod: bool) -> Result<World, PhysicsE
     Ok(w)
 }
 
-/// The bounds proposed in the report of card 8-37 (a proposal: the constants of the crate are not
-/// changed by this card).
-const PROPOSED_SPEED: f64 = 1.0e4;
-const PROPOSED_SPIN: f64 = 2.0e3;
-
 /// Every (rod or ball, link count, end density) of the chain scenes for two end densities.
 fn chain_cases(ratios: [f32; 2]) -> Vec<(bool, u8, f32)> {
     [false, true]
@@ -193,9 +188,13 @@ fn chain_cases(ratios: [f32; 2]) -> Vec<(bool, u8, f32)> {
 fn assert_healthy(name: &str, scene: Result<World, PhysicsError>) -> Result<(), PhysicsError> {
     let p = run(scene?);
     assert!(p.refused.is_none(), "{name}: {:?}", p.refused);
-    assert!(p.linear < PROPOSED_SPEED / 2.0, "{name}: {} m/s", p.linear);
     assert!(
-        p.angular < PROPOSED_SPIN / 2.0,
+        f64::from(MAX_SPEED) / 2.0 > p.linear,
+        "{name}: {} m/s",
+        p.linear
+    );
+    assert!(
+        f64::from(MAX_SPIN) / 2.0 > p.angular,
         "{name}: {} rad/s",
         p.angular
     );
@@ -224,33 +223,29 @@ fn scenes_a_game_makes_stay_far_below_the_proposed_bounds() -> Result<(), Physic
 }
 
 /// A heavy end 10 000 or a million times as dense as the links is far beyond the mass ratio the
-/// joints document, and the step does not notice: every step is `Ok` and the speeds are absurd (the
-/// spin is thousands of radians per second, tens of turns per step), yet below `MAX_SPIN` and
-/// `MAX_SPEED`. A speed bound near the proposed one would refuse these scenes.
+/// joints document. Before card 8-41 the step did not notice (every step was `Ok` with spins of
+/// thousands of radians per second, tens of turns per step); with the bound at 2000 rad/s it
+/// refuses the scene as `Diverged`, within the first seconds.
 #[test]
-fn a_chain_with_an_absurd_mass_ratio_ends_finite_and_unrefused() -> Result<(), PhysicsError> {
+fn a_chain_with_an_absurd_mass_ratio_is_refused() -> Result<(), PhysicsError> {
     for (rod, links, ratio) in chain_cases([1.0e4, 1.0e6]) {
         let p = run(chain_scene(links, ratio, rod)?);
         let name = format!("chain rod={rod} links={links} x{ratio}");
-        assert!(p.refused.is_none(), "{name}: {:?}", p.refused);
         assert!(
-            p.angular > PROPOSED_SPIN,
-            "{name}: only {} rad/s",
-            p.angular
+            matches!(p.refused, Some((_, PhysicsError::Diverged))),
+            "{name}: {:?}",
+            p.refused
         );
     }
     Ok(())
 }
 
-/// A body made to spin at the largest allowed speed and dropped turns a 3 m fall into a speed of
-/// about 10 400 m/s (a drop from 1000 m gives 98): finite, allowed, and absurd. The outcome is chaotic (a body
-/// thrown off the floor), so the threshold is half the proposed bound, not the bound. When
-/// `MAX_SPIN` is lowered this test is the second one to revisit: the spin it gives is then refused.
-
+/// A body made to spin at the largest allowed speed and dropped no longer throws itself far: the
+/// spin is a fiftieth of what it was, and the speed it ends with is below the speed bound.
 #[test]
-fn a_body_spinning_at_the_bound_is_allowed_and_ends_fast() -> Result<(), PhysicsError> {
+fn a_body_spinning_at_the_bound_ends_below_the_speed_bound() -> Result<(), PhysicsError> {
     let p = run(drop_scene(3.0, MAX_SPIN)?);
     assert!(p.refused.is_none(), "{:?}", p.refused);
-    assert!(p.linear > PROPOSED_SPEED / 2.0, "{} m/s", p.linear);
+    assert!(f64::from(MAX_SPEED) / 2.0 > p.linear, "{} m/s", p.linear);
     Ok(())
 }

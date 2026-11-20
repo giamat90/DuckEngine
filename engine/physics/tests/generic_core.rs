@@ -262,10 +262,10 @@ fn a_box_the_dimension_cannot_represent_is_refused_at_creation_and_in_the_step()
         Some(PhysicsError::NotFinite)
     );
     assert!(world.is_empty());
-    // The box fits now but would not after one step of 2e33 s (x = 3.2e38, plus a reach of 3e37).
+    // The box fits now but would not after one step of 2e34 s (x = 3.2e38, plus a reach of 3e37).
     let handle = world.create_body(&wide(1.2e38, 3.0e37))?;
     let (state, tree) = (world.state_hash(), world.broadphase_hash());
-    assert_eq!(world.step(2.0e33), Err(PhysicsError::NotFinite));
+    assert_eq!(world.step(2.0e34), Err(PhysicsError::NotFinite));
     assert_eq!((world.state_hash(), world.broadphase_hash()), (state, tree));
     assert_eq!(world.step_count(), 0);
     assert_eq!((handle.index(), handle.generation()), (0, 0));

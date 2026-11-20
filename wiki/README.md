@@ -3,6 +3,7 @@
 > **Status: PROPOSAL v1.64 (2026-11-17).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.86** - Speed bounds adopted (card 8-41, Class 2, ordinary card into develop): `MAX_SPIN` 2000 rad/s and `MAX_SPEED` 1e4 m/s, from the scan of card 8-37; chains with an absurd mass ratio are refused. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).
 > - **v1.85** - Speed bounds scan (card 8-37, Class 1, tests and a report, ordinary card into develop): new page [spikes/speed-bounds-scan](spikes/speed-bounds-scan.md): the speeds 3D scenes reach, absurd but finite states that stay below `MAX_SPEED` and `MAX_SPIN`, and a proposal for both (the owner decides); no constant changed.
 > - **v1.84** - Speeds are validated where they are given, a refused step drops the forces (card 8-36, Class 2, ordinary card into develop): `SpeedTooHigh`; comparison with Jolt, PhysX and Box2D recorded. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).
 > - **v1.83** - Diverging joint scenes are refused (card 8-25, Class 2, ordinary card into develop): `World::step` returns `Diverged` when a body would pass the speed bounds. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).

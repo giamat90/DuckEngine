@@ -54,15 +54,19 @@ pub use world::{DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN, World, Wo
 pub const MAX_BODIES: u32 = 1 << 20;
 
 /// The fastest linear speed, metres per second, a body may have after a step; a step that would
-/// give a body more is refused with [`PhysicsError::Diverged`] (card 8-25), and a speed above it given
-/// to `create_body` or a velocity setter is refused with [`PhysicsError::SpeedTooHigh`] (card 8-36). A bullet is
-/// about a thousand metres per second: no scene of the engine comes near this bound, a diverging
-/// hinge scene passes it within a few dozen steps, but a chain with an absurd mass ratio stays
-/// below it (card 8-37).
-pub const MAX_SPEED: f32 = 1.0e5;
+/// give a body more is refused with [`PhysicsError::Diverged`] (card 8-25), and a speed above it
+/// given to `create_body` or a velocity setter is refused with [`PhysicsError::SpeedTooHigh`]
+/// (card 8-36). Measured, then adopted by the owner (cards 8-37 and 8-41, the scan is in
+/// `wiki/spikes/speed-bounds-scan.md`): ten times a fast bullet (about a thousand metres per
+/// second) and four hundred times the fastest scene of the engine's catalogue. The linear speed
+/// does not separate a healthy scene from an absurd one; the spin does (see [`MAX_SPIN`]).
+pub const MAX_SPEED: f32 = 1.0e4;
 
 /// The fastest angular speed, radians per second, a body may have after a step (see [`MAX_SPEED`]).
-pub const MAX_SPIN: f32 = 1.0e5;
+/// Four times the fastest healthy scene measured (521) and four times below the slowest absurd one
+/// (8058): 2000 radians per second is 33 radians, five turns, per step at 60 Hz, already beyond
+/// what a step without continuous rotation can follow.
+pub const MAX_SPIN: f32 = 2.0e3;
 
 /// The most pairs one world may hold in its pair list (see [`PhysicsError::PairCapacityTooLarge`]).
 pub const MAX_PAIRS: u32 = 1 << 24;
