@@ -19,6 +19,7 @@ pub mod sleep;
 pub(crate) mod soft;
 pub mod solver;
 pub(crate) mod sort;
+pub mod speed;
 pub mod tree;
 pub mod world;
 
@@ -46,6 +47,7 @@ pub use solver::{
     DEFAULT_SUB_STEPS, FreeSolver, MAX_RELAX_ITERATIONS, MAX_SUB_STEPS, SolverConfig, SolverStats,
     StepFrame,
 };
+pub use speed::SpeedPolicy;
 pub use tree::{ProxyId, Tree};
 pub use world::{DEFAULT_BROADPHASE_MARGIN, DEFAULT_SPECULATIVE_MARGIN, World, WorldConfig};
 
