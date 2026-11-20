@@ -454,34 +454,52 @@ fn minified_picture(rig: &mut Rig, sprite: &Sprite, texture: TextureId) -> Vec<u
     rows
 }
 
-#[test]
-fn a_minified_texture_samples_the_mip_level_that_was_written_on_the_vulkan_device() {
-    let mut rig = match Rig::start() {
-        Ok(rig) => rig,
-        Err(reason) => return not_run(&reason),
-    };
-    let sprite = sprite(&mut rig.device);
-    // The target is 16 texels wide: a 16 texel texture is shown at level 0, a 32 texel one at
-    // level 1, a 64 texel one at level 2.
+/// How far a channel may be from the colour that was written when the sampler blends levels, in
+/// units of 1/255: a device whose level of detail is a little coarse can blend two levels by a step.
+const MIP_TOLERANCE: u8 = 2;
+
+/// Whether every pixel of `rows` is within `tolerance` per channel of `colour`.
+fn all_near(rows: &[u8], colour: [u8; 4], tolerance: u8) -> bool {
+    rows.chunks_exact(4).all(|texel| {
+        texel
+            .iter()
+            .zip(colour)
+            .all(|(a, b)| a.abs_diff(b) <= tolerance)
+    })
+}
+
+/// The sampler the sandbox uses for its textures: linear minification, which makes the mip mode
+/// linear, and nearest magnification.
+fn linear_mipmapped_sampler(device: &mut VulkanDevice) -> SamplerId {
+    must(
+        device.create_sampler(SamplerDesc {
+            min_filter: Filter::Linear,
+            mag_filter: Filter::Nearest,
+            address: AddressMode::Clamp,
+        }),
+        "making the linear mipmapped sampler",
+    )
+}
+
+/// The level checks of the two tests (the sizes are exact powers of two over the target, so the
+/// level of detail is a whole number and the linear mip mode has nothing to blend: blending of a
+/// fractional level of detail is not covered): a texture of 16, 32 and 64 texels over the 16 texel target
+/// shows the colour of level 0, 1 and 2 (within `tolerance`), and a rewritten level 1 shows the new
+/// colour, a colour no level has.
+fn check_minified_levels(rig: &mut Rig, sprite: &Sprite, tolerance: u8) {
     let levels = [RED, GREEN, YELLOW, BLUE, BLUE];
     for (size, expected) in [(16, RED), (32, GREEN), (64, YELLOW)] {
         let texture = chain_texture(&mut rig.device, size, &levels);
-        let rows = minified_picture(&mut rig, &sprite, texture);
+        let rows = minified_picture(rig, sprite, texture);
         assert!(
-            rows.chunks_exact(4).all(|texel| texel == expected),
+            all_near(&rows, expected, tolerance),
             "a {size} texel texture shows {:?} first, expected {expected:?}",
             &rows[..4]
         );
     }
-    // Rewriting level 1 of a texture that was already sampled changes its picture to the new
-    // colour (a colour no level has). The sampler here is nearest, so the level is picked, not
-    // blended.
     let texture = chain_texture(&mut rig.device, 32, &levels);
-    let before = minified_picture(&mut rig, &sprite, texture);
-    assert!(
-        before.chunks_exact(4).all(|texel| texel == GREEN),
-        "level 1 before"
-    );
+    let before = minified_picture(rig, sprite, texture);
+    assert!(all_near(&before, GREEN, tolerance), "level 1 before");
     let area = Rect {
         x: 0,
         y: 0,
@@ -493,11 +511,34 @@ fn a_minified_texture_samples_the_mip_level_that_was_written_on_the_vulkan_devic
             .write_texture_level(texture, 1, area, &MAGENTA.repeat(16 * 16)),
         "rewriting level 1",
     );
-    let rows = minified_picture(&mut rig, &sprite, texture);
-    assert!(
-        rows.chunks_exact(4).all(|texel| texel == MAGENTA),
-        "level 1 was rewritten"
-    );
+    let rows = minified_picture(rig, sprite, texture);
+    assert!(all_near(&rows, MAGENTA, tolerance), "level 1 was rewritten");
+}
+
+#[test]
+fn a_minified_texture_samples_the_mip_level_that_was_written_on_the_vulkan_device() {
+    let mut rig = match Rig::start() {
+        Ok(rig) => rig,
+        Err(reason) => return not_run(&reason),
+    };
+    let sprite = sprite(&mut rig.device);
+    // The sampler of the sprite is nearest, so the level is picked, not blended: exact colours.
+    check_minified_levels(&mut rig, &sprite, 0);
+    rig.assert_quiet();
+}
+
+#[test]
+fn a_minified_texture_under_the_linear_mipmapped_sampler_shows_the_level_that_was_written() {
+    let mut rig = match Rig::start() {
+        Ok(rig) => rig,
+        Err(reason) => return not_run(&reason),
+    };
+    let sprite = sprite(&mut rig.device);
+    let sprite = Sprite {
+        sampler: linear_mipmapped_sampler(&mut rig.device),
+        ..sprite
+    };
+    check_minified_levels(&mut rig, &sprite, MIP_TOLERANCE);
     rig.assert_quiet();
 }
 

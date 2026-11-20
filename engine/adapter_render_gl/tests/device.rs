@@ -16,7 +16,7 @@ use render::desc::{
 };
 use render::device::IRenderDevice;
 use render::error::RenderError;
-use render::ids::{BufferId, PipelineId, SurfaceId, TextureId};
+use render::ids::{BufferId, PipelineId, SamplerId, SurfaceId, TextureId};
 use render::stream::CommandStream;
 
 /// Whether `DUCK_REQUIRE_GL` asks for a device: set to anything but empty or `0`.
@@ -198,6 +198,24 @@ fn assert_only(pixels: &[u8], allowed: &[[u8; 4]]) {
     let stray = pixels
         .chunks_exact(4)
         .filter(|px| !allowed.iter().any(|colour| **px == *colour))
+        .count();
+    assert_eq!(stray, 0, "pixels of a colour that was not drawn");
+}
+
+/// How far a channel may be from the colour that was written under linear mipmapping, in units of
+/// 1/255: a driver whose level of detail is a little coarse can blend two levels by a step.
+const MIP_TOLERANCE: u8 = 2;
+
+/// Every pixel is within [`MIP_TOLERANCE`] per channel of one of the `allowed` colours.
+fn assert_only_within_the_mip_tolerance(pixels: &[u8], allowed: &[[u8; 4]]) {
+    let near = |px: &[u8], colour: &[u8; 4]| {
+        px.iter()
+            .zip(colour)
+            .all(|(a, b)| a.abs_diff(*b) <= MIP_TOLERANCE)
+    };
+    let stray = pixels
+        .chunks_exact(4)
+        .filter(|px| !allowed.iter().any(|colour| near(px, colour)))
         .count();
     assert_eq!(stray, 0, "pixels of a colour that was not drawn");
 }
@@ -701,7 +719,7 @@ fn a_minified_texture_samples_the_mip_level_that_was_written() {
             stream.bind_vertex_buffer(0, buffer, 0);
             stream.draw(3, 1);
         });
-        assert_only(&scene.pixels(), &[expected]);
+        assert_only_within_the_mip_tolerance(&scene.pixels(), &[expected]);
     }
     // Rewriting level 1 of a 128 texel texture that was already sampled changes the picture to
     // the new colour (one no level has): the level that is written is the level that is sampled.
@@ -711,7 +729,7 @@ fn a_minified_texture_samples_the_mip_level_that_was_written() {
         stream.bind_vertex_buffer(0, buffer, 0);
         stream.draw(3, 1);
     });
-    assert_only(&scene.pixels(), &[GREEN]);
+    assert_only_within_the_mip_tolerance(&scene.pixels(), &[GREEN]);
     let area = Rect {
         x: 0,
         y: 0,
@@ -728,7 +746,7 @@ fn a_minified_texture_samples_the_mip_level_that_was_written() {
         stream.bind_vertex_buffer(0, buffer, 0);
         stream.draw(3, 1);
     });
-    assert_only(&scene.pixels(), &[MAGENTA]);
+    assert_only_within_the_mip_tolerance(&scene.pixels(), &[MAGENTA]);
     assert_eq!(scene.device.take_gl_error(), 0, "no GL error");
 }
 
@@ -763,4 +781,194 @@ fn a_refused_shader_leaves_the_drivers_message_and_no_stale_flag() {
     assert_eq!(not_text, Err(RenderError::ShaderRejected));
     assert!(device.last_shader_log().contains("UTF-8"));
     assert_eq!(device.take_gl_error(), 0, "no stale GL error");
+}
+
+/// Lays the bound texture over the 64 by 64 surface (the 64 is the surface width), shifted to the right by `n / 8` of a pixel,
+/// where `n` is the red channel of the vertex colour in 1/255 units: the picture of a surface that
+/// moves by an eighth of a pixel per frame. A texture of 64, 128 or 256 texels is shown at one, two
+/// or four texels per pixel.
+const FRAGMENT_SHIFTED: &str = "#version 450 core
+    layout(binding = 0) uniform sampler2D tex;
+    layout(location = 0) in vec4 v_colour;
+    layout(location = 0) out vec4 out_colour;
+    void main() {
+        vec2 at = gl_FragCoord.xy + vec2(v_colour.r * 255.0 / 8.0, 0.0);
+        out_colour = texture(tex, at / 64.0);
+    }
+";
+const SHIFTED: Sources = Sources {
+    vertex: VERTEX,
+    fragment: FRAGMENT_SHIFTED,
+    attributes: true,
+};
+
+/// Frames of a moving picture: four pixels of travel in steps of an eighth.
+const MOTION_FRAMES: u8 = 32;
+/// A step between two frames above this (of 255) is a pop, not a smooth move.
+const POP: u8 = 64;
+/// The share of pixel steps that must pop without mip levels is more than 1 in this many.
+const POP_ONE_IN: u64 = 10;
+
+/// The texels of a black and white checker of `size` texels with cells of `cell` texels.
+fn checker_texels(size: u32, cell: u32) -> Vec<u8> {
+    let shade = |x: u32, y: u32| {
+        if (x / cell + y / cell).is_multiple_of(2) {
+            255
+        } else {
+            0
+        }
+    };
+    (0..size)
+        .flat_map(|y| (0..size).map(move |x| (x, y)))
+        .flat_map(|(x, y)| [shade(x, y), shade(x, y), shade(x, y), 255])
+        .collect()
+}
+
+/// A checker texture with all its mip levels when `chain` is set (else the single level 0).
+fn checker_texture(scene: &mut Scene, size: u32, cell: u32, chain: bool) -> TextureId {
+    let base = checker_texels(size, cell);
+    let levels = if chain {
+        let Some(chain) = render::mips::mip_chain(&base, size, size) else {
+            panic!("the texels do not make a mip chain");
+        };
+        chain
+    } else {
+        vec![base]
+    };
+    let texture = must(scene.device.create_texture(TextureDesc {
+        width: size,
+        height: size,
+        mip_count: u32::try_from(levels.len()).unwrap_or(1),
+        format: TextureFormat::Rgba8,
+    }));
+    for (level, texels) in (0..).zip(&levels) {
+        let (width, height) = render::mips::level_size(size, size, level);
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+        must(
+            scene
+                .device
+                .write_texture_level(texture, level, area, texels),
+        );
+    }
+    texture
+}
+
+/// What a picture that moves by an eighth of a pixel per frame does from one frame to the next.
+struct Motion {
+    /// The largest change of any pixel between two frames, of 255.
+    largest_step: u8,
+    /// Pixel changes above [`POP`], and all pixel changes.
+    pops: u64,
+    steps: u64,
+}
+
+/// Draws `texture` shifted by an eighth of a pixel per frame and measures the red channel.
+fn watch(scene: &mut Scene, texture: TextureId, sampler: SamplerId) -> Motion {
+    let mut frames: Vec<Vec<u8>> = Vec::new();
+    for n in 0..MOTION_FRAMES {
+        let colour = [n, 0, 0, 255];
+        let points = [
+            ([-1.0, -1.0], colour),
+            ([3.0, -1.0], colour),
+            ([-1.0, 3.0], colour),
+        ];
+        let buffer = scene.buffer(BufferUsage::Vertex, &vertex_bytes(&points));
+        scene.draw(|stream| {
+            stream.bind_texture(0, texture, sampler);
+            stream.bind_vertex_buffer(0, buffer, 0);
+            stream.draw(3, 1);
+        });
+        frames.push(scene.pixels());
+    }
+    let mut motion = Motion {
+        largest_step: 0,
+        pops: 0,
+        steps: 0,
+    };
+    for pair in frames.windows(2) {
+        for (before, after) in pair[0].chunks_exact(4).zip(pair[1].chunks_exact(4)) {
+            let step = before[0].abs_diff(after[0]);
+            motion.largest_step = motion.largest_step.max(step);
+            motion.pops += u64::from(step > POP);
+            motion.steps += 1;
+        }
+    }
+    motion
+}
+
+/// A sampler with linear minification (the sandbox's) and the given magnification.
+fn moving_sampler(scene: &mut Scene, mag_filter: Filter) -> SamplerId {
+    must(scene.device.create_sampler(SamplerDesc {
+        min_filter: Filter::Linear,
+        mag_filter,
+        address: AddressMode::Repeat,
+    }))
+}
+
+#[test]
+fn a_checker_moving_at_four_texels_per_pixel_pops_without_mip_levels_and_does_not_with_them() {
+    let _turn = take_turn();
+    let mut windows = match GlfwWindows::load_default(1) {
+        Ok(windows) => windows,
+        Err(error) => return not_run(&format!("GLFW: {error}")),
+    };
+    let Some(mut scene) = scene(&mut windows, SHIFTED) else {
+        return;
+    };
+    let sampler = moving_sampler(&mut scene, Filter::Nearest);
+    // Cells of 4 texels at four texels per pixel: a cell is one pixel wide in the smallest level.
+    let alone = checker_texture(&mut scene, 256, 4, false);
+    let without = watch(&mut scene, alone, sampler);
+    let chained = checker_texture(&mut scene, 256, 4, true);
+    let with = watch(&mut scene, chained, sampler);
+    // Measured: a quarter of the pixel steps are pops (largest 128) without, none (largest 32) with.
+    assert!(
+        without.pops * POP_ONE_IN > without.steps,
+        "without levels: {} of {} steps pop",
+        without.pops,
+        without.steps
+    );
+    assert!(with.largest_step > 0, "with levels: the picture moves");
+    assert_eq!(with.pops, 0, "with levels");
+    assert!(
+        with.largest_step < POP,
+        "with levels: {}",
+        with.largest_step
+    );
+    assert_eq!(scene.device.take_gl_error(), 0, "no GL error");
+}
+
+#[test]
+fn at_one_texel_per_pixel_nearest_magnification_pops_when_moving_and_linear_magnification_does_not()
+{
+    let _turn = take_turn();
+    let mut windows = match GlfwWindows::load_default(1) {
+        Ok(windows) => windows,
+        Err(error) => return not_run(&format!("GLFW: {error}")),
+    };
+    let Some(mut scene) = scene(&mut windows, SHIFTED) else {
+        return;
+    };
+    // The levels are no help at one texel per pixel (level 0 is used), so the chain is on in both.
+    let texture = checker_texture(&mut scene, 64, 4, true);
+    let nearest = moving_sampler(&mut scene, Filter::Nearest);
+    let popping = watch(&mut scene, texture, nearest);
+    let linear = moving_sampler(&mut scene, Filter::Linear);
+    let smooth = watch(&mut scene, texture, linear);
+    // Measured: a texel flips from white to black in one frame (255) with nearest, 32 at most with
+    // linear.
+    assert_eq!(popping.largest_step, 255, "nearest magnification");
+    assert!(popping.pops > 0, "nearest magnification pops");
+    assert!(
+        smooth.largest_step > 0,
+        "linear magnification: the picture moves"
+    );
+    assert_eq!(smooth.pops, 0, "linear magnification");
+    assert!(smooth.largest_step < POP, "linear: {}", smooth.largest_step);
+    assert_eq!(scene.device.take_gl_error(), 0, "no GL error");
 }
