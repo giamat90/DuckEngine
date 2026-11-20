@@ -6,8 +6,8 @@ use base::math::{Quat, Vec3};
 use physics::core::PhysicsError;
 use physics::d3::{
     AngleLimits, BodyDesc, BodyHandle, BodyKind, DEFAULT_BROADPHASE_MARGIN,
-    DEFAULT_SPECULATIVE_MARGIN, HingeJoint3, Joint3, JointDesc, MAX_SPEED, MAX_SPIN,
-    STANDARD_GRAVITY, Shape3, SleepConfig, SolverConfig, World, WorldConfig,
+    DEFAULT_SPECULATIVE_MARGIN, HingeJoint3, Joint3, JointDesc, MAX_GIVEN_SPEED, MAX_GIVEN_SPIN,
+    MAX_SPEED, MAX_SPIN, STANDARD_GRAVITY, Shape3, SleepConfig, SolverConfig, World, WorldConfig,
 };
 
 const DT: f32 = 1.0 / 60.0;
@@ -160,33 +160,38 @@ fn a_speed_beyond_the_bound_is_refused_at_create_and_at_set_in_3d() -> Result<()
     };
     let mut w = world(Vec3::ZERO)?;
     for (linear, angular) in [
-        (Vec3::new(MAX_SPEED * 1.01, 0.0, 0.0), Vec3::ZERO),
-        (Vec3::new(0.0, -MAX_SPEED, MAX_SPEED), Vec3::ZERO),
-        (Vec3::ZERO, Vec3::new(0.0, MAX_SPIN * 1.01, 0.0)),
+        (Vec3::new(MAX_GIVEN_SPEED * 1.01, 0.0, 0.0), Vec3::ZERO),
+        (Vec3::new(MAX_SPEED, 0.0, 0.0), Vec3::ZERO),
+        (
+            Vec3::new(0.0, -MAX_GIVEN_SPEED, MAX_GIVEN_SPEED),
+            Vec3::ZERO,
+        ),
+        (Vec3::ZERO, Vec3::new(0.0, MAX_GIVEN_SPIN * 1.01, 0.0)),
+        (Vec3::ZERO, Vec3::new(0.0, MAX_SPIN, 0.0)),
     ] {
         assert_eq!(
             w.create_body(&desc3(linear, angular)),
             Err(PhysicsError::SpeedTooHigh)
         );
     }
-    // Exactly the bound is allowed.
+    // Exactly the largest speed that is given is allowed.
     let body = w.create_body(&desc3(
-        Vec3::new(MAX_SPEED, 0.0, 0.0),
-        Vec3::new(0.0, MAX_SPIN, 0.0),
+        Vec3::new(MAX_GIVEN_SPEED, 0.0, 0.0),
+        Vec3::new(0.0, MAX_GIVEN_SPIN, 0.0),
     ))?;
     let calm = w.create_body(&desc3(Vec3::ZERO, Vec3::ZERO))?;
     let before = w.state_hash();
     assert_eq!(
-        w.set_linear_velocity(calm, Vec3::new(0.0, MAX_SPEED * 1.01, 0.0)),
+        w.set_linear_velocity(calm, Vec3::new(0.0, MAX_GIVEN_SPEED * 1.01, 0.0)),
         Err(PhysicsError::SpeedTooHigh)
     );
     assert_eq!(
-        w.set_angular_velocity(calm, Vec3::new(0.0, 0.0, MAX_SPIN * 1.01)),
+        w.set_angular_velocity(calm, Vec3::new(0.0, 0.0, MAX_GIVEN_SPIN * 1.01)),
         Err(PhysicsError::SpeedTooHigh)
     );
     assert_eq!(w.state_hash(), before, "a refused setter changed the world");
-    w.set_linear_velocity(calm, Vec3::new(0.0, MAX_SPEED, 0.0))?;
-    w.set_angular_velocity(calm, Vec3::new(0.0, 0.0, MAX_SPIN))?;
+    w.set_linear_velocity(calm, Vec3::new(0.0, MAX_GIVEN_SPEED, 0.0))?;
+    w.set_angular_velocity(calm, Vec3::new(0.0, 0.0, MAX_GIVEN_SPIN))?;
     assert!(w.body(body).is_ok());
     Ok(())
 }
@@ -215,24 +220,75 @@ fn a_speed_beyond_the_bound_is_refused_at_create_and_at_set_in_2d() -> Result<()
         )
     };
     assert_eq!(
-        w2.create_body(&desc2(base::math::Vec2::new(MAX_SPEED * 1.01, 0.0), 0.0)),
+        w2.create_body(&desc2(
+            base::math::Vec2::new(MAX_GIVEN_SPEED * 1.01, 0.0),
+            0.0
+        )),
         Err(PhysicsError::SpeedTooHigh)
     );
     assert_eq!(
-        w2.create_body(&desc2(base::math::Vec2::ZERO, -MAX_SPIN * 1.01)),
+        w2.create_body(&desc2(base::math::Vec2::ZERO, -MAX_GIVEN_SPIN * 1.01)),
         Err(PhysicsError::SpeedTooHigh)
     );
-    let flat = w2.create_body(&desc2(base::math::Vec2::new(MAX_SPEED, 0.0), -MAX_SPIN))?;
+    let flat = w2.create_body(&desc2(
+        base::math::Vec2::new(MAX_GIVEN_SPEED, 0.0),
+        -MAX_GIVEN_SPIN,
+    ))?;
     let before = w2.state_hash();
     assert_eq!(
-        w2.set_linear_velocity(flat, base::math::Vec2::new(0.0, MAX_SPEED * 1.01)),
+        w2.set_linear_velocity(flat, base::math::Vec2::new(0.0, MAX_GIVEN_SPEED * 1.01)),
         Err(PhysicsError::SpeedTooHigh)
     );
     assert_eq!(
-        w2.set_angular_velocity(flat, MAX_SPIN * 1.01),
+        w2.set_angular_velocity(flat, MAX_GIVEN_SPIN * 1.01),
         Err(PhysicsError::SpeedTooHigh)
     );
     assert_eq!(w2.state_hash(), before);
+    Ok(())
+}
+
+/// Card 8-46: every speed that `create_body` and the setters accept can be stepped. Before, a body
+/// given exactly `MAX_SPEED` was accepted and the step refused it after 24 steps with no contact,
+/// because gravity added a little speed to a speed already at the bound. Now the largest given
+/// speed leaves room below the bound, in 3D and in 2D.
+#[test]
+fn a_body_given_the_largest_allowed_speed_can_be_stepped() -> Result<(), PhysicsError> {
+    let mut w = world(STANDARD_GRAVITY)?;
+    w.create_body(&BodyDesc {
+        linear_velocity: Vec3::new(-MAX_GIVEN_SPEED, 0.0, 0.0),
+        angular_velocity: Vec3::new(0.0, MAX_GIVEN_SPIN, 0.0),
+        ..BodyDesc::new(
+            BodyKind::Dynamic,
+            Vec3::new(8.0, 2.0, 0.0),
+            Shape3::Sphere { radius: 0.1 },
+        )
+    })?;
+    for step in 0..600 {
+        assert_eq!(w.step(1.0 / 60.0), Ok(()), "3D step {step}");
+    }
+    let mut w2 = physics::d2::World::new(physics::d2::WorldConfig {
+        max_bodies: 4,
+        gravity: physics::d2::STANDARD_GRAVITY,
+        max_pairs: 16,
+        broadphase_margin: physics::d2::DEFAULT_BROADPHASE_MARGIN,
+        max_manifolds: 16,
+        max_joints: 0,
+        speculative_margin: physics::d2::DEFAULT_SPECULATIVE_MARGIN,
+        solver: physics::d2::SolverConfig::DEFAULT,
+        sleep: physics::d2::SleepConfig::DISABLED,
+    })?;
+    w2.create_body(&physics::d2::BodyDesc {
+        linear_velocity: base::math::Vec2::new(-MAX_GIVEN_SPEED, 0.0),
+        angular_velocity: MAX_GIVEN_SPIN,
+        ..physics::d2::BodyDesc::new(
+            physics::d2::BodyKind::Dynamic,
+            base::math::Vec2::new(8.0, 2.0),
+            physics::d2::Shape2::Circle { radius: 0.1 },
+        )
+    })?;
+    for step in 0..600 {
+        assert_eq!(w2.step(1.0 / 60.0), Ok(()), "2D step {step}");
+    }
     Ok(())
 }
 

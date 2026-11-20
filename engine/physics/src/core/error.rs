@@ -63,12 +63,14 @@ pub enum PhysicsError {
     /// dropped the forces and torques applied for it and changed nothing else, so a scene that
     /// diverges by itself gives the same answer again until it is changed: set the body's velocity
     /// down ([`World::set_linear_velocity`](crate::core::World::set_linear_velocity)) or destroy
-    /// the body. A speed given directly above the bound is [`PhysicsError::SpeedTooHigh`] instead.
+    /// the body. A speed given directly above the limit for given speeds is [`PhysicsError::SpeedTooHigh`] instead.
     Diverged,
     /// A body description or a setter was given a linear speed above
-    /// [`MAX_SPEED`](crate::core::MAX_SPEED) or an angular speed above
-    /// [`MAX_SPIN`](crate::core::MAX_SPIN): the next step would refuse it as
-    /// [`PhysicsError::Diverged`]. Nothing changed.
+    /// [`MAX_GIVEN_SPEED`](crate::core::MAX_GIVEN_SPEED) or an angular speed above
+    /// [`MAX_GIVEN_SPIN`](crate::core::MAX_GIVEN_SPIN), half of the bounds a step enforces
+    /// ([`MAX_SPEED`](crate::core::MAX_SPEED), [`MAX_SPIN`](crate::core::MAX_SPIN)), so that a
+    /// body given its speed is not refused by the first step for gravity or a force alone (card
+    /// 8-46); a collision can still take it past a bound. Nothing changed.
     SpeedTooHigh,
 }
 

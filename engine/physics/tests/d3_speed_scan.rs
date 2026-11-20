@@ -11,8 +11,8 @@ use base::math::Vec3;
 use physics::core::PhysicsError;
 use physics::d3::{
     BallJoint3, BodyDesc, BodyHandle, BodyKind, DEFAULT_BROADPHASE_MARGIN,
-    DEFAULT_SPECULATIVE_MARGIN, DistanceJoint3, Joint3, JointDesc, MAX_SPEED, MAX_SPIN,
-    STANDARD_GRAVITY, Shape3, SleepConfig, SolverConfig, World, WorldConfig,
+    DEFAULT_SPECULATIVE_MARGIN, DistanceJoint3, Joint3, JointDesc, MAX_GIVEN_SPIN, MAX_SPEED,
+    MAX_SPIN, STANDARD_GRAVITY, Shape3, SleepConfig, SolverConfig, World, WorldConfig,
 };
 
 const DT: f32 = 1.0 / 60.0;
@@ -243,8 +243,8 @@ fn a_chain_with_an_absurd_mass_ratio_is_refused() -> Result<(), PhysicsError> {
 /// A body made to spin at the largest allowed speed and dropped no longer throws itself far: the
 /// spin is a fiftieth of what it was, and the speed it ends with is below the speed bound.
 #[test]
-fn a_body_spinning_at_the_bound_ends_below_the_speed_bound() -> Result<(), PhysicsError> {
-    let p = run(drop_scene(3.0, MAX_SPIN)?);
+fn a_body_spun_at_the_largest_given_spin_ends_below_the_speed_bound() -> Result<(), PhysicsError> {
+    let p = run(drop_scene(3.0, MAX_GIVEN_SPIN)?);
     assert!(p.refused.is_none(), "{:?}", p.refused);
     assert!(f64::from(MAX_SPEED) / 2.0 > p.linear, "{} m/s", p.linear);
     Ok(())

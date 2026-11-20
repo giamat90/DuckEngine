@@ -68,5 +68,17 @@ pub const MAX_SPEED: f32 = 1.0e4;
 /// what a step without continuous rotation can follow.
 pub const MAX_SPIN: f32 = 2.0e3;
 
+/// The fastest linear speed `create_body` and the velocity setters accept: half of
+/// [`MAX_SPEED`] (card 8-46). A body given exactly the bound was accepted and then refused by the
+/// next step, with no contact, because gravity or any push adds a little speed to a speed that is
+/// already at the bound. The room between this value and [`MAX_SPEED`] covers gravity, damping and
+/// forces, and a bounce of a body off something much heavier; it does not cover every collision (a
+/// light body hit head-on by a much heavier one can leave at up to three times the given speed).
+pub const MAX_GIVEN_SPEED: f32 = MAX_SPEED / 2.0;
+
+/// The fastest angular speed `create_body` and the angular setter accept: half of [`MAX_SPIN`]
+/// (see [`MAX_GIVEN_SPEED`]).
+pub const MAX_GIVEN_SPIN: f32 = MAX_SPIN / 2.0;
+
 /// The most pairs one world may hold in its pair list (see [`PhysicsError::PairCapacityTooLarge`]).
 pub const MAX_PAIRS: u32 = 1 << 24;

@@ -8,7 +8,7 @@
 use super::dim::{Dim, Magnitude, Placed, Quantity};
 use super::error::PhysicsError;
 use super::hash::{HashBits, StateHasher};
-use super::{MAX_SPEED, MAX_SPIN};
+use super::{MAX_GIVEN_SPEED, MAX_GIVEN_SPIN, MAX_SPEED, MAX_SPIN};
 use base::pool::Handle;
 use std::marker::PhantomData;
 
@@ -172,6 +172,14 @@ pub(super) fn speeds_are_bounded<D: Dim>(linear: &D::Vec, angular: &D::Ang) -> b
         && angular.length_squared() <= MAX_SPIN * MAX_SPIN
 }
 
+/// True when `linear` is within [`MAX_GIVEN_SPEED`] and `angular` within [`MAX_GIVEN_SPIN`], the
+/// speeds `create_body` and the setters accept (they leave room below the bounds a step enforces,
+/// card 8-46); false for a speed above them or one that is not a number.
+pub(super) fn given_speeds_are_allowed<D: Dim>(linear: &D::Vec, angular: &D::Ang) -> bool {
+    linear.length_squared() <= MAX_GIVEN_SPEED * MAX_GIVEN_SPEED
+        && angular.length_squared() <= MAX_GIVEN_SPIN * MAX_GIVEN_SPIN
+}
+
 /// The factor a velocity is multiplied by in one step of length `dt` under `damping` per second.
 pub(crate) fn damping_factor(damping: f32, dt: f32) -> f32 {
     1.0 / (1.0 + dt * damping)
@@ -191,7 +199,7 @@ impl<D: Dim> Body<D> {
         if !finite {
             return Err(PhysicsError::NotFinite);
         }
-        if !speeds_are_bounded::<D>(&desc.linear_velocity, &desc.angular_velocity) {
+        if !given_speeds_are_allowed::<D>(&desc.linear_velocity, &desc.angular_velocity) {
             return Err(PhysicsError::SpeedTooHigh);
         }
         if desc.linear_damping < 0.0 || desc.angular_damping < 0.0 {
@@ -344,7 +352,7 @@ impl<D: Dim> Body<D> {
     /// Sets the linear velocity.
     pub(super) fn set_linear_velocity(&mut self, velocity: D::Vec) -> Result<(), PhysicsError> {
         self.check_motion(velocity.is_finite())?;
-        if !speeds_are_bounded::<D>(&velocity, &D::Ang::default()) {
+        if !given_speeds_are_allowed::<D>(&velocity, &D::Ang::default()) {
             return Err(PhysicsError::SpeedTooHigh);
         }
         self.linear_velocity = velocity;
@@ -354,7 +362,7 @@ impl<D: Dim> Body<D> {
     /// Sets the angular velocity.
     pub(super) fn set_angular_velocity(&mut self, velocity: D::Ang) -> Result<(), PhysicsError> {
         self.check_motion(velocity.is_finite())?;
-        if !speeds_are_bounded::<D>(&D::Vec::default(), &velocity) {
+        if !given_speeds_are_allowed::<D>(&D::Vec::default(), &velocity) {
             return Err(PhysicsError::SpeedTooHigh);
         }
         self.angular_velocity = velocity;
@@ -585,6 +593,29 @@ mod tests {
         assert!(!ball_moving(MAX_SPEED * 1.001, 0.0).motion_is_bounded());
         assert!(!ball_moving(0.0, MAX_SPIN * 1.001).motion_is_bounded());
         assert!(!ball_moving(0.0, -MAX_SPIN * 1.001).motion_is_bounded());
+    }
+
+    #[test]
+    fn given_speeds_are_allowed_up_to_half_the_bounds_and_not_beyond() {
+        let allowed = |linear: f32, angular: f32| {
+            let body = ball_moving(linear, angular);
+            given_speeds_are_allowed::<crate::d2::D2>(&body.linear_velocity, &body.angular_velocity)
+        };
+        assert!(allowed(0.0, 0.0));
+        assert!(allowed(MAX_GIVEN_SPEED, MAX_GIVEN_SPIN));
+        assert!(allowed(-MAX_GIVEN_SPEED, -MAX_GIVEN_SPIN));
+        assert!(!allowed(MAX_GIVEN_SPEED * 1.001, 0.0));
+        assert!(!allowed(0.0, MAX_GIVEN_SPIN * 1.001));
+        assert!(!allowed(0.0, -MAX_GIVEN_SPIN * 1.001));
+        assert!(!allowed(MAX_SPEED, 0.0), "the bound itself is not given");
+        assert!(
+            !allowed(0.0, MAX_SPIN),
+            "the spin bound itself is not given"
+        );
+        assert!(!allowed(f32::NAN, 0.0));
+        assert!(!allowed(0.0, f32::MAX));
+        // What a step may add is the room between the two.
+        const { assert!(MAX_GIVEN_SPEED < MAX_SPEED && MAX_GIVEN_SPIN < MAX_SPIN) };
     }
 
     #[test]
