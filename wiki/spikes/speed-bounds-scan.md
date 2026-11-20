@@ -152,3 +152,29 @@ flowchart TD
 - **What is built.** The default stays the owner's rule of 8-25, 8-36 and 8-47: refuse. `SpeedPolicy::Clamp` is the opt-in for a game that prefers the other engines' behaviour, with limits it chooses (at most the given limits). It is chosen with a world method and not a config field, so no existing config changes, and a refusing world hashes as before (a clamping world adds its limits to the hash).
 - **Limits of the clamp.** It acts on the result of the step: the contacts of the step that crossed the limit were solved with the higher speed and the bodies moved with it for that step (other engines clamp before the solver; doing that here would mean a change in each of the two solvers). Direction is kept, so the energy that was above the limit is dropped, and a clamped scene is not physically exact; the count says it happened.
 - **What the tests show** (`engine/physics/tests/speed_clamp.rs`, 2D and 3D): the head-on collision of 8-47 (a light and a heavy ball at the largest given speed, refused by default) steps under the clamp in 2D and 3D; direction is kept; a body within its limits is untouched and not counted; invalid limits are `InvalidSpeedLimit` and change nothing; a value that is not finite is still refused; two runs give the same hash. a scene of twenty-four circles thrown at a floor, where the clamp fires on every body, gives the same state after every step serially and with 1, 2, 4 and 6 workers. **Not shown by a test:** the box scenes of 8-48 under the clamp, Linux and ARM64 (the hosted run), and a clamp that fires during resting contact (the independent review tried a joint chain and a stack by hand: both stepped, and a stack that never reaches the limit matched the refusing world bit for bit).
+
+## 10. Which body crossed the bound, and how much spin room there is (card 8-49)
+
+```mermaid
+flowchart TD
+  R["World::step refused as Diverged"] --> N["diverged_bodies(): handles of the bodies past the bound, slot order"]
+  N --> A["destroy them (enough in the chains tested), or set a speed down (may not be enough)"]
+  R --> C["or choose SpeedPolicy::Clamp so the step does not refuse (8-50)"]
+  S["boxes that spin and move"] --> G["refused where speed and spin are both high"]
+  G --> K["a spin cap alone does not remove it"]
+```
+
+- **The query.** `World::diverged_bodies()` returns the bodies whose speed passed `MAX_SPEED` or `MAX_SPIN` in the last step when that step was refused as `Diverged`, in slot order; it is empty after any other step and unchanged by a call with a time step that is not valid. It is read-only, adds nothing to `PhysicsError` and allocates nothing (its capacity is reserved with the world). The list is a snapshot: it can name a body destroyed since, and a changed policy does not clear it. Two light and two heavy balls in two pairs name exactly the two light ones in slot order, and in the refused chain of three boxes of 8-48 destroying the body it names let the world step again, in 2D and 3D (tested). It names bodies of a `Diverged` refusal only: a `NotFinite` refusal names none.
+- **The spin scan** (`engine/physics/tests/spin_room_edge.rs`, boxes, 2D and 3D, two scenes: a heavy box thrown spinning into a light one at rest, and two boxes going at each other spinning the opposite ways; mass ratio 10 and 1000; 30 steps; spins in steps of 25 rad/s). The first spin that was refused, as measured:
+
+| speed (m/s) | first refused spin (rad/s), the range over the scenes, ratios and dimensions |
+|---|---|
+| 200 | none up to the largest given spin (tested at 200; a scratch scan also at 0) |
+| 1000 | 850 to 925 (none for a ratio of 10) |
+| 2500 | 675 to 950 (none in one case) |
+| 3500 | 575 to 875 |
+| 5000 | 300 to 575 |
+
+- **What it says.** The refusals sit where speed and spin are both high: the corner of a spinning box moves faster than its centre, and a contact can throw that speed past the bound. No scene was refused at a spin of 250 or less at any speed, nor at 650 up to 1000 m/s, nor at any spin up to 1000 at 200 m/s (all tested at one point: 250, 650 at 1000 m/s, and 200 m/s; the scratch scan stepped the spin by 25); every scene was refused at the largest given speed with a spin of 600 (tested). In this scan (boxes, these two scenes) a cap on the given spin alone would have to be about 250 to remove every refusal, below the spin of the drop in the 8-37 scan; it would say nothing about other shapes, and it does not touch the refusals of 8-47, which happen with no spin at all. The default angular limits of Jolt and PhysX (tens of radians per second) are below it.
+- **Options for the owner** (not decided here): keep the bounds and the documented region (a game that wants no refusal chooses the clamp of 8-50 or keeps speed and spin moderate); or add a joint limit on speed and spin together at create and set; or lower the largest given spin. The first needs nothing; the other two change a public rule and move the values of 8-46.
+- **Not shown** (card 8-51): hulls, capsules, angled hits, rows of more than three, friction other than the default, and spins in 3D about an axis other than the one used.
