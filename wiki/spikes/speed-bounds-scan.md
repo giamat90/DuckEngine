@@ -321,3 +321,32 @@ Measured on 2026-11-20, Windows x86-64 (the pinned file also passes on Ubuntu x8
 - **A heavy top dropped from 0.5, 2 and 5 m** on 3 or 5 boxes (ratios 10 and 100): default and preset both topple some runs; **the preset is not better and in places worse** (peak speeds 6 to 13 m/s). Three boxes, ratio 10, dropped from 2 m, 3D: default 4 of 5 settle, preset 0 of 5 (from 5 m: default 1 of 5, preset 0 of 5; in 2D from 2 m: default 4, preset 2). Five boxes ratio 100 from 2 m: default 0 of 5 in 2D and 3D, preset 3 of 5 in both. Pinned: the three-box case in 3D (default at least 3, preset 0). The cause was not looked into (the impact of a heavy box against a soft, resting contact is the likely place); card 8-64.
 - **Not shown.** Spheres, capsules and hulls in a column (a column of spheres does not stand, capsules and hulls were not tried; card 8-60 covers the preset on other shapes), a heavy box in the middle with a drop, stacks above 16, a drop at ratios below 10, 5 offsets only (the 41-offset check of section 12 was not repeated), the hosted Linux and the ARM64 runs (the Ubuntu run is WSL2 on the same machine), and the test file takes 15 s in the dev profile.
 
+## 16. The stiff-contact preset on other tops, on a column of hulls, with the clamp, and on 3D joints (card 8-60)
+
+```mermaid
+flowchart TD
+  T["heavy top on boxes"] --> T1["sphere and hull: the preset settles more (hull as the box does); an upright capsule rolls off with either solver"]
+  H["column of 12-sided hull prisms"] --> H1["eight to a top of 5: both settle; top of 50: default 0 of 5, preset 4 of 5"]
+  C2["2D circle on boxes"] --> C3["preset settles more; the circle on five boxes: 0 of 5 against 4 of 5 at ratio 10"]
+  K["speed clamp 500 m/s and 50 rad/s on"] --> K1["eight boxes under a top of 50: default 0 of 5, preset 5 of 5"]
+  J["3D joints with the preset"] --> J1["hanging chains and whips: gaps equal or smaller, one whip a little larger; door limit held"]
+  J --> J2["bridge with a heavy load: six planks 0.39 against 0.58, ten planks 0.43 against 0.20 (worse)"]
+```
+
+Measured on 2026-11-21, Windows x86-64 (the pinned file also passes on Ubuntu x86-64 under WSL2), release scan, five offsets (0, 0.001, 0.01, 0.05, 0.2 m), 600 steps of 1/60 s, sleeping off, "settled" is a drift under 1 m. The scan rows were not kept; the ten tests of `engine/physics/tests/stiff_preset_shapes_joints.rs` and the rows quoted here are the record.
+
+- **Heavy tops on a column of unit boxes** (3D, default / preset, settled of five):
+  - sphere: three boxes ratio 10: 3 / 5; five boxes ratio 10: 1 / 5; five boxes ratio 100: 0 / 3; eight boxes ratio 50: 0 / 3 (the box top of section 12 settles 5 of 5 at the three cells that the preset carries);
+  - hull (12-sided prism): behaves as the box: three and five boxes at ratio 10: 5 / 5; five at ratio 100 and eight at 50: 0 / 5;
+  - upright capsule (half length 0.25, radius 0.5): **0 of 5 at every cell with either solver**, down to three boxes at ratio 10; an upright capsule meets a flat face at its cap, one point like a sphere, which is the likely reason it rolls off at any offset (not verified); the preset does not change it.
+- **A column of hull prisms** (eight, the top shifted): with a top of ratio 5 both solvers settle at all five offsets; with a top of ratio 50 the default settles none (2 toppled, 3 flung) and the preset four (one flung). Columns of three and five prisms settle with both up to ratio 10. A column of spheres, and of capsules of half length 0.0001, does not stand with either solver (two or three of them: 1 of 5); upright capsules of half length 0.25 in a column were not tried.
+- **2D, a circle on boxes** (default / preset): three boxes ratio 10: 2 / 5; five boxes ratio 10: 0 / 4; ratio 100: 0 / 2; eight boxes ratio 50: 0 / 2.
+- **The speed clamp on** (`SpeedPolicy::Clamp`, 500 m/s and 50 rad/s): five boxes ratio 10 and eight boxes ratio 5 settle with both; eight boxes ratio 50: default 0 of 5, preset 5 of 5. The clamp does not interfere with the preset.
+- **3D joints** (default / preset, the largest distance between the two anchors of any joint over 600 steps):
+  - hanging chain of ten links, the end link 1, 10, 100 times as dense: 0.0017 / 0.0012, 0.0039 / 0.0027, 0.027 / 0.023 m; twenty links: 0.0041 / 0.0030, 0.030 / 0.026 m; the chain ends in the same place (a few millimetres), the peak speed is lower with the preset;
+  - whip of eight links thrown sideways and spinning, ball joints, end link 1 / 100 times: 0.018 / 0.0105 and 0.080 / 0.063 m; hinges: 0.019 / 0.0096 and 0.086 / **0.092** m (a little larger with a heavy end); no link left the scene;
+  - hinge door with limits of -1 and 0.5 rad: both reach the lower limit within 0.001 rad;
+  - **bridge** of 1 m planks between two posts, hinged at the ends, a box 100 times as dense dropped on the middle plank: six planks 0.58 / 0.39 m, ten planks **0.20 / 0.43 m** (the preset has twice the gap with ten planks; empty bridges 0.007 / 0.006 and 0.010 / 0.009 m); with a load of 10: 0.059 / 0.044 m. The cause was not looked into (card 8-65).
+  - The scan scene had no floor; the test world has one and a 20-link chain from 10 m reached it (gap 1.7 m in the first test run), so the pinned chains hang from 25 m.
+- **Not shown.** Columns of upright capsules (shown only for a half length of 0.0001), spheres in 2D, hull columns with a ratio between 5 and 50, joints with sleeping on, a clamped chain, joints with heavy bodies in the middle, other joint kinds (distance rod and rope), the hosted Linux and ARM64 runs (Ubuntu is WSL2 on the same machine), five offsets only, the file takes 18 s in the dev profile.
+
