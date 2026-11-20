@@ -278,7 +278,7 @@ impl<D: Dim> World<D> {
     ///
     /// # Errors
     /// The errors of the description ([`PhysicsError::NotFinite`], [`PhysicsError::InvalidShape`],
-    /// [`PhysicsError::SpeedTooHigh`] for a speed above [`MAX_SPEED`](crate::core::MAX_SPEED) or [`MAX_SPIN`](crate::core::MAX_SPIN)),
+    /// [`PhysicsError::SpeedTooHigh`] for a speed above [`MAX_GIVEN_SPEED`](crate::core::MAX_GIVEN_SPEED) or [`MAX_GIVEN_SPIN`](crate::core::MAX_GIVEN_SPIN)),
     /// or [`PhysicsError::CapacityExhausted`] when every slot is in use. A refused call changes
     /// nothing: no slot is used up.
     pub fn create_body(&mut self, desc: &BodyDesc<D>) -> Result<BodyHandle<D>, PhysicsError> {
@@ -645,7 +645,7 @@ impl<D: Dim> World<D> {
     ///
     /// # Errors
     /// [`PhysicsError::StaleHandle`], [`PhysicsError::StaticBody`], [`PhysicsError::NotFinite`],
-    /// [`PhysicsError::SpeedTooHigh`] for a speed above [`MAX_SPEED`](crate::core::MAX_SPEED). A refused call changes nothing.
+    /// [`PhysicsError::SpeedTooHigh`] for a speed above [`MAX_GIVEN_SPEED`](crate::core::MAX_GIVEN_SPEED). A refused call changes nothing.
     pub fn set_linear_velocity(
         &mut self,
         handle: BodyHandle<D>,
@@ -662,7 +662,7 @@ impl<D: Dim> World<D> {
     ///
     /// # Errors
     /// [`PhysicsError::StaleHandle`], [`PhysicsError::StaticBody`], [`PhysicsError::NotFinite`],
-    /// [`PhysicsError::SpeedTooHigh`] for a speed above [`MAX_SPIN`](crate::core::MAX_SPIN). A refused call changes nothing.
+    /// [`PhysicsError::SpeedTooHigh`] for a speed above [`MAX_GIVEN_SPIN`](crate::core::MAX_GIVEN_SPIN). A refused call changes nothing.
     pub fn set_angular_velocity(
         &mut self,
         handle: BodyHandle<D>,
@@ -822,7 +822,7 @@ impl<D: Dim> World<D> {
 mod tests {
     use super::*;
     use crate::core::{BodyKind, Dim};
-    use crate::core::{MAX_PAIRS, MAX_SPEED};
+    use crate::core::{MAX_GIVEN_SPEED, MAX_PAIRS};
     use crate::d2::{Aabb2, D2, Rot2, Shape2};
     use base::math::Vec2;
     use base::pool::Handle;
@@ -1469,7 +1469,7 @@ mod tests {
         assert_eq!(world.step(DT), Ok(()));
         // A position that a step of an enormous (but finite) length carries past the largest float.
         let mut huge = dynamic(f32::MAX, 0.0);
-        huge.linear_velocity = Vec2::new(MAX_SPEED, 0.0);
+        huge.linear_velocity = Vec2::new(MAX_GIVEN_SPEED, 0.0);
         let mut world = self::world(1, Vec2::ZERO);
         create(&mut world, &huge);
         assert_eq!(world.step(1.0e35), Err(PhysicsError::NotFinite));
@@ -1802,15 +1802,15 @@ mod tests {
             Vec2::ZERO,
             Shape2::Circle { radius: 1.0 },
         );
-        runner.linear_velocity = Vec2::new(MAX_SPEED, 0.0);
+        runner.linear_velocity = Vec2::new(MAX_GIVEN_SPEED, 0.0);
         assert!(world.create_body(&runner).is_ok());
         let (hash, tree, steps) = (
             world.state_hash(),
             world.broadphase_hash(),
             world.step_count(),
         );
-        // A step of 3e34 s carries it 3e38 m, past the box the margin allows.
-        assert_eq!(world.step(3.0e34), Err(PhysicsError::NotFinite));
+        // A step of 6e34 s carries it 3e38 m, past the box the margin allows.
+        assert_eq!(world.step(6.0e34), Err(PhysicsError::NotFinite));
         assert_eq!(
             (
                 world.state_hash(),

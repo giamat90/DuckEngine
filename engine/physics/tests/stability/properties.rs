@@ -10,8 +10,8 @@ use super::scene::{Scene, config, hinge_at};
 use base::math::Vec2;
 use base::rng::Pcg32;
 use physics::d2::{
-    BodyDesc, BodyHandle, BodyKind, Joint2, JointDesc, MAX_SPEED, PhysicsError, RevoluteJoint2,
-    Shape2, SleepConfig, SolverExecution, World,
+    BodyDesc, BodyHandle, BodyKind, Joint2, JointDesc, MAX_GIVEN_SPEED, PhysicsError,
+    RevoluteJoint2, Shape2, SleepConfig, SolverExecution, World,
 };
 
 /// Seeds per property.
@@ -356,9 +356,9 @@ fn refused_calls_and_a_refused_step_leave_the_state_unchanged() -> Result<(), Ph
         twin.world.wake(body)?;
         scene
             .world
-            .set_linear_velocity(body, Vec2::new(0.0, -MAX_SPEED))?;
+            .set_linear_velocity(body, Vec2::new(0.0, -MAX_GIVEN_SPEED))?;
         twin.world
-            .set_linear_velocity(body, Vec2::new(0.0, -MAX_SPEED))?;
+            .set_linear_velocity(body, Vec2::new(0.0, -MAX_GIVEN_SPEED))?;
         let before = scene.world.state_hash();
         let result = scene.world.step(1.0e35);
         assert_eq!(
