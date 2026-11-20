@@ -15,7 +15,7 @@ use crate::desc::{PassDesc, RenderTarget, ShaderStage};
 use crate::device::IRenderDevice;
 use crate::error::RenderError;
 use crate::ids::{BufferId, FrameId, PipelineId, SamplerId, ShaderId, SurfaceId, TextureId};
-use crate::mips::level_size;
+use crate::mips::{level_count, level_size};
 use crate::stream::{Command, CommandStream};
 use resources::{
     BYTES_PER_TEXEL, BufferRec, PipelineRec, Resources, SamplerRec, ShaderRec, SurfaceRec,
@@ -94,11 +94,6 @@ fn zeroed(len: usize) -> Result<Vec<u8>, RenderError> {
 
 fn texel_count(width: u32, height: u32) -> usize {
     usize::try_from(u64::from(width) * u64::from(height)).unwrap_or(usize::MAX)
-}
-
-/// Largest mip count a texture of this size can have: floor(log2(longest side)) + 1.
-fn max_mips(width: u32, height: u32) -> u32 {
-    32 - width.max(height).leading_zeros()
 }
 
 fn attribute_bytes(format: VertexFormat) -> u32 {
@@ -271,7 +266,8 @@ impl IRenderDevice for NullDevice {
             && desc.height != 0
             && desc.width <= MAX_TEXTURE_SIZE
             && desc.height <= MAX_TEXTURE_SIZE;
-        if !size_ok || desc.mip_count == 0 || desc.mip_count > max_mips(desc.width, desc.height) {
+        if !size_ok || desc.mip_count == 0 || desc.mip_count > level_count(desc.width, desc.height)
+        {
             return Err(INVALID);
         }
         let bytes = texel_count(desc.width, desc.height).saturating_mul(BYTES_PER_TEXEL);

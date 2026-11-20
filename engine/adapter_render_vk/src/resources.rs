@@ -232,17 +232,6 @@ pub struct Resources {
     depth_readable: bool,
 }
 
-/// How many mip levels a chain of an image of this size has.
-fn mip_limit(width: u32, height: u32) -> u32 {
-    32 - width.max(height).leading_zeros()
-}
-
-/// Width and height of mip level `level`: half of the level above (rounded down), never below one.
-fn level_extent(width: u32, height: u32, level: u32) -> (u32, u32) {
-    let shrink = |side: u32| side.checked_shr(level).unwrap_or(0).max(1);
-    (shrink(width), shrink(height))
-}
-
 /// Checks a texture description against the device limit.
 fn check_texture(desc: &TextureDesc, max_extent: u32) -> Result<(), VulkanError> {
     if desc.width == 0 || desc.height == 0 {
@@ -253,7 +242,7 @@ fn check_texture(desc: &TextureDesc, max_extent: u32) -> Result<(), VulkanError>
             "the texture is larger than the device allows",
         ));
     }
-    if desc.mip_count == 0 || desc.mip_count > mip_limit(desc.width, desc.height) {
+    if desc.mip_count == 0 || desc.mip_count > render::mips::level_count(desc.width, desc.height) {
         return Err(VulkanError::Invalid("the mip count does not fit the size"));
     }
     Ok(())
@@ -650,7 +639,8 @@ impl Resources {
                 "the mip level is not one of the texture's levels",
             ));
         }
-        let (width, height) = level_extent(texture.desc.width, texture.desc.height, level);
+        let (width, height) =
+            render::mips::level_size(texture.desc.width, texture.desc.height, level);
         check_region(width, height, region, bytes.len())?;
         if bytes.is_empty() {
             return Ok(());

@@ -3,6 +3,9 @@
 //! make levels (`IRenderDevice::write_texture_level` takes them one by one, the shape of Vulkan
 //! and D3D12); this is the helper a sample or a loader uses when its texture has only level 0. The
 //! size rule is the one of the `.dtex` texture format.
+//!
+//! The box filter averages the 8-bit values as they are (no gamma curve), so a mean of sRGB values
+//! is too dark; fine for a checker, not for a photograph (card 8-43).
 
 /// Bytes per texel of the 8-bit formats.
 const TEXEL: usize = 4;
@@ -23,8 +26,9 @@ pub fn level_count(width: u32, height: u32) -> u32 {
 
 /// The next level of 8-bit RGBA `texels` (`width` by `height`): each texel is the average of a 2x2
 /// block of the level above, channel by channel and rounded down (a side of one texel is not
-/// halved; of an odd side above one, the last row or column is left out), with no gamma curve applied. `None` for a size of zero, one texel
-/// (it has no next level) or a byte count that is not `width * height * 4`.
+/// halved; of an odd side above one, the last row or column is left out), with no gamma curve
+/// applied. `None` for a size of zero, one texel (it has no next level) or a byte count that is not
+/// `width * height * 4`.
 #[must_use]
 pub fn downsample(texels: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
     let (w, h) = (usize::try_from(width).ok()?, usize::try_from(height).ok()?);

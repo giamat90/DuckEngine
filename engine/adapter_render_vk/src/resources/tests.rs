@@ -2,7 +2,7 @@
 
 use super::{
     AddressMode, BufferDesc, BufferId, BufferUsage, Filter, Region, Resources, SamplerDesc,
-    SamplerId, TextureDesc, TextureFormat, TextureId, check_region, check_texture, mip_limit,
+    SamplerId, TextureDesc, TextureFormat, TextureId, check_region, check_texture,
 };
 use crate::VulkanError;
 use crate::fake::resource::Op;
@@ -98,11 +98,22 @@ fn live_without_memory() -> usize {
 // ----- pure checks -----
 
 #[test]
-fn the_mip_chain_of_a_size_has_the_expected_length() {
-    assert_eq!(mip_limit(1, 1), 1);
-    assert_eq!(mip_limit(2, 1), 2);
-    assert_eq!(mip_limit(256, 256), 9);
-    assert_eq!(mip_limit(300, 20), 9);
+fn the_longest_chain_a_texture_may_ask_for_is_the_one_of_the_render_crate() {
+    // The rule is `render::mips::level_count`; the adapter refuses one level more than it.
+    for (width, height) in [(1, 1), (2, 1), (256, 256), (300, 20), (20, 300)] {
+        let longest = render::mips::level_count(width, height);
+        let mut description = desc(width, height);
+        description.mip_count = longest;
+        assert!(
+            check_texture(&description, 1024).is_ok(),
+            "{width}x{height}"
+        );
+        description.mip_count = longest + 1;
+        assert!(
+            check_texture(&description, 1024).is_err(),
+            "{width}x{height}"
+        );
+    }
 }
 
 #[test]
