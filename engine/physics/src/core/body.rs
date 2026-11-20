@@ -180,6 +180,21 @@ pub(super) fn given_speeds_are_allowed<D: Dim>(linear: &D::Vec, angular: &D::Ang
         && angular.length_squared() <= MAX_GIVEN_SPIN * MAX_GIVEN_SPIN
 }
 
+/// Scales `value` down to the size `limit` when it is larger, keeping its direction; true when it
+/// did. The scale is `limit` over the size, from one square root (exact under IEEE 754, so the
+/// result is the same on every machine).
+fn shrink<T>(value: &mut T, limit: f32) -> bool
+where
+    T: Magnitude + Copy + std::ops::Mul<f32, Output = T>,
+{
+    let squared = value.length_squared();
+    if squared <= limit * limit {
+        return false;
+    }
+    *value = *value * (limit / squared.sqrt());
+    true
+}
+
 /// The factor a velocity is multiplied by in one step of length `dt` under `damping` per second.
 pub(crate) fn damping_factor(damping: f32, dt: f32) -> f32 {
     1.0 / (1.0 + dt * damping)
@@ -495,6 +510,19 @@ impl<D: Dim> Body<D> {
             && self.angular_velocity.is_finite()
     }
 
+    /// Brings a dynamic body's linear speed down to `linear` and its angular speed down to
+    /// `angular` when they are above, keeping the direction; returns true when it changed either
+    /// (card 8-50). A static body, a speed already within its limit and a value that is not a
+    /// number are left alone (the step has refused the last before this is called).
+    pub(super) fn clamp_motion(&mut self, linear: f32, angular: f32) -> bool {
+        if self.kind != BodyKind::Dynamic {
+            return false;
+        }
+        let linear_changed = shrink::<D::Vec>(&mut self.linear_velocity, linear);
+        let angular_changed = shrink::<D::Ang>(&mut self.angular_velocity, angular);
+        linear_changed || angular_changed
+    }
+
     /// True when the linear and the angular speed are within [`MAX_SPEED`] and [`MAX_SPIN`]; false
     /// for a speed above them or one that is not a number. Checked after `motion_is_finite`.
     pub(super) fn motion_is_bounded(&self) -> bool {
@@ -616,6 +644,41 @@ mod tests {
         assert!(!allowed(0.0, f32::MAX));
         // What a step may add is the room between the two.
         const { assert!(MAX_GIVEN_SPEED < MAX_SPEED && MAX_GIVEN_SPIN < MAX_SPIN) };
+    }
+
+    #[test]
+    fn clamping_scales_a_speed_down_to_its_limit_and_keeps_its_direction() {
+        let mut body = ball_moving(0.0, -90.0);
+        body.linear_velocity = base::math::Vec2::new(-300.0, 400.0);
+        assert!(body.clamp_motion(100.0, 30.0));
+        assert!((body.linear_velocity.x - -60.0).abs() < 1.0e-3);
+        assert!((body.linear_velocity.y - 80.0).abs() < 1.0e-3);
+        assert!((body.angular_velocity - -30.0).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn clamping_leaves_a_speed_within_its_limit_exactly_as_it_is() {
+        let mut body = ball_moving(100.0, 30.0);
+        let before = body;
+        assert!(!body.clamp_motion(100.0, 30.0));
+        assert_eq!(body.linear_velocity, before.linear_velocity);
+        assert_eq!(
+            body.angular_velocity.to_bits(),
+            before.angular_velocity.to_bits()
+        );
+        // Only one of the two above its limit: the other is not touched and the call says changed.
+        let mut body = ball_moving(100.0, 30.0);
+        assert!(body.clamp_motion(100.0, 10.0));
+        assert_eq!(body.linear_velocity, before.linear_velocity);
+        assert!((body.angular_velocity - 10.0).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn clamping_never_moves_a_static_body() {
+        let mut body = resting_ball(BodyKind::Static);
+        body.linear_velocity = base::math::Vec2::new(1.0e3, 0.0);
+        assert!(!body.clamp_motion(1.0, 1.0));
+        assert!((body.linear_velocity.x - 1.0e3).abs() < 1.0e-3);
     }
 
     #[test]

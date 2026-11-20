@@ -74,6 +74,10 @@ pub enum PhysicsError {
     /// body given its speed is not refused by the first step for gravity or a force alone (card
     /// 8-46); a collision can still take it past a bound. Nothing changed.
     SpeedTooHigh,
+    /// A [`SpeedPolicy::Clamp`](crate::core::SpeedPolicy::Clamp) limit is not finite, not above
+    /// zero, or above [`MAX_GIVEN_SPEED`](crate::core::MAX_GIVEN_SPEED) (linear) or
+    /// [`MAX_GIVEN_SPIN`](crate::core::MAX_GIVEN_SPIN) (angular). Nothing changed.
+    InvalidSpeedLimit,
 }
 
 impl fmt::Display for PhysicsError {
@@ -105,6 +109,7 @@ impl fmt::Display for PhysicsError {
             Self::InvalidJoint => f.write_str("a joint setting is out of range"),
             Self::Diverged => f.write_str("the step would give a body a speed beyond the limit"),
             Self::SpeedTooHigh => f.write_str("the speed is beyond the limit"),
+            Self::InvalidSpeedLimit => f.write_str("a speed limit is out of range"),
             Self::ManifoldCapacityTooLarge { max } => {
                 write!(
                     f,
@@ -180,6 +185,14 @@ mod tests {
             (PhysicsError::SpeedTooHigh, "the speed is beyond the limit"),
         ];
         check_messages(cases);
+    }
+
+    #[test]
+    fn the_speed_limit_error_has_its_own_readable_message() {
+        check_messages([(
+            PhysicsError::InvalidSpeedLimit,
+            "a speed limit is out of range",
+        )]);
     }
 
     #[test]

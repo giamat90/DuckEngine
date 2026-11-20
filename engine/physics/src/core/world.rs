@@ -18,6 +18,7 @@ use super::manifolds::{ContactManifold, ManifoldList};
 use super::pairs::{Pair, PairList};
 use super::sleep::SleepConfig;
 use super::solver::{ContactSolver, SolverConfig, SolverStats, StepFrame};
+use super::speed::SpeedPolicy;
 use super::tree::ProxyId;
 use base::pool::Pool;
 
@@ -94,6 +95,10 @@ pub struct World<D: Dim> {
     speculative_margin: f32,
     solver: D::Solver,
     sleep: SleepConfig,
+    /// What a step does with a speed beyond the bounds (card 8-50); refuse by default.
+    speed_policy: SpeedPolicy,
+    /// Bodies the last step clamped (always zero under [`SpeedPolicy::Refuse`]).
+    clamped: usize,
     /// The islands of the manifolds of the last step and the rest timers of the bodies.
     islands: Islands,
     /// Copies of the bodies the solver advances; the step commits them only when all are valid.
@@ -232,6 +237,8 @@ impl<D: Dim> World<D> {
             speculative_margin: config.speculative_margin,
             solver,
             sleep: config.sleep,
+            speed_policy: SpeedPolicy::Refuse,
+            clamped: 0,
             islands: Islands::new(config.max_bodies as usize),
             scratch,
             contacts_stale: false,
@@ -724,7 +731,9 @@ impl<D: Dim> World<D> {
     /// [`PhysicsError::NotFinite`] when the step would make a position, rotation, velocity or
     /// impulse overflow, or a broadphase box not representable; [`PhysicsError::Diverged`] when a
     /// body would end with a speed above [`MAX_SPEED`](crate::core::MAX_SPEED) or
-    /// [`MAX_SPIN`](crate::core::MAX_SPIN). In those two cases the forces and torques applied for
+    /// [`MAX_SPIN`](crate::core::MAX_SPIN) (only under [`SpeedPolicy::Refuse`], the default; under
+    /// [`SpeedPolicy::Clamp`] such a body is brought back to the limits instead, see
+    /// [`World::set_speed_policy`]). In those two cases the forces and torques applied for
     /// the step are dropped (they act in the next step only) and nothing else changes (the solver
     /// works on copies of the bodies and the new state is committed only when all of it is valid).
     /// [`PhysicsError::InvalidTimeStep`] changes nothing at all. A pair list that is too small is not an error of the step: see
@@ -761,6 +770,8 @@ impl<D: Dim> World<D> {
         if !stays_finite {
             return Err(self.refuse(PhysicsError::NotFinite));
         }
+        // Under the clamp policy (card 8-50) a body beyond the limits is brought back to them.
+        let clamped = self.clamp_scratch();
         // Finite but absurd: a diverged scene (card 8-25). Refused as a whole, like an overflow.
         if !self.scratch.iter().flatten().all(Body::motion_is_bounded) {
             return Err(self.refuse(PhysicsError::Diverged));
@@ -769,6 +780,7 @@ impl<D: Dim> World<D> {
             store(slot, copy.as_ref());
         }
         self.solver.commit();
+        self.clamped = clamped;
         // `can_hold` was checked above for every body, so this cannot fail on a committed step; the
         // check and the move must stay equivalent for the step to remain atomic.
         self.broadphase.move_proxies(&self.slots)?;
@@ -782,6 +794,46 @@ impl<D: Dim> World<D> {
             self.islands.sleep(&mut self.slots, &self.sleep);
         }
         Ok(())
+    }
+
+    /// Clamps the dynamic bodies of the step's copies to the limits of the policy and returns how
+    /// many it changed; nothing happens under [`SpeedPolicy::Refuse`].
+    fn clamp_scratch(&mut self) -> usize {
+        let SpeedPolicy::Clamp { linear, angular } = self.speed_policy else {
+            return 0;
+        };
+        self.scratch
+            .iter_mut()
+            .flatten()
+            .map(|body| body.clamp_motion(linear, angular))
+            .filter(|&changed| changed)
+            .count()
+    }
+
+    /// Chooses what a step does with a speed beyond the bounds ([`SpeedPolicy`]); a world
+    /// starts with [`SpeedPolicy::Refuse`]. Takes effect from the next step and changes no body.
+    ///
+    /// # Errors
+    /// [`PhysicsError::InvalidSpeedLimit`] for a limit that is not finite, not above zero or above
+    /// [`MAX_GIVEN_SPEED`](crate::core::MAX_GIVEN_SPEED) or
+    /// [`MAX_GIVEN_SPIN`](crate::core::MAX_GIVEN_SPIN); the policy is then unchanged.
+    pub fn set_speed_policy(&mut self, policy: SpeedPolicy) -> Result<(), PhysicsError> {
+        policy.validate()?;
+        self.speed_policy = policy;
+        Ok(())
+    }
+
+    /// What a step does with a speed beyond the bounds.
+    #[must_use]
+    pub fn speed_policy(&self) -> SpeedPolicy {
+        self.speed_policy
+    }
+
+    /// How many bodies the last successful step clamped (zero under [`SpeedPolicy::Refuse`], and
+    /// before the first step). A refused step leaves it as it was.
+    #[must_use]
+    pub fn clamped_bodies(&self) -> usize {
+        self.clamped
     }
 
     /// What a refused step does: the forces and torques applied for it are dropped (a force acts
@@ -814,6 +866,13 @@ impl<D: Dim> World<D> {
             slot.body.write_bits(&mut hasher);
         }
         self.solver.write_bits(&mut hasher);
+        // Only a clamping world adds its limits, so a world that refuses (the default) hashes as
+        // it did before the policy existed.
+        if let SpeedPolicy::Clamp { linear, angular } = self.speed_policy {
+            hasher.write_u8(1);
+            hasher.write_f32(linear);
+            hasher.write_f32(angular);
+        }
         hasher.finish()
     }
 }

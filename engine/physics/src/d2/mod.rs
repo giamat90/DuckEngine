@@ -23,7 +23,7 @@ pub use crate::core::{
     DEFAULT_SLEEP_ANGULAR_SPEED, DEFAULT_SLEEP_LINEAR_SPEED, DEFAULT_SPECULATIVE_MARGIN,
     DEFAULT_SUB_STEPS, DEFAULT_TIME_TO_SLEEP, MAX_COLOURS, MAX_GIVEN_SPEED, MAX_GIVEN_SPIN,
     MAX_JOINTS, MAX_PAIRS, MAX_RELAX_ITERATIONS, MAX_SPEED, MAX_SPIN, MAX_SUB_STEPS, PhysicsError,
-    SleepConfig, SolverConfig, SolverExecution, SolverStats,
+    SleepConfig, SolverConfig, SolverExecution, SolverStats, SpeedPolicy,
 };
 pub use aabb::Aabb2;
 pub use debug_draw::{CIRCLE_SEGMENTS, DebugColour, IPhysicsDebugDraw, NORMAL_LENGTH, draw_debug};
