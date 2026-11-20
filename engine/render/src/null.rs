@@ -15,6 +15,7 @@ use crate::desc::{PassDesc, RenderTarget, ShaderStage};
 use crate::device::IRenderDevice;
 use crate::error::RenderError;
 use crate::ids::{BufferId, FrameId, PipelineId, SamplerId, ShaderId, SurfaceId, TextureId};
+use crate::mips::level_size;
 use crate::stream::{Command, CommandStream};
 use resources::{
     BYTES_PER_TEXEL, BufferRec, PipelineRec, Resources, SamplerRec, ShaderRec, SurfaceRec,
@@ -329,9 +330,10 @@ impl IRenderDevice for NullDevice {
         Ok(())
     }
 
-    fn write_texture(
+    fn write_texture_level(
         &mut self,
         texture: TextureId,
+        level: u32,
         region: Rect,
         bytes: &[u8],
     ) -> Result<(), RenderError> {
@@ -340,7 +342,10 @@ impl IRenderDevice for NullDevice {
             .textures
             .get_mut(retag(texture))
             .ok_or(RenderError::InvalidHandle)?;
-        let (width, height) = (record.desc.width, record.desc.height);
+        if level >= record.desc.mip_count {
+            return Err(INVALID);
+        }
+        let (width, height) = level_size(record.desc.width, record.desc.height, level);
         let x = u32::try_from(region.x).map_err(|_| INVALID)?;
         let y = u32::try_from(region.y).map_err(|_| INVALID)?;
         let inside = region.width > 0
@@ -351,7 +356,9 @@ impl IRenderDevice for NullDevice {
         if !inside || bytes.len() != row * texel_count(1, region.height) {
             return Err(INVALID);
         }
-        if record.data.is_empty() {
+        // The Null device keeps level 0 only (`read_back` reads it); the other levels are checked
+        // and dropped.
+        if level > 0 || record.data.is_empty() {
             return Ok(());
         }
         let stride = texel_count(width, 1) * BYTES_PER_TEXEL;

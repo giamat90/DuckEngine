@@ -110,6 +110,15 @@ const FRAGMENT_TEXTURED: &str = "#version 450 core\n\
     layout(location = 0) out vec4 out_colour;\n\
     void main() { out_colour = texture(tex, vec2(0.5, 0.5)); }\n";
 
+/// Lays the bound texture over the 64 by 64 surface, one texture coordinate unit per surface, so a
+/// texture wider than the surface is minified and the sampler picks a mip level by the ratio.
+const FRAGMENT_OVER_SURFACE: &str = "#version 450 core
+    layout(binding = 0) uniform sampler2D tex;
+    layout(location = 0) in vec4 v_colour;
+    layout(location = 0) out vec4 out_colour;
+    void main() { out_colour = texture(tex, gl_FragCoord.xy / 64.0); }
+";
+
 /// A full-screen triangle made from `gl_VertexID`: no vertex buffer, no attributes.
 const VERTEX_ID: &str = "#version 450 core\n\
     layout(location = 0) out vec4 v_colour;\n\
@@ -142,6 +151,11 @@ const COLOURED: Sources = Sources {
 const TEXTURED: Sources = Sources {
     vertex: VERTEX,
     fragment: FRAGMENT_TEXTURED,
+    attributes: true,
+};
+const OVER_SURFACE: Sources = Sources {
+    vertex: VERTEX,
+    fragment: FRAGMENT_OVER_SURFACE,
     attributes: true,
 };
 const GENERATED: Sources = Sources {
@@ -627,6 +641,77 @@ fn textures_with_one_and_two_mip_levels_sample_with_a_mipmapped_filter() {
             "no GL error with {mips} levels"
         );
     }
+}
+
+const GREEN: [u8; 4] = [0, 255, 0, 255];
+const YELLOW: [u8; 4] = [255, 255, 0, 255];
+
+/// A square texture of `size` texels with the full chain of levels; level `n` is filled with
+/// `colours[n]`, the levels beyond `colours` are not written.
+fn chain_texture(scene: &mut Scene, size: u32, colours: &[[u8; 4]]) -> TextureId {
+    let texture = must(scene.device.create_texture(TextureDesc {
+        width: size,
+        height: size,
+        mip_count: render::mips::level_count(size, size),
+        format: TextureFormat::Rgba8,
+    }));
+    for (level, colour) in (0..).zip(colours) {
+        let (edge, _) = render::mips::level_size(size, size, level);
+        let texels: Vec<u8> = colour.repeat((edge * edge) as usize);
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: edge,
+            height: edge,
+        };
+        must(
+            scene
+                .device
+                .write_texture_level(texture, level, area, &texels),
+        );
+    }
+    texture
+}
+
+#[test]
+fn a_minified_texture_samples_the_mip_level_that_was_written() {
+    let _turn = take_turn();
+    let mut windows = match GlfwWindows::load_default(1) {
+        Ok(windows) => windows,
+        Err(error) => return not_run(&format!("GLFW: {error}")),
+    };
+    let Some(mut scene) = scene(&mut windows, OVER_SURFACE) else {
+        return;
+    };
+    let sampler = must(scene.device.create_sampler(SamplerDesc {
+        min_filter: Filter::Linear,
+        mag_filter: Filter::Linear,
+        address: AddressMode::Clamp,
+    }));
+    let points = [([-1.0, -1.0], RED), ([3.0, -1.0], RED), ([-1.0, 3.0], RED)];
+    let buffer = scene.buffer(BufferUsage::Vertex, &vertex_bytes(&points));
+    // The surface is 64 texels wide: a 64 texel texture is shown at level 0, a 128 texel one
+    // at level 1, a 256 texel one at level 2.
+    let levels = [RED, GREEN, YELLOW];
+    for (size, expected) in [(64, RED), (128, GREEN), (256, YELLOW)] {
+        let texture = chain_texture(&mut scene, size, &levels);
+        scene.draw(|stream| {
+            stream.bind_texture(0, texture, sampler);
+            stream.bind_vertex_buffer(0, buffer, 0);
+            stream.draw(3, 1);
+        });
+        assert_only(&scene.pixels(), &[expected]);
+    }
+    // The same 128 texel texture with level 1 left unwritten does not show green: the test sees
+    // which level is sampled.
+    let unwritten = chain_texture(&mut scene, 128, &[RED]);
+    scene.draw(|stream| {
+        stream.bind_texture(0, unwritten, sampler);
+        stream.bind_vertex_buffer(0, buffer, 0);
+        stream.draw(3, 1);
+    });
+    assert_eq!(count(&scene.pixels(), GREEN), 0, "level 1 was not written");
+    assert_eq!(scene.device.take_gl_error(), 0, "no GL error");
 }
 
 #[test]

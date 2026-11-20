@@ -24,7 +24,7 @@
 //!   re-attaches the buffer it binds, and a pipeline without attributes reads none.
 
 use crate::api::{
-    AttribFormat, MAX_TEXTURE_SIZE, Region, TextureStorage, Transfer,
+    AttribFormat, Level, MAX_TEXTURE_SIZE, Region, TextureStorage, Transfer,
     UNIFORM_BUFFER_OFFSET_ALIGNMENT,
 };
 use crate::context::GlContext;
@@ -425,13 +425,15 @@ impl IRenderDevice for GlDevice {
         self.check()
     }
 
-    fn write_texture(
+    fn write_texture_level(
         &mut self,
         texture: TextureId,
+        level: u32,
         region: Rect,
         bytes: &[u8],
     ) -> Result<(), RenderError> {
-        self.shadow.write_texture(texture, region, bytes)?;
+        self.shadow
+            .write_texture_level(texture, level, region, bytes)?;
         let record = self
             .res
             .textures
@@ -441,10 +443,14 @@ impl IRenderDevice for GlDevice {
             format: record.layout.format,
             data_type: record.layout.data_type,
         };
-        let written =
-            self.ctx
-                .api()
-                .texture_sub_image(record.name, region_of(region)?, transfer, bytes);
+        let target = Level {
+            texture: record.name,
+            level: gl_int(level)?,
+        };
+        let written = self
+            .ctx
+            .api()
+            .texture_sub_image(target, region_of(region)?, transfer, bytes);
         if !written {
             return Err(INVALID);
         }
