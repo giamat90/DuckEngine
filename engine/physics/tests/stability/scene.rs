@@ -152,8 +152,21 @@ pub fn place_pyramid(
 /// A column of boxes of half extent `half` on the floor, one per entry of `densities`, lowest
 /// first.
 pub fn column(densities: &[f32], half: f32, sleep: SleepConfig) -> Result<Scene, PhysicsError> {
+    column_with(densities, half, sleep, SolverConfig::DEFAULT)
+}
+
+/// [`column`] with a chosen solver configuration.
+pub fn column_with(
+    densities: &[f32],
+    half: f32,
+    sleep: SleepConfig,
+    solver: SolverConfig,
+) -> Result<Scene, PhysicsError> {
     let count = u32::try_from(densities.len()).unwrap_or(u32::MAX);
-    let mut world = world_with_floor(count + 2, 0, sleep)?;
+    let mut cfg = config(count + 2, 0, sleep);
+    cfg.solver = solver;
+    let mut world = World::new(cfg)?;
+    static_box(&mut world, Vec2::new(0.0, -1.0), Vec2::new(50.0, 1.0))?;
     let mut tracked = Vec::new();
     for (level, &density) in (0_u16..).zip(densities) {
         let at = Vec2::new(0.0, half + f32::from(level) * 2.0 * half);

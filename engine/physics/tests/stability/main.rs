@@ -17,3 +17,4 @@ mod pyramids;
 mod scene;
 mod sleeping;
 mod stacks;
+mod stiff;

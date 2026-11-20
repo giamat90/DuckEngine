@@ -60,6 +60,17 @@ pub const DEFAULT_RESTITUTION_THRESHOLD: f32 = 1.0;
 /// manifold (about 1e-6 m) to keep resting contacts from switching on and off.
 pub const DEFAULT_LINEAR_SLOP: f32 = 0.001;
 
+/// Sub-steps of [`SolverConfig::STIFF_CONTACTS`]: eight, twice the default.
+const STIFF_SUB_STEPS: u32 = 8;
+
+/// Contact stiffness of [`SolverConfig::STIFF_CONTACTS`] in hertz: 120, the cap at eight sub-steps
+/// of 60 Hz steps (a quarter of the sub-step rate), four times the default.
+const STIFF_CONTACT_HERTZ: f32 = 120.0;
+
+/// Relax passes of [`SolverConfig::STIFF_CONTACTS`]: two. With one, a column with a heavy body on a
+/// light one keeps creeping at the preset's stiffness (0.05 to 0.2 m/s after 20 s).
+const STIFF_RELAX_ITERATIONS: u32 = 2;
+
 /// The tunables of the contact solver. All are fixed when the world is built.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SolverConfig {
@@ -101,6 +112,23 @@ impl SolverConfig {
         linear_slop: DEFAULT_LINEAR_SLOP,
         joint_hertz: DEFAULT_JOINT_HERTZ,
         joint_damping_ratio: DEFAULT_JOINT_DAMPING_RATIO,
+    };
+
+    /// Stiffer contacts for stacks that carry a heavy body (card 8-54): eight sub-steps, two relax
+    /// passes and a contact stiffness of 120 Hz, everything else as in [`SolverConfig::DEFAULT`].
+    ///
+    /// A contact gives way by the weight it carries over its stiffness, so a light box under a
+    /// heavy one sinks into it; the default 30 Hz lets a column of eight boxes under a top 50 times
+    /// as dense come apart, and this preset keeps it standing (see the scan of card 8-39 and
+    /// `wiki/spikes/speed-bounds-scan.md` section 13). It costs twice the sub-steps of the default and one more relax pass,
+    /// and **assumes steps of 60 Hz**: at a longer step the stiffness is capped at a quarter of the
+    /// sub-step rate (a scratch check at 30 Hz steps still settled the tall stacks it was tried on).
+    /// The default is unchanged.
+    pub const STIFF_CONTACTS: Self = Self {
+        sub_steps: STIFF_SUB_STEPS,
+        relax_iterations: STIFF_RELAX_ITERATIONS,
+        contact_hertz: STIFF_CONTACT_HERTZ,
+        ..Self::DEFAULT
     };
 
     /// Checks every field against its range.
@@ -258,6 +286,7 @@ impl<D: Dim> ContactSolver<D> for FreeSolver {
 
 #[cfg(test)]
 mod tests {
+    use super::super::soft::HERTZ_LIMIT_FRACTION;
     use super::*;
 
     fn invalid(change: impl FnOnce(&mut SolverConfig)) -> bool {
@@ -285,6 +314,27 @@ mod tests {
             (config.joint_hertz, config.joint_damping_ratio),
             (60.0, 2.0)
         );
+    }
+
+    #[test]
+    fn the_stiff_contact_preset_is_valid_and_differs_from_the_defaults_in_three_fields() {
+        let preset = SolverConfig::STIFF_CONTACTS;
+        assert_eq!(preset.validate(), Ok(()));
+        assert_eq!((preset.sub_steps, preset.relax_iterations), (8, 2));
+        assert_eq!(preset.contact_hertz.to_bits(), 120.0_f32.to_bits());
+        // The stiffness sits on the cap of a contact at 60 Hz steps: a quarter of the sub-step rate.
+        let sub_step_rate = f32::from(u8::try_from(preset.sub_steps).unwrap_or(0)) * 60.0;
+        assert_eq!(
+            preset.contact_hertz.to_bits(),
+            (sub_step_rate * HERTZ_LIMIT_FRACTION).to_bits()
+        );
+        let same_as_default = SolverConfig {
+            sub_steps: DEFAULT_SUB_STEPS,
+            relax_iterations: DEFAULT_RELAX_ITERATIONS,
+            contact_hertz: DEFAULT_CONTACT_HERTZ,
+            ..preset
+        };
+        assert_eq!(same_as_default, SolverConfig::DEFAULT);
     }
 
     #[test]

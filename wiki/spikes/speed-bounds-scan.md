@@ -218,7 +218,7 @@ flowchart TD
   C["speed clamp (8-50)"] -.->|"does not see it, speeds are low"| F
 ```
 
-Measured on 2026-11-20 with `engine/physics/tests/stack_mass_ratio.rs` (2D and 3D, default solver, sleeping off, 600 steps, the top box resting on the stack and shifted sideways by 0, 0.001, 0.01, 0.05 or 0.2 m; the result at one offset is chaotic, so each cell is five runs). Settled means no body ended more than 1 m from the axis. The table gives the runs that settled out of five, 2D then 3D. Five offsets are few for the cells on the edge: a finer scan (41 offsets from 0 to 0.3 m) settled x100 on two boxes, x10 on three to five boxes, x5 on six and eight boxes and x1 on eight at every offset in both dimensions, but only 32 to 41 of 41 for x20 on four or five boxes, x10 on six, x50 on three and 2D x20 on three; those are the cells that read 4 or 5 of 5 above, and the tests pin only the first group.
+Measured on 2026-11-20 with `engine/physics/tests/stack_mass_ratio.rs` (2D and 3D, default solver, sleeping off, 600 steps, the top box resting on the stack and shifted sideways by 0, 0.001, 0.01, 0.05 or 0.2 m; the result at one offset is chaotic, so each cell is five runs). Settled means no body was ever more than 1 m from the axis. The table gives the runs that settled out of five, 2D then 3D. Five offsets are few for the cells on the edge: a finer scan (41 offsets from 0 to 0.3 m) settled x100 on two boxes, x10 on three to five boxes, x5 on six and eight boxes and x1 on eight at every offset in both dimensions, but only 32 to 41 of 41 for x20 on four or five boxes, x10 on six, x50 on three and 2D x20 on three; those are the cells that read 4 or 5 of 5 above, and the tests pin only the first group.
 
 | boxes (top included) | x5 | x10 | x20 | x50 | x100 | x1000 |
 |---|---|---|---|---|---|---|
@@ -238,5 +238,44 @@ Measured on 2026-11-20 with `engine/physics/tests/stack_mass_ratio.rs` (2D and 3
   1. **Document the observed region and keep it pinned** (recommended, done here): the table above and the tests; a solver change that shrinks the region is then seen.
   2. **A runtime check** (position, energy or penetration depth): not recommended. The worst bodies stay under 100 m/s, a game's world size is not known to the engine (a position bound would be a number the game must set), and a check can report a stack that came apart but not hold it together; the clamp of 8-50 and the query of 8-49 already cover the speed side. A report of the deepest contact overlap would see the squashed stack before it topples without any bound from the game; it was not tried, and it is the one check worth a card of its own if the owner wants a warning rather than a cure.
   3. **Enforcing a limit at `create_body`:** not possible as stated, because the ratio belongs to two bodies in contact, not to one body; a world-wide range of densities (a `WorldConfig` setting rejecting a body outside a density band) would be possible but rejects harmless worlds (a heavy ball and a light crate that never touch) and still says nothing about height, which matters as much as the ratio here.
-  A real fix is solver work (for example softening a contact by the mass ratio of its two bodies) and is a Class 2 card of its own, with this table as the baseline; it is not started.
+  A real fix is solver work and was tried in card 8-54: the lever is the stiffness of the contact, and an opt-in preset widens the region (section 13).
 - **Not shown.** Columns with the heavy box in the middle or the bottom (the 4-17 columns are the only ones), stacks of more than eight, a heavy top dropped from a height at these ratios beyond the 0.3 m of 8-37, other shapes than boxes, sleeping on (the tests run with sleeping off), and platforms other than Windows x86-64 and Ubuntu x86-64 (WSL; the table is Windows).
+
+## 13. Stiffer contacts widen the region, as an opt-in preset (card 8-54)
+
+```mermaid
+flowchart TD
+  P["a light box under a heavy one gives way by weight / stiffness"] --> L["lever: contact stiffness (Hz), capped at a quarter of the sub-step rate"]
+  L --> D["default: 30 Hz, 4 sub-steps, 1 relax pass"]
+  L --> S["SolverConfig::STIFF_CONTACTS: 120 Hz, 8 sub-steps, 2 relax passes"]
+  D --> R1["eight boxes under x20 or x30: settle in 0 to 3 of 41 offsets"]
+  S --> R2["the same: 41 of 41, in 2D and 3D"]
+  S --> C["cost: about 2.3 times the step time of a calm pile; a 44-row pyramid is still moving at 300 steps"]
+```
+
+Measured on 2026-11-20 on Windows x86-64, the scene of section 12 (a column of boxes, the top box resting on it and shifted sideways; settled means no body ended more than 1 m from the axis at any step of 600). Counts at the edge change by one or two between scans of the same cell, so a cell is "about" its count.
+
+- **The lever is the stiffness in hertz.** More sub-steps or relax passes at the default stiffness do not help (section 12, up to 16 and 4). A spike over 4, 8 and 16 sub-steps, a stiffness of one eighth or a quarter of the sub-step rate, damping 3, 10 and 30, push speed 0.5 and 3, and 1 or 4 relax passes (2D, five offsets; three hard cases: eight boxes under x50, six under x50, five under x100) gave: at 30 Hz at most 1 of 5 for the two taller cases and at most 3 of 5 for five under x100 in every setting; at 60 Hz (the cap at 4 sub-steps) none to five of five, mostly three to five with damping 10 or more (eight under x50 never settled with damping 3); at 120 Hz with 8 sub-steps all five in every setting except one (damping 3 and push speed 0.5: three of five for five under x100); at 240 Hz with 16 sub-steps all five. The stiffness cannot go above a quarter of the sub-step rate, so the sub-steps matter only because they raise that cap. Damping and push speed moved little.
+- **The preset.** `SolverConfig::STIFF_CONTACTS` is the default with 8 sub-steps, 2 relax passes and a contact stiffness of 120 Hz (the cap at 8 sub-steps of 60 Hz steps). A public constant of the shared physics core, Class 2. **The default is unchanged**, so no hash, golden file or existing test moves.
+- **Why two relax passes.** The first version had one: tall stacks settled, but a column with a heavy body on a light one kept creeping (heavy-on-light columns of two or three boxes, ratio 10 and 100: still moving at 0.02 to 0.24 m/s after 5 s to 40 s, drift growing to 0.22 m), which the default holds at rest. The independent review found it. With a second relax pass the same columns are at rest (speed 0, drift at most 0.007 m after 20 s). A cheaper setting with 90 Hz and one pass was also at rest but settled eight boxes under x50 in 32 of 41 offsets, against 41 and 39 with the preset.
+- **The region under the preset** (settled out of five offsets, 2D then 3D; default in section 12):
+
+| boxes (top included) | x20 | x50 | x100 | x300 | x1000 |
+|---|---|---|---|---|---|
+| 3 | 5, 5 | 5, 5 | 5, 5 | 5, 4 | 5, 3 |
+| 5 | 5, 5 | 5, 5 | 5, 5 | 4, 3 | 1, 1 |
+| 6 | 5, 5 | 5, 5 | 5, 5 | 4, 4 | 0, 0 |
+| 8 | 5, 5 | 5, 5 | 5, 5 | 1, 1 | 0, 0 |
+
+  Flinging (a body more than 10 m away) came only at x1000 on eight boxes (five of five in 2D, four in 3D), on six in 3D (four) and once at x300 on eight in 3D.
+- **How firm.** A scan of 41 offsets (0 to 0.3 m, release build): at every offset in 2D and 3D, eight boxes under x20 and x30 and five under x50 and x70 (the default settled 0 to 3 of 41 on them, 10 of 41 for five under x50 in 3D); nearly always, eight under x50 (41 and 39), five under x100 (40 and 39), six under x100 (38 and 35), three under x300 (41 and 34). The tests pin only the first group.
+- **Cost.** 512 boxes in 64 columns of eight, standing, 300 steps, release, best of three: 0.50 s at the default, 1.12 s with the preset (2.3 times), 0.82 s for the cheaper 90 Hz setting. A wall-clock look at one scene on one machine, not a gate; the instruction-count gate runs on the default. (A first reading of 1.7 times was for one relax pass.)
+- **Ordinary scenes** (`engine/physics/tests/stability/stiff.rs`, 2D, and one pass of the whole stability suite with the default temporarily switched to the preset values):
+  - Pyramids of 5, 10 and 20 rows stand, with a drift of 0.006, 0.011 and 0.029 m (the default moves 0.053 m at 20 rows, which is a finding of the catalogue), a final speed under 0.001 m/s and a penetration of at most 0.002 m; at 30 rows the drift is 0.045 m against 0.107 m.
+  - **A 44-row pyramid (the shape of workload W1) is still moving at 300 steps with the preset**: final speed 0.19 m/s against 0.037 m/s at the default, with a smaller drift (0.119 against 0.247 m) and penetration (0.002 against 0.019 m). Not pinned (the run takes about a minute).
+  - Columns of ratio 10 and 100 (seven columns of two or three boxes) come to rest, and the two heavy-on-light ratio-100 columns do not creep over 40 s.
+  - Hanging chains, whips and the bridge with a heavy load passed in that pass; several documented findings of the catalogue did not hold any more because the preset does better: the column of 20 boxes no longer topples (drift 0.028 m), the four-high column 1:100:1:100 stays (0.025 m), the column of 11 and the 20-row pyramid stay within the drift bound, the load of the heavy bridge is at 0.015 m/s after 8 s instead of bouncing.
+  - **Costs seen in that pass:** the 44-row pyramid above; in the random bins of the property test one seed (1147) has a contact 0.030 m deep against the 0.02 m bound; a bouncing ball with restitution 0.8 rose to 1.71 m against 1.70 m (3D, one run, no change). Tests that check that a scene moves (a pyramid of five rows, the whip that hits the apex) no longer saw motion, because the scene is now quieter.
+- **Switching the default.** With the default switched to the preset values, 40 tests failed in the first (one relax pass) pass, most of them pins of hashes and default values and the findings above that are now better. It is a decision of its own (golden files are governance, about 40 tests change their bounds) and is not taken here.
+- **Other conditions** (independent reviewer, scratch runs, not pinned): with sleeping on, eight boxes under x20 and x30 and five under x50 settled in five of five in 2D and 3D; at steps of 30 Hz, where the cap is 60 Hz, the preset still settled eight boxes under x20, five under x50 and three under x100 in 2D (the default settled one, three and four of five).
+- **Not tried.** The instruction-count benchmark, other shapes than boxes, the hosted Linux and ARM64 runs (the tests were run on Windows), joints and chains with the preset beyond that one pass, and a per-contact stiffness scaled by the mass ratio of the two bodies (the other idea of the card), which would cost less than twice the sub-steps and change the hashes of any scene with a heavy contact.
