@@ -349,7 +349,7 @@ fn refused_calls_and_a_refused_step_leave_the_state_unchanged() -> Result<(), Ph
             twin.world.state_hash(),
             "seed {seed}"
         );
-        // A speed within the bound is accepted by the setter; a step of 1e34 s carries it past the
+        // A speed within the bound is accepted by the setter; a step of 1e35 s carries it past the
         // largest float and is refused by the step (a speed beyond the bound is refused at the
         // setter since card 8-36). The body is woken first, as a sleeping body is not integrated.
         scene.world.wake(body)?;
@@ -360,10 +360,10 @@ fn refused_calls_and_a_refused_step_leave_the_state_unchanged() -> Result<(), Ph
         twin.world
             .set_linear_velocity(body, Vec2::new(0.0, -MAX_SPEED))?;
         let before = scene.world.state_hash();
-        let result = scene.world.step(1.0e34);
+        let result = scene.world.step(1.0e35);
         assert_eq!(
             result,
-            twin.world.step(1.0e34),
+            twin.world.step(1.0e35),
             "seed {seed}: twins disagree"
         );
         if result.is_err() {

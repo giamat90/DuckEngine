@@ -1472,7 +1472,7 @@ mod tests {
         huge.linear_velocity = Vec2::new(MAX_SPEED, 0.0);
         let mut world = self::world(1, Vec2::ZERO);
         create(&mut world, &huge);
-        assert_eq!(world.step(1.0e34), Err(PhysicsError::NotFinite));
+        assert_eq!(world.step(1.0e35), Err(PhysicsError::NotFinite));
     }
 
     #[test]
@@ -1809,8 +1809,8 @@ mod tests {
             world.broadphase_hash(),
             world.step_count(),
         );
-        // A step of 3e33 s carries it 3e38 m, past the box the margin allows.
-        assert_eq!(world.step(3.0e33), Err(PhysicsError::NotFinite));
+        // A step of 3e34 s carries it 3e38 m, past the box the margin allows.
+        assert_eq!(world.step(3.0e34), Err(PhysicsError::NotFinite));
         assert_eq!(
             (
                 world.state_hash(),
