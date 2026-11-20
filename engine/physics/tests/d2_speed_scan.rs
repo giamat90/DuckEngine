@@ -214,7 +214,7 @@ fn scenes_a_game_makes_stay_far_below_the_bounds() -> Result<(), PhysicsError> {
     }
     for ratio in [1.0_f32, 10.0, 100.0] {
         let p = assert_healthy(&format!("stack x{ratio}"), stack_scene(ratio))?;
-        // A stack of eight squares is 8 m high; one that stays together stays near it.
+        // A stack of eight squares is 8 m high; one that stays together stays near it, and so does one that has fallen over (`stack_mass_ratio.rs`).
         assert!(
             p.reach < 30.0,
             "stack x{ratio}: a body got {} m away",
