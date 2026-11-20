@@ -122,7 +122,7 @@ impl SolverConfig {
     /// as dense come apart, and this preset keeps it standing (see the scan of card 8-39 and
     /// `wiki/spikes/speed-bounds-scan.md` section 13). It costs twice the sub-steps of the default and one more relax pass,
     /// and **assumes steps of 60 Hz**: at a longer step the stiffness is capped at a quarter of the
-    /// sub-step rate (a scratch check at 30 Hz steps still settled the tall stacks it was tried on).
+    /// sub-step rate (at 30 Hz steps it still settled the tall stacks it was tried on: `tests/stack_mass_ratio.rs`).
     /// The default is unchanged.
     pub const STIFF_CONTACTS: Self = Self {
         sub_steps: STIFF_SUB_STEPS,

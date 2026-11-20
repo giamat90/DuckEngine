@@ -3,12 +3,13 @@
 //! property that fails names its seed, which is all that is needed to reproduce the scene.
 
 use super::execution::{executions, trace};
-use super::generator::{generate, generate_with_bin};
+use super::generator::{generate, generate_with_bin, generate_with_solver};
 use super::limits::{DT, ENERGY_SLACK_PER_BODY, ENERGY_SLACK_RATIO, PENETRATION};
 use super::measure::{all_finite, deepest, dynamic_count, energy};
 use super::scene::{Scene, config, hinge_at};
 use base::math::Vec2;
 use base::rng::Pcg32;
+use physics::core::SolverConfig;
 use physics::d2::{
     BodyDesc, BodyHandle, BodyKind, Joint2, JointDesc, MAX_GIVEN_SPEED, PhysicsError,
     RevoluteJoint2, Shape2, SleepConfig, SolverExecution, World,
@@ -22,7 +23,7 @@ const FIRST_SEED: u64 = 1_000;
 const SEED_STRIDE: u64 = 7;
 
 /// The seeds every property runs over.
-fn seeds() -> impl Iterator<Item = u64> {
+pub fn seeds() -> impl Iterator<Item = u64> {
     (0..SEED_COUNT).map(|i| FIRST_SEED + i * SEED_STRIDE)
 }
 
@@ -47,7 +48,7 @@ const CALM_RUN_STEPS: u32 = 480;
 
 /// The number of calm steps the property must have checked in every scene, so that it cannot pass
 /// because a scene was never calm.
-const MIN_CALM_CHECKS: u32 = 150;
+pub const MIN_CALM_CHECKS: u32 = 150;
 
 /// The least number of scenes that must fall completely asleep within `SETTLE_STEPS`, so that the
 /// check "a bit changed while everything sleeps" runs.
@@ -123,8 +124,8 @@ fn energy_never_rises_above_its_start_by_more_than_the_slack_when_nothing_bounce
 
 /// The deepest contact of the scene of `seed` over the steps at which its bin has been calm, and
 /// the number of such steps.
-fn calm_depth(seed: u64) -> Result<(f32, u32), PhysicsError> {
-    let (mut scene, in_bin) = generate_with_bin(seed, SleepConfig::DISABLED)?;
+pub fn calm_depth(seed: u64, solver: SolverConfig) -> Result<(f32, u32), PhysicsError> {
+    let (mut scene, in_bin) = generate_with_solver(seed, SleepConfig::DISABLED, solver)?;
     let (mut calm, mut checked, mut deepest_calm) = (0_u32, 0_u32, 0.0_f32);
     for _ in 0..CALM_RUN_STEPS {
         scene.world.step(DT)?;
@@ -145,7 +146,7 @@ fn calm_depth(seed: u64) -> Result<(f32, u32), PhysicsError> {
 fn no_contact_is_deep_once_the_bin_has_been_calm_for_half_a_second() -> Result<(), PhysicsError> {
     let mut too_short = Vec::new();
     for seed in seeds() {
-        let (depth, steps) = calm_depth(seed)?;
+        let (depth, steps) = calm_depth(seed, SolverConfig::DEFAULT)?;
         assert!(
             depth < PENETRATION,
             "seed {seed}: a contact is {depth} m deep"
