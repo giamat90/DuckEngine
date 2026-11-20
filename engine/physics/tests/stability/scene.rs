@@ -45,13 +45,17 @@ pub fn config(max_bodies: u32, max_joints: u32, sleep: SleepConfig) -> WorldConf
     }
 }
 
-/// A world with a static floor whose top face is the line `y = 0`, 100 m wide.
-pub fn world_with_floor(
+/// A world with a static floor whose top face is the line `y = 0`, 100 m wide, with a chosen solver
+/// configuration.
+pub fn world_with_floor_solver(
     max_bodies: u32,
     max_joints: u32,
     sleep: SleepConfig,
+    solver: SolverConfig,
 ) -> Result<World, PhysicsError> {
-    let mut world = World::new(config(max_bodies, max_joints, sleep))?;
+    let mut cfg = config(max_bodies, max_joints, sleep);
+    cfg.solver = solver;
+    let mut world = World::new(cfg)?;
     static_box(&mut world, Vec2::new(0.0, -1.0), Vec2::new(50.0, 1.0))?;
     Ok(world)
 }

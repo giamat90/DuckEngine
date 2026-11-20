@@ -16,6 +16,9 @@ use physics::{d2, d3};
 
 const DT: f32 = 1.0 / 60.0;
 const STEPS: u32 = 600;
+/// Steps of 30 Hz that make the same 10 s.
+const SLOW_DT: f32 = 1.0 / 30.0;
+const SLOW_STEPS: u32 = 300;
 const OFFSETS: [f32; 5] = [0.0, 0.001, 0.01, 0.05, 0.2];
 const SETTLED_BELOW: f32 = 1.0;
 const FLUNG_ABOVE: f32 = 10.0;
@@ -41,6 +44,9 @@ struct Stack {
     ratio: f32,
     offset: f32,
     solver: SolverConfig,
+    /// The length of a step and the number of steps run (10 s).
+    dt: f32,
+    steps: u32,
 }
 
 impl Stack {
@@ -50,6 +56,8 @@ impl Stack {
             ratio,
             offset,
             solver: SolverConfig::DEFAULT,
+            dt: DT,
+            steps: STEPS,
         }
     }
 
@@ -112,8 +120,8 @@ fn run2(stack: Stack) -> Result<Seen, PhysicsError> {
         })?;
     }
     let (mut drift, mut peak_speed) = (0.0_f32, 0.0_f32);
-    for _ in 0..STEPS {
-        world.step(DT)?;
+    for _ in 0..stack.steps {
+        world.step(stack.dt)?;
         for (_, body) in world
             .iter()
             .filter(|(_, b)| b.kind() == d2::BodyKind::Dynamic)
@@ -160,8 +168,8 @@ fn run3(stack: Stack) -> Result<Seen, PhysicsError> {
         })?;
     }
     let (mut drift, mut peak_speed) = (0.0_f32, 0.0_f32);
-    for _ in 0..STEPS {
-        world.step(DT)?;
+    for _ in 0..stack.steps {
+        world.step(stack.dt)?;
         for (_, body) in world
             .iter()
             .filter(|(_, b)| b.kind() == d3::BodyKind::Dynamic)
@@ -341,6 +349,61 @@ fn the_default_solver_settles_at_most_one_run_in_five_of_those_cases_so_the_pres
     for three in [false, true] {
         for (boxes, ratio) in STIFF_SETTLES_3D {
             let all = seen(three, Stack::new(boxes, ratio, 0.0))?;
+            assert!(
+                count(&all, Outcome::Settled) <= 1,
+                "{boxes} boxes, ratio {ratio}, three {three}: {all:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Cases run at steps of 30 Hz, where the stiffness of the preset is capped at 60 Hz instead of
+/// 120 (card 8-57): (boxes, ratio). The preset settled all five offsets of each, in 2D and in 3D.
+const SLOW_STEP_CASES: [(u8, f32); 4] = [(8, 20.0), (5, 50.0), (5, 70.0), (3, 100.0)];
+
+/// The cases run in 3D, the slower dimension.
+const SLOW_STEP_CASES_3D: [(u8, f32); 2] = [(8, 20.0), (5, 70.0)];
+
+/// The two cases where the default solver settled at most one run in five at steps of 30 Hz.
+const SLOW_STEP_CONTROLS: [(u8, f32); 2] = [(8, 20.0), (5, 70.0)];
+
+fn slow(solver: SolverConfig, boxes: u8, ratio: f32) -> Stack {
+    Stack {
+        solver,
+        dt: SLOW_DT,
+        steps: SLOW_STEPS,
+        ..Stack::new(boxes, ratio, 0.0)
+    }
+}
+
+#[test]
+fn the_stiff_contact_preset_still_settles_tall_stacks_at_steps_of_30_hz_in_2d_and_3d()
+-> Result<(), PhysicsError> {
+    for three in [false, true] {
+        let cases: &[(u8, f32)] = if three {
+            &SLOW_STEP_CASES_3D
+        } else {
+            &SLOW_STEP_CASES
+        };
+        for &(boxes, ratio) in cases {
+            let all = seen(three, slow(SolverConfig::STIFF_CONTACTS, boxes, ratio))?;
+            assert_eq!(
+                count(&all, Outcome::Settled),
+                5,
+                "{boxes} boxes, ratio {ratio}, three {three}: {all:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn the_default_solver_settles_at_most_one_run_in_five_of_two_of_those_cases_at_steps_of_30_hz()
+-> Result<(), PhysicsError> {
+    for three in [false, true] {
+        for (boxes, ratio) in SLOW_STEP_CONTROLS {
+            let all = seen(three, slow(SolverConfig::DEFAULT, boxes, ratio))?;
             assert!(
                 count(&all, Outcome::Settled) <= 1,
                 "{boxes} boxes, ratio {ratio}, three {three}: {all:?}"

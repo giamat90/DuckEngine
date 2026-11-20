@@ -3,8 +3,11 @@
 
 use super::limits::{DRIFT, HINGE_ERROR, REST_SPEED, W1_STEPS};
 use super::measure::{below, check_energy, observe};
-use super::scene::{ChainPlan, Lie, Scene, W1_HALF, bridge, chain, dynamic_box, world_with_floor};
+use super::scene::{
+    ChainPlan, Lie, Scene, W1_HALF, bridge, chain, dynamic_box, world_with_floor_solver,
+};
 use base::math::Vec2;
+use physics::core::SolverConfig;
 use physics::d2::{PhysicsError, SleepConfig};
 
 /// Links of the hanging chain that holds its bounds. Chains of 25 links and more stretch more than
@@ -41,7 +44,7 @@ const HEAVY_END_ERROR: f32 = 0.1;
 
 /// The most a hinge of a bridge may come apart under a load 50 times heavier than a plank, in
 /// metres: one link thickness, twice the bound of the light cases (loosened, see `limits`).
-const HEAVY_LOAD_ERROR: f32 = 0.1;
+pub const HEAVY_LOAD_ERROR: f32 = 0.1;
 
 /// Steps of the bridge scenes: 20 s. The first plan was 480 steps (8 s) and a load speed of
 /// 0.5 m/s; the heavy load is still bouncing at 0.56 m/s then (`findings`) and is at rest from about
@@ -61,8 +64,20 @@ pub fn chain_scene(
     last_density: f32,
     sleep: SleepConfig,
 ) -> Result<Scene, PhysicsError> {
+    chain_scene_with(links, lie, last_density, sleep, SolverConfig::DEFAULT)
+}
+
+/// [`chain_scene`] with a chosen solver configuration.
+pub fn chain_scene_with(
+    links: u8,
+    lie: Lie,
+    last_density: f32,
+    sleep: SleepConfig,
+    solver: SolverConfig,
+) -> Result<Scene, PhysicsError> {
     let top = Vec2::new(0.0, 0.5 * f32::from(links) + 2.0);
-    let mut world = world_with_floor(u32::from(links) + 8, u32::from(links) + 8, sleep)?;
+    let mut world =
+        world_with_floor_solver(u32::from(links) + 8, u32::from(links) + 8, sleep, solver)?;
     let plan = ChainPlan {
         top,
         links,
@@ -79,9 +94,14 @@ pub fn chain_scene(
 
 #[test]
 fn a_hanging_chain_of_twenty_links_stays_settled() -> Result<(), PhysicsError> {
+    check_hanging(SolverConfig::DEFAULT)
+}
+
+/// The hanging chains that hold their bounds, run with `solver`.
+pub fn check_hanging(solver: SolverConfig) -> Result<(), PhysicsError> {
     for links in HANGING_LINKS {
         let name = format!("hanging chain {links} links");
-        let mut scene = chain_scene(links, Lie::Hanging, 1.0, SleepConfig::DISABLED)?;
+        let mut scene = chain_scene_with(links, Lie::Hanging, 1.0, SleepConfig::DISABLED, solver)?;
         let report = observe(&mut scene, W1_STEPS)?;
         below(&name, "max drift (m)", report.max_drift, DRIFT);
         below(&name, "final speed (m/s)", report.final_speed, REST_SPEED);
@@ -99,9 +119,15 @@ fn a_hanging_chain_of_twenty_links_stays_settled() -> Result<(), PhysicsError> {
 #[test]
 fn whips_of_twenty_and_thirty_links_keep_their_joints_and_do_not_explode()
 -> Result<(), PhysicsError> {
+    check_whips(SolverConfig::DEFAULT)
+}
+
+/// The whips that hold their bounds, run with `solver`.
+pub fn check_whips(solver: SolverConfig) -> Result<(), PhysicsError> {
     for links in WHIP_LINKS {
         let name = format!("whip {links} links");
-        let mut scene = chain_scene(links, Lie::Horizontal, 1.0, SleepConfig::DISABLED)?;
+        let mut scene =
+            chain_scene_with(links, Lie::Horizontal, 1.0, SleepConfig::DISABLED, solver)?;
         let report = observe(&mut scene, WHIP_STEPS)?;
         assert!(
             report.max_speed > MIN_SWING_SPEED,
@@ -128,13 +154,19 @@ fn whips_of_twenty_and_thirty_links_keep_their_joints_and_do_not_explode()
 
 #[test]
 fn a_last_link_ten_and_one_hundred_times_heavier_is_held() -> Result<(), PhysicsError> {
+    check_heavy_end(SolverConfig::DEFAULT)
+}
+
+/// The whips with a heavy last link, run with `solver`.
+pub fn check_heavy_end(solver: SolverConfig) -> Result<(), PhysicsError> {
     for (density, bound) in [(10.0, HINGE_ERROR), (100.0, HEAVY_END_ERROR)] {
         let name = format!("whip 20 links, end 1:{density}");
-        let mut scene = chain_scene(
+        let mut scene = chain_scene_with(
             HEAVY_END_LINKS,
             Lie::Horizontal,
             density,
             SleepConfig::DISABLED,
+            solver,
         )?;
         let report = observe(&mut scene, WHIP_STEPS)?;
         below(&name, "worst hinge error (m)", report.worst_hinge, bound);
@@ -151,7 +183,16 @@ fn a_last_link_ten_and_one_hundred_times_heavier_is_held() -> Result<(), Physics
 
 /// A bridge of 16 planks over 8 m with a 0.5 m load of `density` dropped on the middle.
 pub fn loaded_bridge(density: f32, sleep: SleepConfig) -> Result<Scene, PhysicsError> {
-    let mut world = world_with_floor(24, 24, sleep)?;
+    loaded_bridge_with(density, sleep, SolverConfig::DEFAULT)
+}
+
+/// [`loaded_bridge`] with a chosen solver configuration.
+pub fn loaded_bridge_with(
+    density: f32,
+    sleep: SleepConfig,
+    solver: SolverConfig,
+) -> Result<Scene, PhysicsError> {
+    let mut world = world_with_floor_solver(24, 24, sleep, solver)?;
     let mut tracked = bridge(&mut world, 8.0, 5.0, 16, 1.0)?;
     let half = Vec2::new(W1_HALF, W1_HALF);
     tracked.push(dynamic_box(&mut world, Vec2::new(4.0, 6.5), half, density)?);
@@ -163,9 +204,9 @@ pub fn loaded_bridge(density: f32, sleep: SleepConfig) -> Result<Scene, PhysicsE
 }
 
 /// The bridge scenes: the hinge bound and a load that stays on the bridge.
-fn check_bridge(density: f32, bound: f32) -> Result<(), PhysicsError> {
+pub fn check_bridge(density: f32, bound: f32, solver: SolverConfig) -> Result<(), PhysicsError> {
     let name = format!("bridge, load density {density}");
-    let mut scene = loaded_bridge(density, SleepConfig::DISABLED)?;
+    let mut scene = loaded_bridge_with(density, SleepConfig::DISABLED, solver)?;
     let report = observe(&mut scene, BRIDGE_STEPS)?;
     below(&name, "worst hinge error (m)", report.worst_hinge, bound);
     check_energy(&name, &report);
@@ -187,10 +228,10 @@ fn check_bridge(density: f32, bound: f32) -> Result<(), PhysicsError> {
 
 #[test]
 fn a_bridge_carries_a_load_five_times_a_plank() -> Result<(), PhysicsError> {
-    check_bridge(1.0, HINGE_ERROR)
+    check_bridge(1.0, HINGE_ERROR, SolverConfig::DEFAULT)
 }
 
 #[test]
 fn a_bridge_carries_a_load_fifty_times_a_plank() -> Result<(), PhysicsError> {
-    check_bridge(10.0, HEAVY_LOAD_ERROR)
+    check_bridge(10.0, HEAVY_LOAD_ERROR, SolverConfig::DEFAULT)
 }

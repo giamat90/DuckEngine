@@ -33,7 +33,7 @@ fn deadline(index: usize) -> u32 {
 }
 
 /// Steps `scene` until every dynamic body sleeps or `deadline` passes; the step it happened at.
-fn fall_asleep(scene: &mut Scene, deadline: u32) -> Result<Option<u32>, PhysicsError> {
+pub fn fall_asleep(scene: &mut Scene, deadline: u32) -> Result<Option<u32>, PhysicsError> {
     let dynamic = dynamic_count(&scene.world);
     for step in 1..=deadline {
         scene.world.step(DT)?;
