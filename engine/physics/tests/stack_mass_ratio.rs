@@ -11,7 +11,7 @@
 //! a promise. The region that settles is small: the ratio a stack carries falls with its height.
 
 use base::math::{Vec2, Vec3};
-use physics::core::PhysicsError;
+use physics::core::{MAX_RELAX_ITERATIONS, MAX_SUB_STEPS, PhysicsError, SolverConfig};
 use physics::{d2, d3};
 
 const DT: f32 = 1.0 / 60.0;
@@ -40,8 +40,7 @@ struct Stack {
     boxes: u8,
     ratio: f32,
     offset: f32,
-    sub_steps: u32,
-    relax: u32,
+    solver: SolverConfig,
 }
 
 impl Stack {
@@ -50,8 +49,7 @@ impl Stack {
             boxes,
             ratio,
             offset,
-            sub_steps: d2::DEFAULT_SUB_STEPS,
-            relax: d2::DEFAULT_RELAX_ITERATIONS,
+            solver: SolverConfig::DEFAULT,
         }
     }
 
@@ -91,11 +89,7 @@ fn run2(stack: Stack) -> Result<Seen, PhysicsError> {
         max_manifolds: 1024,
         max_joints: 0,
         speculative_margin: d2::DEFAULT_SPECULATIVE_MARGIN,
-        solver: d2::SolverConfig {
-            sub_steps: stack.sub_steps,
-            relax_iterations: stack.relax,
-            ..d2::SolverConfig::DEFAULT
-        },
+        solver: stack.solver,
         sleep: d2::SleepConfig::DISABLED,
     })?;
     world.create_body(&d2::BodyDesc::new(
@@ -143,11 +137,7 @@ fn run3(stack: Stack) -> Result<Seen, PhysicsError> {
         max_manifolds: 1024,
         max_joints: 0,
         speculative_margin: d3::DEFAULT_SPECULATIVE_MARGIN,
-        solver: d3::SolverConfig {
-            sub_steps: stack.sub_steps,
-            relax_iterations: stack.relax,
-            ..d3::SolverConfig::DEFAULT
-        },
+        solver: stack.solver,
         sleep: d3::SleepConfig::DISABLED,
     })?;
     world.create_body(&d3::BodyDesc::new(
@@ -279,22 +269,24 @@ fn a_stack_of_eight_with_a_top_a_thousand_times_as_dense_flings_a_body_in_2d_and
 }
 
 #[test]
-fn more_sub_steps_and_relax_passes_do_not_make_a_stack_of_eight_with_a_top_fifty_times_as_dense_settle()
+fn the_most_sub_steps_and_relax_passes_alone_do_not_make_a_stack_of_eight_with_a_top_fifty_times_as_dense_settle()
 -> Result<(), PhysicsError> {
+    // Sub-steps and relax passes at their largest, with the default stiffness: the stiffness is the
+    // lever, not the counts (card 8-54).
+    let solver = SolverConfig {
+        sub_steps: MAX_SUB_STEPS,
+        relax_iterations: MAX_RELAX_ITERATIONS,
+        ..SolverConfig::DEFAULT
+    };
     for three in [false, true] {
-        for (sub_steps, relax) in [(8, 1), (16, 2), (16, 4)] {
-            let stack = Stack {
-                sub_steps,
-                relax,
+        let all = seen(
+            three,
+            Stack {
+                solver,
                 ..Stack::new(8, 50.0, 0.0)
-            };
-            let all = seen(three, stack)?;
-            assert_eq!(
-                count(&all, Outcome::Settled),
-                0,
-                "{sub_steps} sub-steps, three {three}: {all:?}"
-            );
-        }
+            },
+        )?;
+        assert_eq!(count(&all, Outcome::Settled), 0, "three {three}: {all:?}");
     }
     Ok(())
 }
@@ -305,5 +297,55 @@ fn a_box_under_a_heavy_top_gives_the_same_result_a_second_time() -> Result<(), P
     let second = run3(Stack::new(8, 100.0, 0.05))?;
     assert_eq!(first.outcome, second.outcome);
     assert_eq!(first.peak_speed.to_bits(), second.peak_speed.to_bits());
+    Ok(())
+}
+
+/// Cases the stiff-contact preset (card 8-54) settles at every one of 41 offsets (0 to 0.3 m), in
+/// 2D and in 3D, and that the default solver almost never does (0 to 3 of 41): (boxes, ratio).
+const STIFF_SETTLES: [(u8, f32); 4] = [(8, 20.0), (8, 30.0), (5, 50.0), (5, 70.0)];
+
+/// The cases run in 3D, which is much slower in the dev profile: the two that matter most.
+const STIFF_SETTLES_3D: [(u8, f32); 2] = [(8, 30.0), (5, 70.0)];
+
+fn assert_preset_settles(three: bool, cases: &[(u8, f32)]) -> Result<(), PhysicsError> {
+    for &(boxes, ratio) in cases {
+        let stack = Stack {
+            solver: SolverConfig::STIFF_CONTACTS,
+            ..Stack::new(boxes, ratio, 0.0)
+        };
+        let all = seen(three, stack)?;
+        assert_eq!(
+            count(&all, Outcome::Settled),
+            5,
+            "{boxes} boxes, ratio {ratio}: {all:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn the_stiff_contact_preset_keeps_a_tall_stack_with_a_heavy_top_standing_in_2d()
+-> Result<(), PhysicsError> {
+    assert_preset_settles(false, &STIFF_SETTLES)
+}
+
+#[test]
+fn the_stiff_contact_preset_keeps_a_tall_stack_with_a_heavy_top_standing_in_3d()
+-> Result<(), PhysicsError> {
+    assert_preset_settles(true, &STIFF_SETTLES_3D)
+}
+
+#[test]
+fn the_default_solver_settles_at_most_one_run_in_five_of_those_cases_so_the_preset_is_what_changed()
+-> Result<(), PhysicsError> {
+    for three in [false, true] {
+        for (boxes, ratio) in STIFF_SETTLES_3D {
+            let all = seen(three, Stack::new(boxes, ratio, 0.0))?;
+            assert!(
+                count(&all, Outcome::Settled) <= 1,
+                "{boxes} boxes, ratio {ratio}, three {three}: {all:?}"
+            );
+        }
+    }
     Ok(())
 }
