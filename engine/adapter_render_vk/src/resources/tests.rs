@@ -396,6 +396,87 @@ fn a_partial_write_changes_only_its_region() {
     }
 }
 
+fn desc_with_levels(width: u32, height: u32, levels: u32) -> TextureDesc {
+    TextureDesc {
+        mip_count: levels,
+        ..desc(width, height)
+    }
+}
+
+#[test]
+fn a_write_to_a_mip_level_copies_into_that_level_and_leaves_level_zero() {
+    let context = context();
+    let mut resources = resources(&context);
+    let id = texture(&mut resources, desc_with_levels(4, 4, 3));
+    let base = pattern(4 * 4 * 4);
+    assert!(resources.write_texture(id, whole(4, 4), &base).is_ok());
+    let images = resources.texture_handles(id).map(|h| h.image).unwrap_or(0);
+    fake::with(|s| s.world.ops.clear());
+    assert!(
+        resources
+            .write_texture_level(id, 1, whole(2, 2), &[200; 16])
+            .is_ok()
+    );
+    assert!(
+        resources
+            .write_texture_level(id, 2, whole(1, 1), &[100; 4])
+            .is_ok()
+    );
+    let copies: Vec<Op> = fake::with(|s| s.world.ops.clone())
+        .into_iter()
+        .filter(|op| matches!(op, Op::BufferToImage { .. }))
+        .collect();
+    assert_eq!(
+        copies,
+        vec![
+            Op::BufferToImage {
+                image: images,
+                level: 1,
+                width: 2,
+                height: 2
+            },
+            Op::BufferToImage {
+                image: images,
+                level: 2,
+                width: 1,
+                height: 1
+            },
+        ]
+    );
+    let mut out = vec![0_u8; base.len()];
+    assert!(resources.read_back(id, &mut out).is_ok());
+    assert_eq!(out, base, "level 0 is untouched");
+}
+
+#[test]
+fn a_mip_level_write_is_checked_against_the_size_of_the_level() {
+    let context = context();
+    let mut resources = resources(&context);
+    let id = texture(&mut resources, desc_with_levels(4, 4, 3));
+    assert!(matches!(
+        resources.write_texture_level(id, 3, whole(1, 1), &[0; 4]),
+        Err(VulkanError::Invalid(_))
+    ));
+    assert!(matches!(
+        resources.write_texture_level(id, 1, whole(4, 4), &[0; 64]),
+        Err(VulkanError::Invalid(_))
+    ));
+    assert!(matches!(
+        resources.write_texture_level(id, 1, whole(2, 2), &[0; 15]),
+        Err(VulkanError::Invalid(_))
+    ));
+    let edge = Region {
+        x: 1,
+        y: 1,
+        width: 2,
+        height: 1,
+    };
+    assert!(matches!(
+        resources.write_texture_level(id, 1, edge, &[0; 8]),
+        Err(VulkanError::Invalid(_))
+    ));
+}
+
 #[test]
 fn the_first_write_starts_from_undefined_and_ends_ready_to_sample() {
     let context = context();
@@ -419,6 +500,7 @@ fn the_first_write_starts_from_undefined_and_ends_ready_to_sample() {
             },
             Op::BufferToImage {
                 image: handles,
+                level: 0,
                 width: 2,
                 height: 2
             },

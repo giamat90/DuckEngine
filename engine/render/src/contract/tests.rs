@@ -36,6 +36,7 @@ enum Flaw {
     AcceptsBadDepth,
     OnlyUniformSlotZero,
     SmallUniformBuffersOnly,
+    WritesEveryLevelIntoLevelZero,
 }
 
 /// A Null device wrapped so one rule is broken; the contract must notice.
@@ -105,9 +106,10 @@ impl IRenderDevice for Broken {
             (_, other) => other,
         }
     }
-    fn write_texture(
+    fn write_texture_level(
         &mut self,
         texture: TextureId,
+        level: u32,
         region: Rect,
         bytes: &[u8],
     ) -> Result<(), RenderError> {
@@ -115,7 +117,16 @@ impl IRenderDevice for Broken {
         if matches!(self.flaw, Flaw::CorruptsUpload) {
             copy = copy.into_iter().map(|b| b.wrapping_add(1)).collect();
         }
-        self.inner.write_texture(texture, region, &copy)
+        let level = if matches!(self.flaw, Flaw::WritesEveryLevelIntoLevelZero) && level > 0 {
+            // The level is checked (so the refusals still hold) but the texels land in level 0.
+            self.inner
+                .write_texture_level(texture, level, region, &copy)?;
+            0
+        } else {
+            level
+        };
+        self.inner
+            .write_texture_level(texture, level, region, &copy)
     }
     fn destroy_buffer(&mut self, buffer: BufferId) {
         self.inner.destroy_buffer(buffer);
@@ -216,6 +227,12 @@ fn a_device_that_miscounts_draws_fails_the_contract() {
 #[should_panic(expected = "upload then read back must be equal")]
 fn a_device_that_corrupts_an_upload_fails_the_contract() {
     run_broken(Flaw::CorruptsUpload);
+}
+
+#[test]
+#[should_panic(expected = "a write to level 1 or 2 must not touch level 0")]
+fn a_device_that_writes_every_level_into_level_zero_fails_the_contract() {
+    run_broken(Flaw::WritesEveryLevelIntoLevelZero);
 }
 
 #[test]

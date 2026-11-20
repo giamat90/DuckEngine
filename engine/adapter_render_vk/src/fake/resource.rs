@@ -45,6 +45,8 @@ pub struct FakeImage {
     pub layout: u32,
     pub bound: Option<(u64, u64)>,
     pub texels: Vec<u8>,
+    /// Mip levels of the image; only level 0 keeps texels.
+    pub levels: u32,
     pub size: u64,
 }
 
@@ -62,10 +64,27 @@ pub struct SamplerRecord {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Op {
     GlobalBarrier,
-    ImageBarrier { image: u64, old: u32, new: u32 },
-    CopyBuffer { src: u64, dst: u64, size: u64 },
-    BufferToImage { image: u64, width: u32, height: u32 },
-    ImageToBuffer { image: u64, width: u32, height: u32 },
+    ImageBarrier {
+        image: u64,
+        old: u32,
+        new: u32,
+    },
+    CopyBuffer {
+        src: u64,
+        dst: u64,
+        size: u64,
+    },
+    BufferToImage {
+        image: u64,
+        level: u32,
+        width: u32,
+        height: u32,
+    },
+    ImageToBuffer {
+        image: u64,
+        width: u32,
+        height: u32,
+    },
 }
 
 /// One image barrier as the driver saw it.
@@ -409,6 +428,7 @@ unsafe extern "system" fn create_image(
                 layout: vp::LAYOUT_UNDEFINED,
                 bound: None,
                 texels: vec![0; usize::try_from(level0).unwrap_or(0)],
+                levels: info.mip_levels,
                 // The whole chain is a third more than level 0.
                 size: level0 + level0 / 3,
             },
@@ -623,7 +643,10 @@ unsafe extern "system" fn cmd_copy_buffer(
 fn region_shape(image: u64, region: &BufferImageCopy) -> (usize, usize, usize, usize) {
     with(|script| {
         let entry = &script.world.images[&image];
-        assert_eq!(region.image_subresource.mip_level, 0, "level 0 only");
+        let level = region.image_subresource.mip_level;
+        assert!(level < entry.levels, "the mip level is beyond the image");
+        let shrink = |side: u32| side.checked_shr(level).unwrap_or(0).max(1);
+        let extent = (shrink(entry.extent[0]), shrink(entry.extent[1]));
         assert_eq!(region.image_extent[2], 1);
         assert_eq!(region.buffer_row_length, 0, "tightly packed");
         assert_eq!(region.buffer_image_height, 0, "tightly packed");
@@ -631,9 +654,8 @@ fn region_shape(image: u64, region: &BufferImageCopy) -> (usize, usize, usize, u
         assert!(x >= 0 && y >= 0, "the region starts before the image");
         let (x, y) = (u32::try_from(x).unwrap_or(0), u32::try_from(y).unwrap_or(0));
         assert!(
-            x + region.image_extent[0] <= entry.extent[0]
-                && y + region.image_extent[1] <= entry.extent[1],
-            "the region leaves the image"
+            x + region.image_extent[0] <= extent.0 && y + region.image_extent[1] <= extent.1,
+            "the region leaves the mip level"
         );
         let texel = usize::try_from(bytes_per_texel(entry.format)).unwrap_or(4);
         (
@@ -675,7 +697,9 @@ unsafe extern "system" fn cmd_copy_buffer_to_image(
     let (memory, start, _) = buffer_range(buffer, region.buffer_offset, (row * rows) as u64);
     with(|script| {
         let source = script.world.memories[&memory].bytes[start..start + row * rows].to_vec();
-        if let Some(entry) = script.world.images.get_mut(&image) {
+        // Only level 0 keeps texels (`read_back` reads it); a copy into another level is checked.
+        let level_zero = region.image_subresource.mip_level == 0;
+        if let Some(entry) = script.world.images.get_mut(&image).filter(|_| level_zero) {
             let pitch = usize::try_from(entry.extent[0]).unwrap_or(0)
                 * usize::try_from(bytes_per_texel(entry.format)).unwrap_or(4);
             copy_rows(
@@ -688,6 +712,7 @@ unsafe extern "system" fn cmd_copy_buffer_to_image(
         }
         script.world.ops.push(Op::BufferToImage {
             image,
+            level: region.image_subresource.mip_level,
             width: region.image_extent[0],
             height: region.image_extent[1],
         });

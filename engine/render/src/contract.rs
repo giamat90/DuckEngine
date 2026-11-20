@@ -28,6 +28,7 @@ pub fn render_device_contract(device: &mut dyn IRenderDevice, surface: SurfaceDe
     caps_contract(device);
     buffer_contract(device);
     texture_contract(device);
+    mip_level_contract(device);
     surface_contract(device, surface);
     clear_contract(device, surface);
     stream_rules_contract(device, surface);
@@ -191,6 +192,151 @@ fn texture_contract(device: &mut dyn IRenderDevice) {
         INVALID_HANDLE,
         "write a destroyed texture"
     );
+}
+
+/// A 4x4 texture with three mip levels (4x4, 2x2, 1x1).
+fn mip_texture(device: &mut dyn IRenderDevice) -> TextureId {
+    let made = device.create_texture(TextureDesc {
+        width: 4,
+        height: 4,
+        mip_count: 3,
+        format: TextureFormat::Rgba8,
+    });
+    assert!(
+        made.is_ok(),
+        "create a texture with three mip levels: {made:?}"
+    );
+    made.unwrap_or_else(|_| unreachable!())
+}
+
+const LEVEL_0: Rect = Rect {
+    x: 0,
+    y: 0,
+    width: 4,
+    height: 4,
+};
+const LEVEL_1: Rect = Rect {
+    x: 0,
+    y: 0,
+    width: 2,
+    height: 2,
+};
+const LEVEL_2: Rect = Rect {
+    x: 0,
+    y: 0,
+    width: 1,
+    height: 1,
+};
+
+/// Card 8-35: a texture with a chain of mip levels takes its texels level by level. A write to
+/// level 1 or 2 changes nothing of level 0 (`read_back` reads level 0), and a level written
+/// through the level call reads back like one written through `write_texture`.
+fn mip_level_contract(device: &mut dyn IRenderDevice) {
+    let texture = mip_texture(device);
+    let level0: Vec<u8> = (0..64).collect();
+    assert_eq!(
+        device.write_texture(texture, LEVEL_0, &level0),
+        Ok(()),
+        "level 0"
+    );
+    assert_eq!(
+        device.write_texture_level(texture, 1, LEVEL_1, &[200; 16]),
+        Ok(()),
+        "level 1 is 2x2"
+    );
+    assert_eq!(
+        device.write_texture_level(texture, 2, LEVEL_2, &[100; 4]),
+        Ok(()),
+        "level 2 is 1x1"
+    );
+    let mut out = vec![0; 64];
+    assert_eq!(
+        device.read_back(texture, &mut out),
+        Ok(()),
+        "read back level 0"
+    );
+    assert_eq!(
+        out, level0,
+        "a write to level 1 or 2 must not touch level 0"
+    );
+    let other: Vec<u8> = (100..164).collect();
+    assert_eq!(
+        device.write_texture_level(texture, 0, LEVEL_0, &other),
+        Ok(()),
+        "level 0 through the level call"
+    );
+    assert_eq!(
+        device.read_back(texture, &mut out),
+        Ok(()),
+        "read back again"
+    );
+    assert_eq!(
+        out, other,
+        "level 0 through the level call reads back equal"
+    );
+    device.destroy_texture(texture);
+    assert_eq!(
+        device.write_texture_level(texture, 1, LEVEL_1, &[0; 16]),
+        INVALID_HANDLE,
+        "write a level of a destroyed texture"
+    );
+    mip_level_refusals(device);
+    single_level_refusals(device);
+}
+
+/// A texture with one level has no level 1, and a huge level is refused, not wrapped.
+fn single_level_refusals(device: &mut dyn IRenderDevice) {
+    let made = device.create_texture(TextureDesc {
+        width: 2,
+        height: 2,
+        mip_count: 1,
+        format: TextureFormat::Rgba8,
+    });
+    assert!(made.is_ok(), "create a texture with one level: {made:?}");
+    let texture = made.unwrap_or_else(|_| unreachable!());
+    assert_eq!(
+        device.write_texture_level(texture, 1, LEVEL_2, &[0; 4]),
+        INVALID_DESC,
+        "level 1 of a texture with one level"
+    );
+    assert_eq!(
+        device.write_texture_level(texture, u32::MAX, LEVEL_2, &[0; 4]),
+        INVALID_DESC,
+        "the largest level number"
+    );
+    device.destroy_texture(texture);
+}
+
+/// The level, the region and the byte count of a level write are checked against the level.
+fn mip_level_refusals(device: &mut dyn IRenderDevice) {
+    let texture = mip_texture(device);
+    assert_eq!(
+        device.write_texture_level(texture, 3, LEVEL_2, &[0; 4]),
+        INVALID_DESC,
+        "a level beyond the chain"
+    );
+    assert_eq!(
+        device.write_texture_level(texture, 1, LEVEL_0, &[0; 64]),
+        INVALID_DESC,
+        "a region of level 0 size in level 1"
+    );
+    assert_eq!(
+        device.write_texture_level(texture, 1, LEVEL_1, &[0; 15]),
+        INVALID_DESC,
+        "a short upload to level 1"
+    );
+    let edge = Rect {
+        x: 1,
+        y: 1,
+        width: 2,
+        height: 1,
+    };
+    assert_eq!(
+        device.write_texture_level(texture, 1, edge, &[0; 8]),
+        INVALID_DESC,
+        "a region leaving level 1"
+    );
+    device.destroy_texture(texture);
 }
 
 fn surface_contract(device: &mut dyn IRenderDevice, desc: SurfaceDesc) {

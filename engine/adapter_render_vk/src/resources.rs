@@ -19,7 +19,9 @@ use crate::error::{VulkanError, check_created};
 use crate::gear::{ResourceFns, load_resource_fns, ok};
 use crate::memory::{Allocation, BLOCK_SIZE, Kind, MemoryManager, Placement};
 use crate::slab::{Key, Slab};
-use crate::upload::{EVERYTHING, ImageTransition, NOTHING, StageAccess, Uploader, tight_region};
+use crate::upload::{
+    EVERYTHING, ImageTransition, NOTHING, StageAccess, Uploader, at_level, tight_region,
+};
 use crate::vk_present::{
     ASPECT_COLOR, BufferCreateInfo, BufferHandle, FORMAT_B8G8R8A8_UNORM,
     IMAGE_USAGE_COLOR_ATTACHMENT, IMAGE_VIEW_TYPE_2D, ImageHandle, ImageViewCreateInfo,
@@ -233,6 +235,12 @@ pub struct Resources {
 /// How many mip levels a chain of an image of this size has.
 fn mip_limit(width: u32, height: u32) -> u32 {
     32 - width.max(height).leading_zeros()
+}
+
+/// Width and height of mip level `level`: half of the level above (rounded down), never below one.
+fn level_extent(width: u32, height: u32, level: u32) -> (u32, u32) {
+    let shrink = |side: u32| side.checked_shr(level).unwrap_or(0).max(1);
+    (shrink(width), shrink(height))
 }
 
 /// Checks a texture description against the device limit.
@@ -600,16 +608,34 @@ impl Resources {
         }
     }
 
-    /// Copies tightly packed texels into a region of mip level 0 and leaves the texture ready to
-    /// be sampled; the data is there when this returns. The other mip levels are not written.
+    /// Copies tightly packed texels into a region of mip level 0 (see
+    /// [`Resources::write_texture_level`]).
     ///
     /// # Errors
-    /// [`VulkanError::InvalidHandle`]; [`VulkanError::Invalid`] when the region or the byte count
-    /// does not fit; [`VulkanError::Unsupported`] for a depth texture; [`VulkanError::Call`]
-    /// when the transfer fails.
+    /// As [`Resources::write_texture_level`].
     pub fn write_texture(
         &mut self,
         id: TextureId,
+        region: Region,
+        bytes: &[u8],
+    ) -> Result<(), VulkanError> {
+        self.write_texture_level(id, 0, region, bytes)
+    }
+
+    /// Copies tightly packed texels into a region of one mip level and leaves the texture ready to
+    /// be sampled; the data is there when this returns. The region and the byte count are those of
+    /// the level (level 0 is the full size, each next level half as wide and high, never below one
+    /// texel).
+    ///
+    /// # Errors
+    /// [`VulkanError::InvalidHandle`]; [`VulkanError::Invalid`] when the level is not below the
+    /// texture's `mip_count` or the region or the byte count does not fit the level;
+    /// [`VulkanError::Unsupported`] for a depth texture; [`VulkanError::Call`] when the transfer
+    /// fails.
+    pub fn write_texture_level(
+        &mut self,
+        id: TextureId,
+        level: u32,
         region: Region,
         bytes: &[u8],
     ) -> Result<(), VulkanError> {
@@ -619,19 +645,28 @@ impl Resources {
                 "writing texels of a depth texture",
             ));
         }
-        check_region(texture.desc.width, texture.desc.height, region, bytes.len())?;
+        if level >= texture.desc.mip_count {
+            return Err(VulkanError::Invalid(
+                "the mip level is not one of the texture's levels",
+            ));
+        }
+        let (width, height) = level_extent(texture.desc.width, texture.desc.height, level);
+        check_region(width, height, region, bytes.len())?;
         if bytes.is_empty() {
             return Ok(());
         }
         let (image, old, levels) = (texture.image, texture.layout, texture.desc.mip_count);
         let source = self.uploader.stage(&mut self.memory, bytes)?;
         let range = SubresourceRange::all_levels(ASPECT_COLOR, levels);
-        let copy = tight_region(
-            ASPECT_COLOR,
-            region.x,
-            region.y,
-            region.width,
-            region.height,
+        let copy = at_level(
+            tight_region(
+                ASPECT_COLOR,
+                region.x,
+                region.y,
+                region.width,
+                region.height,
+            ),
+            level,
         );
         let written: StageAccess = (STAGE_ALL_TRANSFER, ACCESS_TRANSFER_WRITE);
         let before = if old == LAYOUT_UNDEFINED {

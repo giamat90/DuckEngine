@@ -63,6 +63,7 @@ classDiagram
     +create_pipeline(PipelineDesc) Result~PipelineId~
     +write_buffer(BufferId, offset, bytes) Result
     +write_texture(TextureId, region, bytes) Result
+    +write_texture_level(TextureId, level, region, bytes) Result
     +destroy_buffer(BufferId)
     +destroy_texture(TextureId)
     +begin_frame(SurfaceId) Result~FrameId~

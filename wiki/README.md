@@ -3,6 +3,7 @@
 > **Status: PROPOSAL v1.64 (2026-11-17).** Decisions recorded so far are marked "decided by owner"; everything else is a proposal.
 >
 > **Changelog**
+> - **v1.87** - Mip levels in the render port (card 8-35, Class 2, ordinary card into develop): `write_texture_level`, `render::mips`, the sandbox texture has its whole chain. Pages: [render-port-v0](architecture/render-port-v0.md), [phase8-3d-v0](architecture/phase8-3d-v0.md), [vulkan-adapter-v0](architecture/vulkan-adapter-v0.md).
 > - **v1.86** - Speed bounds adopted (card 8-41, Class 2, ordinary card into develop): `MAX_SPIN` 2000 rad/s and `MAX_SPEED` 1e4 m/s, from the scan of card 8-37; chains with an absurd mass ratio are refused. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).
 > - **v1.85** - Speed bounds scan (card 8-37, Class 1, tests and a report, ordinary card into develop): new page [spikes/speed-bounds-scan](spikes/speed-bounds-scan.md): the speeds 3D scenes reach, absurd but finite states that stay below `MAX_SPEED` and `MAX_SPIN`, and a proposal for both (the owner decides); no constant changed.
 > - **v1.84** - Speeds are validated where they are given, a refused step drops the forces (card 8-36, Class 2, ordinary card into develop): `SpeedTooHigh`; comparison with Jolt, PhysX and Box2D recorded. Page: [phase8-3d-v0](architecture/phase8-3d-v0.md).
