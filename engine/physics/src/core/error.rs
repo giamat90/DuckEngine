@@ -63,7 +63,9 @@ pub enum PhysicsError {
     /// dropped the forces and torques applied for it and changed nothing else, so a scene that
     /// diverges by itself gives the same answer again until it is changed: set the body's velocity
     /// down ([`World::set_linear_velocity`](crate::core::World::set_linear_velocity)) or destroy
-    /// the body. A speed given directly above the limit for given speeds is [`PhysicsError::SpeedTooHigh`] instead.
+    /// a body. The error names no body: destroy one of the bodies that meet in the contact that
+    /// gave the speed (the body that carries the speed may not be enough, because the bodies it
+    /// hit already carry the speed on, card 8-48). A speed given directly above the limit for given speeds is [`PhysicsError::SpeedTooHigh`] instead.
     Diverged,
     /// A body description or a setter was given a linear speed above
     /// [`MAX_GIVEN_SPEED`](crate::core::MAX_GIVEN_SPEED) or an angular speed above
