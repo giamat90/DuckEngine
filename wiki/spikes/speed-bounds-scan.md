@@ -68,7 +68,27 @@ A change of the constants is Class 2 (public constants of a physics crate) and a
 ## 5. What this does not show
 
 - **A blow-up that is not fast.** The stack with a top 10 000 times as dense ends at 87 m/s with a body 385 m away: no bound on speed sees it; a position or energy check would (card 8-39).
-- **2D.** The core is shared and the bounds are the same, but the scenes were run in 3D only (card 8-40).
-- **Other platforms.** One Windows machine and one Ubuntu on the same machine; no ARM64; the chaotic scenes differ in detail between machines, so the tests assert margins, not values.
+- **2D.** The core is shared and the bounds are the same; the scenes were first run in 3D only, and card 8-40 ran them in 2D (section 6).
+- **Other platforms.** The 3D scan ran on one Windows machine and one Ubuntu on the same machine; the chaotic scenes differ in detail between machines, so the tests assert margins, not values. Card 8-40 added a hosted ARM64 run (section 6).
 - **Contact-only blow-ups at healthy mass ratios were not found** in the scenes tried (stacks up to x100, bullets, drops, piles); that is the absence of a finding in these scenes, not a proof.
 - **The scenes were chosen, not drawn from a game**; a game with another scale (a flying wheel, a spinning propeller at 3000 rad/s) may need a bound above 2000, which is why the bound is a proposal.
+
+## 6. The same scenes in 2D, and on ARM64 (card 8-40)
+
+Measured on 2026-11-20 with `engine/physics/tests/d2_speed_scan.rs` (the scenes of section 2 in the 2D instance, 600 steps, the bounds of card 8-41), Windows x86-64. Peaks of any dynamic body; "reach" is the farthest a body got from the origin.
+
+```mermaid
+flowchart LR
+  S["same scenes, 2D instance"] --> H["healthy scenes: below the bounds, as in 3D"]
+  S --> A["absurd chains: refused as Diverged, as in 3D"]
+  S --> D["a stack with a heavy top: flies apart from a ratio of about 200 in 2D, about 10 000 in 3D"]
+  S --> B["a body created at exactly the speed bound: refused after 24 steps by gravity alone, in 2D and 3D"]
+  T["tests: Windows, Ubuntu (WSL), hosted ARM64"] --> H
+  T --> A
+```
+
+- **Healthy scenes agree.** Drops, spins up to 500 rad/s, bullets up to 1000 m/s and chains with a heavy end of 1 or 100 times stay below half of each bound, and are never refused; the largest 2D values are the bullet at 1004.6 m/s (the speed it was given) and a rod chain with six links and a heavy end of 100 at 288 rad/s (3D: 521). A body spun at the bound (2000 rad/s) ends at 353 m/s.
+- **The absurd chains are refused, as in 3D.** All eight (hinge or rod, three or six links, heavy end 10 000 or a million times) end `Diverged` after 96 to 177 steps; the peaks seen before the refusal are 1174 to 1800 rad/s.
+- **A difference: the stack with a heavy top.** In 2D a stack of eight squares with a top 100 times as dense stays together (reach 7.8 m) and at every ratio tried from 200 to 5000 it came apart or tumbled: reach 29 m at 200, 81 m at 500, 80 m at 1000, 233 m at 2000, 23 m at 5000, not growing with the ratio (a stack is 8 m high; the speed peaks stay below 45 m/s, so no speed bound sees it). In 3D the same scene stays within 18 m up to a top of 5000 times and flies apart only at 10 000 (385 m, section 2). Results at single ratios are chaotic, so the threshold is "between 100 and 200 in 2D", not a value. This belongs to card 8-39.
+- **A body created at exactly the bound is refused soon after, with no contact.** A bullet given exactly `MAX_SPEED` is accepted by `create_body`, flies past the stack without touching it, and the step is refused (`Diverged`) after 24 steps, in 2D and in 3D. The cause, found by the independent review of this card: the check compares the squared speed with the squared bound, gravity adds a small vertical speed, and in single precision the sum passes the bound by one representable step; a bullet at 9900 m/s or less is not refused. (I first wrote that the contact result was above the bound; that was wrong, there is no contact.) Card 8-46 asks whether that edge is intended.
+- **ARM64.** The 2D and 3D speed scan tests ran on the hosted `ubuntu-24.04-arm` job of a hand-started `ci` run of the card's branch and passed. The tests assert margins, so this says the scenes stay inside them there, not that the values equal those of x86-64; the numbers above are from Windows. The same two test files also passed on Ubuntu x86-64 under WSL. The 2D test also asserts the reach of the healthy stacks (within 30 m); the 3D test has no such assertion.
