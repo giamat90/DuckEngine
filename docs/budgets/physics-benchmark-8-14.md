@@ -1,6 +1,6 @@
 # 3D physics benchmark report and proposed budget (card 8-14)
 
-Status: measured on 2026-11-19 by card 8-14. **Wall times are from the owner's development laptop only, under conditions that do not meet the reference-machine protocol (section 1); nothing here is measured on the reference machine or on a second machine, and every figure is one run of 30 iterations.** The budget in section 5 is a **proposal**: the owner accepts or changes it (choice O9 (a) of the phase 8 design note). Nothing in `gates/` or in `reference-machine-and-workloads.md` is changed by this card; registering the 3D benchmarks in the gates is card 8-13 (governance).
+Status: measured on 2026-11-19 by card 8-14. **Wall times are from the owner's development laptop only, under conditions that do not meet the reference-machine protocol (section 1); nothing here is measured on the reference machine or on a second machine, and every figure is one run of 30 iterations.** The budget in section 5 was a **proposal** and has been **accepted as proposed by the owner on 2026-11-20** (choice O9 (a) of the phase 8 design note, card 8-45). Nothing in `gates/` or in `reference-machine-and-workloads.md` is changed by this card; registering the 3D benchmarks in the gates is card 8-13 (governance).
 
 The tool is `engine/tools_physics_bench` (the 3D scenes are `scene3d`, the timing is `measure3d`); the run command is the same as for the 2D report:
 
@@ -82,7 +82,9 @@ Efficiency is the time at one worker over N times the time at N workers, within 
 
 A 3D step costs about eight times a 2D step per body in this scene. Part of that is physics (6 degrees of freedom, up to 4 contact points per box pair, more neighbours); how much is not measured. At 60 Hz a frame is 16.7 ms, so one thread cannot solve the large pyramid inside one frame (18.6 ms) and four workers can (11.6 ms) with room for little else.
 
-## 5. Proposed budget (for the owner to accept or change)
+## 5. Proposed budget (accepted by the owner as proposed, 2026-11-20)
+
+**Accepted by the owner on 2026-11-20 as proposed (O9 (a), card 8-45):** W4 at most 21 ms, W4p at most 13 ms, W4s at most 1.5 ms, W4m at most 0.6 ms, per step. The figures stay the laptop figures above (not the reference protocol); the owner did not name a reference machine, and the first run on one is still the way to confirm or tighten them. No gate file changed: what holds the budget is the instruction-count gate of card 8-13. It ran on `main` at the phase 8 release and recorded a first baseline without comparing (the base tree had no benchmark tool); the first comparison is the next pull request that reaches it. Wall times are not gated.
 
 The method is the one of the 2D report: the proposal is the measured median plus a margin for noise on a non-reference machine (about 12 to 17% here, because two runs the same day agreed within 3% and the p95 is 11% above the median), rounded up. It ratchets: it may only get tighter after it is accepted.
 
