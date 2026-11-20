@@ -99,6 +99,10 @@ pub struct World<D: Dim> {
     speed_policy: SpeedPolicy,
     /// Bodies the last step clamped (always zero under [`SpeedPolicy::Refuse`]).
     clamped: usize,
+    /// The bodies whose speed passed the bound in the last step, which that step refused as
+    /// [`PhysicsError::Diverged`] (card 8-49); capacity reserved for every body, so filling it
+    /// allocates nothing.
+    diverged: Vec<BodyHandle<D>>,
     /// The islands of the manifolds of the last step and the rest timers of the bodies.
     islands: Islands,
     /// Copies of the bodies the solver advances; the step commits them only when all are valid.
@@ -239,6 +243,7 @@ impl<D: Dim> World<D> {
             sleep: config.sleep,
             speed_policy: SpeedPolicy::Refuse,
             clamped: 0,
+            diverged: Vec::with_capacity(config.max_bodies as usize),
             islands: Islands::new(config.max_bodies as usize),
             scratch,
             contacts_stale: false,
@@ -742,6 +747,7 @@ impl<D: Dim> World<D> {
         if !dt.is_finite() || dt <= 0.0 {
             return Err(PhysicsError::InvalidTimeStep);
         }
+        self.diverged.clear();
         if self.contacts_stale {
             self.find_pairs();
             self.collide();
@@ -774,6 +780,7 @@ impl<D: Dim> World<D> {
         let clamped = self.clamp_scratch();
         // Finite but absurd: a diverged scene (card 8-25). Refused as a whole, like an overflow.
         if !self.scratch.iter().flatten().all(Body::motion_is_bounded) {
+            self.note_diverged();
             return Err(self.refuse(PhysicsError::Diverged));
         }
         for (slot, copy) in self.slots.iter_mut().zip(&self.scratch) {
@@ -794,6 +801,38 @@ impl<D: Dim> World<D> {
             self.islands.sleep(&mut self.slots, &self.sleep);
         }
         Ok(())
+    }
+
+    /// Remembers which bodies of the step's copies are beyond the bounds, in slot order.
+    fn note_diverged(&mut self) {
+        let beyond = self
+            .slots
+            .iter()
+            .zip(&self.scratch)
+            .filter_map(|(slot, copy)| match (slot, copy) {
+                (Some(slot), Some(copy)) if !copy.motion_is_bounded() => Some(slot.handle),
+                _ => None,
+            });
+        self.diverged.extend(beyond);
+    }
+
+    /// The bodies whose speed passed [`MAX_SPEED`](crate::core::MAX_SPEED) or
+    /// [`MAX_SPIN`](crate::core::MAX_SPIN) in the last step when that step was refused as
+    /// [`PhysicsError::Diverged`], in slot order (card 8-49); empty after any other step, whether
+    /// it succeeded or was refused as `NotFinite`. A call with a time step that is not valid is not
+    /// a step and leaves the list as it was. The list is a snapshot: it still names a body that was
+    /// destroyed since (a destroyed handle never names a later body), and changing the speed policy
+    /// does not clear it; only the next step does.
+    ///
+    /// The world is unchanged by a refused step, so these bodies still have the speeds they had
+    /// before it; the speed that crossed the bound is the result of a contact or a force of that
+    /// step. Setting such a body's velocity down may not be enough when its neighbours keep the
+    /// same contact (card 8-48); destroying it removes that contact, which was enough in the
+    /// chains tested (a fast body that is left may still hit something else), and choosing
+    /// [`SpeedPolicy::Clamp`] avoids the refusal.
+    #[must_use]
+    pub fn diverged_bodies(&self) -> &[BodyHandle<D>] {
+        &self.diverged
     }
 
     /// Clamps the dynamic bodies of the step's copies to the limits of the policy and returns how
