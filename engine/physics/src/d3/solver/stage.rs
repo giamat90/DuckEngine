@@ -217,6 +217,7 @@ fn store_body(bodies: &mut [SolverBody], index: usize, body: SolverBody) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::d3::solver::constraint::Pass;
 
     #[test]
     fn a_buffer_never_holds_more_than_the_solver_has_constraints() {
@@ -236,5 +237,27 @@ mod tests {
         assert_eq!(make_outputs(10, 5).len(), 2);
         assert_eq!(make_outputs(10, 0).len(), 10);
         assert_eq!(make_outputs(0, 4).len(), 0);
+    }
+
+    #[test]
+    fn a_job_has_room_only_when_there_is_a_buffer_for_every_chunk() {
+        let members = [0_u32, 1, 2, 3, 4];
+        let job = |chunk: usize, outputs: &[Mutex<ChunkOut>]| {
+            let job = ColourJob {
+                constraints: &[],
+                bodies: &[],
+                members: &members,
+                pass: Pass::WarmStart,
+                chunk,
+                outputs,
+            };
+            (job.chunk_count(), job.has_room())
+        };
+        // Five members in chunks of two are three chunks: one buffer is too few, three are enough,
+        // and more than three are enough too.
+        assert_eq!(job(2, &make_outputs(5, 2)), (3, true));
+        assert_eq!(job(2, &make_outputs(5, 1)), (3, true));
+        assert_eq!(job(2, &make_outputs(5, 5)), (3, false));
+        assert_eq!(job(2, &[]), (3, false));
     }
 }
