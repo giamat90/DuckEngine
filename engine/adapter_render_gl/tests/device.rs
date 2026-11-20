@@ -645,6 +645,7 @@ fn textures_with_one_and_two_mip_levels_sample_with_a_mipmapped_filter() {
 
 const GREEN: [u8; 4] = [0, 255, 0, 255];
 const YELLOW: [u8; 4] = [255, 255, 0, 255];
+const MAGENTA: [u8; 4] = [255, 0, 255, 255];
 
 /// A square texture of `size` texels with the full chain of levels; level `n` is filled with
 /// `colours[n]`, the levels beyond `colours` are not written.
@@ -702,15 +703,32 @@ fn a_minified_texture_samples_the_mip_level_that_was_written() {
         });
         assert_only(&scene.pixels(), &[expected]);
     }
-    // The same 128 texel texture with level 1 left unwritten does not show green: the test sees
-    // which level is sampled.
-    let unwritten = chain_texture(&mut scene, 128, &[RED]);
+    // Rewriting level 1 of a 128 texel texture that was already sampled changes the picture to
+    // the new colour (one no level has): the level that is written is the level that is sampled.
+    let texture = chain_texture(&mut scene, 128, &levels);
     scene.draw(|stream| {
-        stream.bind_texture(0, unwritten, sampler);
+        stream.bind_texture(0, texture, sampler);
         stream.bind_vertex_buffer(0, buffer, 0);
         stream.draw(3, 1);
     });
-    assert_eq!(count(&scene.pixels(), GREEN), 0, "level 1 was not written");
+    assert_only(&scene.pixels(), &[GREEN]);
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 64,
+        height: 64,
+    };
+    must(
+        scene
+            .device
+            .write_texture_level(texture, 1, area, &MAGENTA.repeat(64 * 64)),
+    );
+    scene.draw(|stream| {
+        stream.bind_texture(0, texture, sampler);
+        stream.bind_vertex_buffer(0, buffer, 0);
+        stream.draw(3, 1);
+    });
+    assert_only(&scene.pixels(), &[MAGENTA]);
     assert_eq!(scene.device.take_gl_error(), 0, "no GL error");
 }
 

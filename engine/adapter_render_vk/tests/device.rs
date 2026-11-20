@@ -164,6 +164,7 @@ const RED: [u8; 4] = [255, 0, 0, 255];
 const BLUE: [u8; 4] = [0, 0, 255, 255];
 
 /// What the sprite pipeline draws with.
+#[derive(Clone, Copy)]
 struct Sprite {
     pipeline: PipelineId,
     uniforms: BufferId,
@@ -364,6 +365,140 @@ fn read_target(rig: &mut Rig, target: TextureId) -> Vec<u8> {
 fn pixel(rows: &[u8], x: u32, y: u32) -> [u8; 4] {
     let at = usize::try_from((y * SIZE + x) * 4).unwrap_or(0);
     [rows[at], rows[at + 1], rows[at + 2], rows[at + 3]]
+}
+
+const GREEN: [u8; 4] = [0, 255, 0, 255];
+const YELLOW: [u8; 4] = [255, 255, 0, 255];
+const MAGENTA: [u8; 4] = [255, 0, 255, 255];
+
+/// Two triangles over the whole clip space, white, with texture coordinates 0 to 1 across it, so
+/// a texture larger than the target is minified and the sampler picks a mip level by the ratio.
+fn full_quad(device: &mut VulkanDevice) -> BufferId {
+    let corner = |x: f32, y: f32| {
+        [
+            x,
+            y,
+            f32::midpoint(x, 1.0),
+            f32::midpoint(y, 1.0),
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ]
+    };
+    let vertices: Vec<f32> = [
+        corner(-1.0, -1.0),
+        corner(1.0, -1.0),
+        corner(1.0, 1.0),
+        corner(-1.0, -1.0),
+        corner(1.0, 1.0),
+        corner(-1.0, 1.0),
+    ]
+    .concat();
+    let bytes: Vec<u8> = vertices.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let buffer = must(
+        device.create_buffer(BufferDesc {
+            size: u32::try_from(bytes.len()).unwrap_or(0),
+            usage: BufferUsage::Vertex,
+        }),
+        "making the vertex buffer",
+    );
+    must(
+        device.write_buffer(buffer, 0, &bytes),
+        "writing the vertices",
+    );
+    buffer
+}
+
+/// A square texture of `size` texels with all its levels; level `n` is filled with `colours[n]`.
+fn chain_texture(device: &mut VulkanDevice, size: u32, colours: &[[u8; 4]]) -> TextureId {
+    let texture = must(
+        device.create_texture(TextureDesc {
+            width: size,
+            height: size,
+            mip_count: render::mips::level_count(size, size),
+            format: TextureFormat::Rgba8,
+        }),
+        "making the mip texture",
+    );
+    for (level, colour) in (0..).zip(colours) {
+        let (edge, _) = render::mips::level_size(size, size, level);
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: edge,
+            height: edge,
+        };
+        let texels = colour.repeat(usize::try_from(edge * edge).unwrap_or(0));
+        must(
+            device.write_texture_level(texture, level, area, &texels),
+            "writing a mip level",
+        );
+    }
+    texture
+}
+
+/// Draws `texture` over the whole target and returns the picture.
+fn minified_picture(rig: &mut Rig, sprite: &Sprite, texture: TextureId) -> Vec<u8> {
+    let surface = must(rig.device.create_surface(rig.surface), "making the surface");
+    let vertices = full_quad(&mut rig.device);
+    let target = target_texture(&mut rig.device);
+    let drawn = Sprite {
+        white: texture,
+        ..*sprite
+    };
+    let stream = quad_pass(&drawn, RenderTarget::Texture(target), vertices);
+    run_frame(rig, surface, &stream);
+    let rows = read_target(rig, target);
+    rig.device.destroy_surface(surface);
+    rows
+}
+
+#[test]
+fn a_minified_texture_samples_the_mip_level_that_was_written_on_the_vulkan_device() {
+    let mut rig = match Rig::start() {
+        Ok(rig) => rig,
+        Err(reason) => return not_run(&reason),
+    };
+    let sprite = sprite(&mut rig.device);
+    // The target is 16 texels wide: a 16 texel texture is shown at level 0, a 32 texel one at
+    // level 1, a 64 texel one at level 2.
+    let levels = [RED, GREEN, YELLOW, BLUE, BLUE];
+    for (size, expected) in [(16, RED), (32, GREEN), (64, YELLOW)] {
+        let texture = chain_texture(&mut rig.device, size, &levels);
+        let rows = minified_picture(&mut rig, &sprite, texture);
+        assert!(
+            rows.chunks_exact(4).all(|texel| texel == expected),
+            "a {size} texel texture shows {:?} first, expected {expected:?}",
+            &rows[..4]
+        );
+    }
+    // Rewriting level 1 of a texture that was already sampled changes its picture to the new
+    // colour (a colour no level has). The sampler here is nearest, so the level is picked, not
+    // blended.
+    let texture = chain_texture(&mut rig.device, 32, &levels);
+    let before = minified_picture(&mut rig, &sprite, texture);
+    assert!(
+        before.chunks_exact(4).all(|texel| texel == GREEN),
+        "level 1 before"
+    );
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 16,
+        height: 16,
+    };
+    must(
+        rig.device
+            .write_texture_level(texture, 1, area, &MAGENTA.repeat(16 * 16)),
+        "rewriting level 1",
+    );
+    let rows = minified_picture(&mut rig, &sprite, texture);
+    assert!(
+        rows.chunks_exact(4).all(|texel| texel == MAGENTA),
+        "level 1 was rewritten"
+    );
+    rig.assert_quiet();
 }
 
 #[test]
