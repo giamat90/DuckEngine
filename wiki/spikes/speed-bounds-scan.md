@@ -177,4 +177,30 @@ flowchart TD
 
 - **What it says.** The refusals sit where speed and spin are both high: the corner of a spinning box moves faster than its centre, and a contact can throw that speed past the bound. No scene was refused at a spin of 250 or less at any speed, nor at 650 up to 1000 m/s, nor at any spin up to 1000 at 200 m/s (all tested at one point: 250, 650 at 1000 m/s, and 200 m/s; the scratch scan stepped the spin by 25); every scene was refused at the largest given speed with a spin of 600 (tested). In this scan (boxes, these two scenes) a cap on the given spin alone would have to be about 250 to remove every refusal, below the spin of the drop in the 8-37 scan; it would say nothing about other shapes, and it does not touch the refusals of 8-47, which happen with no spin at all. The default angular limits of Jolt and PhysX (tens of radians per second) are below it.
 - **Options for the owner** (not decided here): keep the bounds and the documented region (a game that wants no refusal chooses the clamp of 8-50 or keeps speed and spin moderate); or add a joint limit on speed and spin together at create and set; or lower the largest given spin. The first needs nothing; the other two change a public rule and move the values of 8-46.
-- **Not shown** (card 8-51): hulls, capsules, angled hits, rows of more than three, friction other than the default, and spins in 3D about an axis other than the one used.
+- **Not shown here:** hulls, capsules, hits off the line of centres, longer rows, friction and other spin axes; section 11 (card 8-51) tries them.
+
+## 11. Capsules, hulls, off-centre hits, longer rows, friction, other axes, and the clamp in a stack (card 8-51)
+
+```mermaid
+flowchart TD
+  H["a hit off the line of centres"] --> L["the light body gets a spin: impulse x lever arm / small inertia"]
+  L --> B["the spin bound is reached before the speed bound"]
+  B --> R["refused from about 1000 m/s (far off) to about 5000 (near the line) for boxes, capsules, hulls; spheres hardly ever"]
+  R --> C["SpeedPolicy::Clamp steps every refused throw and row tried"]
+```
+
+Measured on 2026-11-20 in 3D only (2D has circles and boxes, which sections 7 to 10 cover), steps of 50 m/s and 50 rad/s, a heavy body thrown at a light one at rest (30 steps), the bodies starting 0.9 apart so the contact is in the first step. Pinned at a few points in `engine/physics/tests/collision_shapes_edge.rs` (12 tests); the rest is the scratch scan, not pinned.
+
+| scene | first refused (no spin unless said) |
+|---|---|
+| light body 0.2 off the line of centres, ratio 1000 | box 4200, capsule 4750, hull 4900, sphere never |
+| 0.4 off | box 2550, capsule 2650, hull 2000, sphere 3450 |
+| 0.6 off | box 1350, capsule 1500, hull 1050, sphere never |
+| head-on, spin about z, 5000 m/s | box 300, capsule 0 (refused without spin), sphere 100, hull never |
+| box, ratio 1000, 5000 m/s, spin about x or y | never (the hit runs along x; only the spin about z, across the hit and the offset, refused) |
+| box, friction 0 to 3, 2500 m/s | the first refused spin does not move (750 in the scan; 700 steps and 800 is refused in the test) |
+
+- **New finding.** Off the line of centres the light body leaves spinning, and that spin crosses the bound at speeds from about 1000 m/s, far below the head-on edge of section 7. Boxes, capsules and hulls are alike within a factor of two; the hull of eight corners is refused first at 0.4 and 0.6 off and last at 0.2 off. A ratio of 1 is refused too; at 0.6 off at a higher speed (box: 2100 against 1350 for a ratio of 1000), at 0.2 off at a lower one (3650 against 4200). The hull at 0.6 off is first refused at 1050, so the test that nothing is refused at 900 m/s keeps a margin of 150, and the pinned contrast of hull and box is at 1200.
+- **Rows.** Rows of five, six and eight spheres never refused (up to 5000 m/s, ratio 3 and 10). Boxes, capsules and hulls are refused in some rows and not in others (about 20 of 72 in a re-scan), with no simple rule in length or speed that I found (a capsule row of five at 2500 is refused and at 5000 steps; hull rows of ratio 10 are refused at nearly every length and speed), so the four refused rows pinned are examples, not an edge. With the clamp, every row tried (4 forms, 3 lengths, 2 ratios, 3 speeds; 72 rows) steps and no body is above the limit afterwards; so do the three off-centre throws that are refused by default (box, capsule, hull at 0.6 off, 2500 m/s).
+- **The clamp in a stack.** Eight boxes on a floor with a ball of density five dropped on top at 10 to 5000 m/s: with the default policy the world never refused in this scene at any speed tried (10, 100, 400, 1000, 3000, 5000), so the stack shows only that the clamp keeps a world finite, not that it rescues a refused one; the clamp changed nothing below the limit (positions equal bit for bit at 10 m/s, tested). The ball scatters the stack from 100 m/s (bodies end up to 8 m to the side), at 400 m/s some bodies end below the floor, at 1000 m/s they are thrown upward, and at 3000 and 5000 m/s they end far below it, with or without the clamp; the engine has no continuous collision detection (section 7). So the clamp keeps the world finite and stepping, and does not make a fast hit physical.
+- **Not shown.** 2D (nothing new to try there), angled hits between two moving bodies, hulls with many vertices, friction with spin on hulls and capsules, stacks hit by a box, and the box scenes of 8-48 under the clamp beyond the rows above.
