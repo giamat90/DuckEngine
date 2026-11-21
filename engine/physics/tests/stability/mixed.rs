@@ -67,15 +67,43 @@ pub fn mixed_with(
     sleep: SleepConfig,
     solver: SolverConfig,
 ) -> Result<Mixed, PhysicsError> {
+    mixed_tuned(lie, sleep, solver, Pin::STANDARD)
+}
+
+/// Where the chain of the mixed scene is pinned and how heavy its last link is (card 8-59 moves
+/// them to see how marginal the hit of the whip is; [`Pin::STANDARD`] is the scene of [`mixed`]).
+#[derive(Clone, Copy)]
+pub struct Pin {
+    /// How far above the standard pin the chain hangs from, in metres.
+    pub lift: f32,
+    /// Density of the last link (the other links have density 1).
+    pub last_density: f32,
+}
+
+impl Pin {
+    /// The pin of [`mixed`]: at the standard height, the last link of density 5.
+    pub const STANDARD: Self = Self {
+        lift: 0.0,
+        last_density: 5.0,
+    };
+}
+
+/// [`mixed_with`] with the chain pinned as `pin` says.
+pub fn mixed_tuned(
+    lie: Lie,
+    sleep: SleepConfig,
+    solver: SolverConfig,
+    pin: Pin,
+) -> Result<Mixed, PhysicsError> {
     let mut world = world_with_floor_solver(40, 16, sleep, solver)?;
     let mut boxes = Vec::new();
     place_pyramid(&mut world, &mut boxes, ROWS, W1_HALF, 0.0)?;
-    let top = Vec2::new(0.0, PYRAMID_TOP + 0.5 * f32::from(LINKS));
+    let top = Vec2::new(0.0, PYRAMID_TOP + 0.5 * f32::from(LINKS) + pin.lift);
     let plan = ChainPlan {
         top,
         links: LINKS,
         lie,
-        last_density: 5.0,
+        last_density: pin.last_density,
     };
     let links = chain(&mut world, plan)?;
     let wall = Vec2::new(0.25, 1.0);
