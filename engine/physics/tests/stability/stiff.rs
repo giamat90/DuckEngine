@@ -18,7 +18,7 @@ use super::properties::{
 };
 use super::scene::{Lie, W1_HALF, column_with, pyramid_with};
 use super::sleeping::fall_asleep;
-use physics::core::SolverConfig;
+use physics::core::{DEFAULT_CONTACT_DAMPING_RATIO, SolverConfig};
 use physics::d2::{BodyHandle, PhysicsError, SleepConfig};
 
 const PRESET: SolverConfig = SolverConfig::STIFF_CONTACTS;
@@ -225,33 +225,31 @@ fn with_sleeping_on_the_stiff_preset_puts_pyramids_columns_and_a_tall_stack_to_s
     Ok(())
 }
 
-/// The speed after 300 steps is above this and below the envelope (0.19 m/s measured).
-const SLOWER_SETTLE_FLOOR: f32 = 0.1;
-const SLOWER_SETTLE_ENVELOPE: f32 = 0.5;
+/// A pyramid that rings moves faster than this at 300 steps (0.19 m/s measured).
+const RINGING_FLOOR: f32 = 0.1;
 
-/// The drift of the 44-row pyramid with the preset was 0.119 m (the default 0.247 m).
+/// The speed of the 44-row pyramid with the preset after 300 steps is below this (0.0001 m/s
+/// measured with the contact damping ratio of 5; 0.19 with the ratio of 10 before card 8-68).
+const SETTLED_44_ROWS_SPEED: f32 = 0.02;
+
+/// The drift of the 44-row pyramid with the preset is 0.07 m (the default 0.247 m, the preset
+/// with the ratio of 10 0.119 m).
 const DRIFT_44_ROWS: f32 = 0.2;
 
 /// A pyramid of 44 rows has the shape of workload W1. With the default it is still moving at
-/// 300 steps (0.037 m/s); with the preset it is faster (0.19 m/s), at 1200 steps 0.05 and at rest
-/// at 2400, and asleep at step 1230 (the default at step 721), so the preset settles it later.
+/// 300 steps (0.037 m/s); with the preset as it was before card 8-68 (contact damping ratio 10)
+/// it rang at 0.19 m/s and fell asleep at step 1230. With the ratio of 5 it is at rest.
 #[test]
-fn finding_a_pyramid_of_44_rows_is_still_moving_at_300_steps_with_the_stiff_preset()
--> Result<(), PhysicsError> {
+fn a_pyramid_of_44_rows_is_at_rest_at_300_steps_with_the_stiff_preset() -> Result<(), PhysicsError>
+{
     let name = "stiff pyramid 44 rows";
     let mut scene = pyramid_with(44, W1_HALF, SleepConfig::DISABLED, PRESET)?;
     let report = observe(&mut scene, W1_STEPS)?;
-    above(
-        name,
-        "final speed (m/s)",
-        report.final_speed,
-        SLOWER_SETTLE_FLOOR,
-    );
     below(
         name,
         "final speed (m/s)",
         report.final_speed,
-        SLOWER_SETTLE_ENVELOPE,
+        SETTLED_44_ROWS_SPEED,
     );
     below(name, "max drift (m)", report.max_drift, DRIFT_44_ROWS);
     below(
@@ -488,52 +486,52 @@ fn a_whip_with_a_heavy_last_link_hits_the_pyramid_on_its_first_swing_with_either
 /// Steps between which a whip with a heavy last link touches the pyramid on its first swing.
 const FIRST_SWING: (u32, u32) = (50, 80);
 
-/// What keeps a 44-row pyramid moving at 300 steps with the preset (finding 3, release scan): the
-/// contact stiffness of 120 Hz together with the contact damping ratio of 10 that the preset
-/// takes from the default. Final speed in m/s at 300 steps, scratch values: default (4 sub-steps,
-/// 30 Hz) 0.037; 4 sub-steps at 60 Hz 0.17; 8 sub-steps and 2 relax passes at 30 Hz 0.00, at 60
-/// Hz 0.00, at 120 Hz (the preset) 0.19; with a third relax pass at 120 Hz 0.014; with the
-/// damping ratio at 5 instead of 10 (120 Hz, two passes) 0.0001 (at 0.2 to 2: 0.013 to 0.0004; at
-/// 30 and 100: 0.20 and 0.38). The push speed of the contact and the stiffness of the joints change
-/// nothing here (no joint, no deep overlap). Both cures cost something: the third pass 23 % of the
-/// step time and a bridge of 6 planks ending lower, the lower damping a stack of 5 boxes under a
-/// top 70 times as dense at steps of 30 Hz in 3D (4 of 5 settle, `reviews/8-59.md`). The choice is
-/// card 8-68.
+/// What made a 44-row pyramid ring at 300 steps with the preset before card 8-68 (finding 3, release
+/// scan): the contact stiffness of 120 Hz together with the contact damping ratio of 10 that the
+/// preset took from the default. Final speed in m/s at 300 steps, scratch values: default (4
+/// sub-steps, 30 Hz) 0.037; 4 sub-steps at 60 Hz 0.17; 8 sub-steps and 2 relax passes at 30 Hz
+/// 0.00, at 60 Hz 0.00, at 120 Hz with the ratio of 10 0.19; with a third relax pass at 120 Hz
+/// and the ratio of 10 0.014; with the ratio of 5 (the preset now, 120 Hz, two passes) 0.0001 (at
+/// 0.2 to 2: 0.013 to 0.0004; at 30 and 100: 0.20 and 0.38). The push speed of the contact and the
+/// stiffness of the joints change nothing here (no joint, no deep overlap). The owner chose the
+/// ratio of 5 (card 8-68): no time cost, against 23 % of the step time and a bridge of 6 planks
+/// ending lower for the third pass; its cost is a stack of 5 boxes under a top 70 times as dense at
+/// steps of 30 Hz in 3D (4 of 5 settle, `stack_mass_ratio.rs`).
 #[test]
-fn the_contact_stiffness_and_damping_keep_the_44_row_pyramid_moving_and_either_cure_calms_it()
+fn the_ratio_of_ten_at_120_hz_keeps_the_44_row_pyramid_ringing_and_each_cure_calms_it()
 -> Result<(), PhysicsError> {
     let name = "stiff pyramid 44 rows, variants";
     let speed = |solver: SolverConfig| -> Result<f32, PhysicsError> {
         let mut scene = pyramid_with(44, W1_HALF, SleepConfig::DISABLED, solver)?;
         Ok(observe(&mut scene, W1_STEPS)?.final_speed)
     };
+    let ringing = SolverConfig {
+        contact_damping_ratio: DEFAULT_CONTACT_DAMPING_RATIO,
+        ..PRESET
+    };
+    above(
+        name,
+        "preset with the ratio of 10 (m/s)",
+        speed(ringing)?,
+        RINGING_FLOOR,
+    );
     let sixty = SolverConfig {
         contact_hertz: 60.0,
-        ..PRESET
+        ..ringing
     };
     below(
         name,
-        "8 sub-steps, 2 passes, 60 Hz (m/s)",
+        "8 sub-steps, 2 passes, 60 Hz, ratio 10 (m/s)",
         speed(sixty)?,
-        CALM_SPEED_44,
-    );
-    let damped = SolverConfig {
-        contact_damping_ratio: 5.0,
-        ..PRESET
-    };
-    below(
-        name,
-        "preset with damping 5 (m/s)",
-        speed(damped)?,
         CALM_SPEED_44,
     );
     let third_pass = SolverConfig {
         relax_iterations: 3,
-        ..PRESET
+        ..ringing
     };
     below(
         name,
-        "preset with a third pass (m/s)",
+        "ratio 10 with a third pass (m/s)",
         speed(third_pass)?,
         THIRD_PASS_SPEED,
     );
@@ -545,7 +543,7 @@ fn the_contact_stiffness_and_damping_keep_the_44_row_pyramid_moving_and_either_c
         name,
         "default sub-steps at 60 Hz (m/s)",
         speed(stiff_default)?,
-        SLOWER_SETTLE_FLOOR,
+        RINGING_FLOOR,
     );
     Ok(())
 }

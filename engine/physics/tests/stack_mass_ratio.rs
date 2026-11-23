@@ -11,7 +11,9 @@
 //! a promise. The region that settles is small: the ratio a stack carries falls with its height.
 
 use base::math::{Vec2, Vec3};
-use physics::core::{MAX_RELAX_ITERATIONS, MAX_SUB_STEPS, PhysicsError, SolverConfig};
+use physics::core::{
+    DEFAULT_CONTACT_DAMPING_RATIO, MAX_RELAX_ITERATIONS, MAX_SUB_STEPS, PhysicsError, SolverConfig,
+};
 use physics::{d2, d3};
 
 const DT: f32 = 1.0 / 60.0;
@@ -359,7 +361,8 @@ fn the_default_solver_settles_at_most_one_run_in_five_of_those_cases_so_the_pres
 }
 
 /// Cases run at steps of 30 Hz, where the stiffness of the preset is capped at 60 Hz instead of
-/// 120 (card 8-57): (boxes, ratio). The preset settled all five offsets of each, in 2D and in 3D.
+/// 120 (card 8-57): (boxes, ratio). The preset settled all five offsets of each, in 2D and in 3D, until
+/// the damping ratio of 5 (card 8-68, `LOST_ONE_OFFSET`).
 const SLOW_STEP_CASES: [(u8, f32); 4] = [(8, 20.0), (5, 50.0), (5, 70.0), (3, 100.0)];
 
 /// The cases run in 3D, the slower dimension.
@@ -377,24 +380,53 @@ fn slow(solver: SolverConfig, boxes: u8, ratio: f32) -> Stack {
     }
 }
 
+/// The case the contact damping ratio of 5 of the preset (card 8-68) loses at steps of 30 Hz in 3D:
+/// five boxes under a top 70 times as dense settle in four offsets of five and one topples (with
+/// the ratio of 10 all five settle). The owner accepted this cost for a pyramid of 44 rows that
+/// no longer rings. Every other case still settles all five.
+const LOST_ONE_OFFSET: (u8, f32) = (5, 70.0);
+
+fn is_lost_case(three: bool, boxes: u8, ratio: f32) -> bool {
+    three && boxes == LOST_ONE_OFFSET.0 && ratio.to_bits() == LOST_ONE_OFFSET.1.to_bits()
+}
+
+/// Runs the preset on one slow-step case and checks how many offsets settle: four and one topple
+/// for the lost case, five otherwise.
+fn check_slow_case(three: bool, boxes: u8, ratio: f32) -> Result<(), PhysicsError> {
+    let all = seen(three, slow(SolverConfig::STIFF_CONTACTS, boxes, ratio))?;
+    let lost = is_lost_case(three, boxes, ratio);
+    let (settled, toppled) = if lost { (4, 1) } else { (5, 0) };
+    assert_eq!(
+        count(&all, Outcome::Settled),
+        settled,
+        "{boxes} boxes, ratio {ratio}, three {three}: {all:?}"
+    );
+    assert_eq!(count(&all, Outcome::Toppled), toppled, "{all:?}");
+    Ok(())
+}
+
 #[test]
-fn the_stiff_contact_preset_still_settles_tall_stacks_at_steps_of_30_hz_in_2d_and_3d()
+fn the_stiff_contact_preset_still_settles_tall_stacks_at_steps_of_30_hz_in_2d_and_3d_but_one_offset()
 -> Result<(), PhysicsError> {
-    for three in [false, true] {
-        let cases: &[(u8, f32)] = if three {
-            &SLOW_STEP_CASES_3D
-        } else {
-            &SLOW_STEP_CASES
-        };
-        for &(boxes, ratio) in cases {
-            let all = seen(three, slow(SolverConfig::STIFF_CONTACTS, boxes, ratio))?;
-            assert_eq!(
-                count(&all, Outcome::Settled),
-                5,
-                "{boxes} boxes, ratio {ratio}, three {three}: {all:?}"
-            );
-        }
+    for &(boxes, ratio) in &SLOW_STEP_CASES {
+        check_slow_case(false, boxes, ratio)?;
     }
+    for &(boxes, ratio) in &SLOW_STEP_CASES_3D {
+        check_slow_case(true, boxes, ratio)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn the_lost_offset_comes_from_the_damping_ratio_of_five_with_a_ratio_of_ten_all_five_settle()
+-> Result<(), PhysicsError> {
+    let old_ratio = SolverConfig {
+        contact_damping_ratio: DEFAULT_CONTACT_DAMPING_RATIO,
+        ..SolverConfig::STIFF_CONTACTS
+    };
+    let (boxes, ratio) = LOST_ONE_OFFSET;
+    let all = seen(true, slow(old_ratio, boxes, ratio))?;
+    assert_eq!(count(&all, Outcome::Settled), 5, "{all:?}");
     Ok(())
 }
 
