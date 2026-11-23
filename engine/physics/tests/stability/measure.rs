@@ -7,7 +7,7 @@ use super::limits::{
 };
 use super::scene::Scene;
 use base::math::Vec2;
-use physics::d2::{Joint2, PhysicsError, World};
+use physics::d2::{BodyHandle, Joint2, PhysicsError, World};
 
 /// The worst values seen over a run of a scene.
 #[derive(Default)]
@@ -92,6 +92,33 @@ pub fn deepest(world: &World) -> f32 {
         .flat_map(|entry| entry.manifold.points())
         .map(|point| -point.separation)
         .fold(0.0, f32::max)
+}
+
+/// The deepest contact of `world` among the manifolds `wanted` accepts, and the speed, in metres
+/// per second, at which the two bodies of that contact still approach along its normal after the
+/// step (zero when they separate).
+pub fn deepest_where(
+    world: &World,
+    wanted: impl Fn(BodyHandle, BodyHandle) -> bool,
+) -> Result<(f32, f32), PhysicsError> {
+    let mut found = (0.0_f32, 0.0_f32);
+    for entry in world.manifolds().as_slice() {
+        if !wanted(entry.first, entry.second) {
+            continue;
+        }
+        let depth = entry
+            .manifold
+            .points()
+            .iter()
+            .map(|point| -point.separation)
+            .fold(0.0, f32::max);
+        if depth > found.0 {
+            let (a, b) = (world.body(entry.first)?, world.body(entry.second)?);
+            let along = (b.linear_velocity() - a.linear_velocity()).dot(entry.manifold.normal);
+            found = (depth, (-along).max(0.0));
+        }
+    }
+    Ok(found)
 }
 
 pub fn dynamic_count(world: &World) -> usize {

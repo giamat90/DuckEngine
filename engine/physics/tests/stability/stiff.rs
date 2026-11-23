@@ -9,17 +9,17 @@ use super::generator::generate_with_solver;
 use super::limits::DT;
 use super::limits::{DRIFT, HINGE_ERROR, PENETRATION, REST_SPEED, W1_STEPS};
 use super::measure::{
-    above, all_finite, below, check_energy, check_resting, deepest, dynamic_count, observe,
-    positions,
+    above, all_finite, below, check_energy, check_resting, deepest, deepest_where, dynamic_count,
+    observe, positions,
 };
 use super::mixed::{MAX_BODY_SPEED, Mixed, Pin, check_resting_mixed, mixed_tuned, mixed_with};
 use super::properties::{
-    CALM_RUN_STEPS, CALM_SPEED, CALM_STEPS, MIN_CALM_CHECKS, calm_depth, seeds,
+    CALM_RUN_STEPS, CALM_SPEED, CALM_STEPS, MIN_CALM_CHECKS, WHIP_APPROACH, calm_contacts, seeds,
 };
 use super::scene::{Lie, W1_HALF, column_with, pyramid_with};
 use super::sleeping::fall_asleep;
 use physics::core::SolverConfig;
-use physics::d2::{BodyHandle, PhysicsError, SleepConfig, World};
+use physics::d2::{BodyHandle, PhysicsError, SleepConfig};
 
 const PRESET: SolverConfig = SolverConfig::STIFF_CONTACTS;
 
@@ -130,38 +130,44 @@ fn finding_the_whip_that_scatters_the_pyramid_with_the_default_hardly_moves_it_w
 /// The whip is let go level with its pin: after the run its tip is at least this far below it.
 const WHIP_SWING_DOWN: f32 = 1.0;
 
-/// The seed of the random bins whose deepest calm contact is over the bound with the preset
-/// (0.030 m against 0.02 m; 0.010 m with the default). The cause was not looked into.
+/// The seed of the random bins whose whip folds onto itself fast with the preset (card 8-59).
 const DEEP_SEED: u64 = 1147;
 
-/// The most the contact of the exception may be deep, in metres.
-const DEEP_SEED_BOUND: f32 = 0.05;
-
 #[test]
-fn no_contact_of_the_random_bins_is_deep_once_calm_with_the_stiff_preset_but_one_seed()
+fn no_contact_of_the_bodies_of_the_random_bins_is_deep_once_calm_with_the_stiff_preset()
 -> Result<(), PhysicsError> {
     for seed in seeds() {
-        let (depth, steps) = calm_depth(seed, PRESET)?;
-        assert!(steps >= MIN_CALM_CHECKS, "seed {seed}: {steps} calm steps");
-        if seed == DEEP_SEED {
-            above(
-                "random bins, seed 1147",
-                "deepest calm contact (m)",
-                depth,
-                PENETRATION,
-            );
-            below(
-                "random bins, seed 1147",
-                "deepest calm contact (m)",
-                depth,
-                DEEP_SEED_BOUND,
-            );
-        } else {
-            assert!(
-                depth < PENETRATION,
-                "seed {seed}: a contact is {depth} m deep"
-            );
-        }
+        let found = calm_contacts(seed, PRESET)?;
+        assert!(
+            found.calm_steps >= MIN_CALM_CHECKS,
+            "seed {seed}: {} calm steps",
+            found.calm_steps
+        );
+        assert!(
+            found.bin_depth < PENETRATION && found.touch_depth < PENETRATION,
+            "seed {seed}: a contact is {} m deep (bin) or {} m (whip against the rest)",
+            found.bin_depth,
+            found.touch_depth
+        );
+    }
+    Ok(())
+}
+
+/// The deepest hit of two links of the whip with the preset: 0.0296 m measured (seed 1147); the
+/// whip swings, so the bound for bodies at rest does not apply to it.
+const WHIP_HIT_DEPTH: f32 = 0.05;
+
+#[test]
+fn two_links_of_the_whip_hit_each_other_below_the_bounds_in_the_random_bins_with_the_stiff_preset()
+-> Result<(), PhysicsError> {
+    for seed in seeds() {
+        let found = calm_contacts(seed, PRESET)?;
+        assert!(
+            found.whip_depth < WHIP_HIT_DEPTH && found.whip_approach < WHIP_APPROACH,
+            "seed {seed}: the whip hit itself {} m deep at {} m/s",
+            found.whip_depth,
+            found.whip_approach
+        );
     }
     Ok(())
 }
@@ -260,33 +266,6 @@ fn finding_a_pyramid_of_44_rows_is_still_moving_at_300_steps_with_the_stiff_pres
 // Causes of the three findings above (card 8-59). Each test pins what was found, with the values
 // of both solvers, so that a change of either shows.
 
-/// The deepest contact of `world` among the manifolds `wanted` accepts, and the speed, in metres
-/// per second, at which the two bodies of that contact still approach along its normal after the
-/// step (zero when they separate).
-fn deepest_where(
-    world: &World,
-    wanted: impl Fn(BodyHandle, BodyHandle) -> bool,
-) -> Result<(f32, f32), PhysicsError> {
-    let mut found = (0.0_f32, 0.0_f32);
-    for entry in world.manifolds().as_slice() {
-        if !wanted(entry.first, entry.second) {
-            continue;
-        }
-        let depth = entry
-            .manifold
-            .points()
-            .iter()
-            .map(|point| -point.separation)
-            .fold(0.0, f32::max);
-        if depth > found.0 {
-            let (a, b) = (world.body(entry.first)?, world.body(entry.second)?);
-            let along = (b.linear_velocity() - a.linear_velocity()).dot(entry.manifold.normal);
-            found = (depth, (-along).max(0.0));
-        }
-    }
-    Ok(found)
-}
-
 /// What the random bin of `seed` shows with `solver`: the deepest contact between two links of the
 /// whip (with its approach speed) and the deepest contact among bodies that are no link, once the
 /// bin has been calm.
@@ -294,7 +273,7 @@ struct BinDepths {
     whip_depth: f32,
     whip_approach: f32,
     calm_bin_depth: f32,
-    /// The deepest contact of the whole world once calm (what the property of `properties` takes).
+    /// The deepest contact of the whole world once calm (what the property took before card 8-69, which measures the bin and the whip apart).
     calm_world_depth: f32,
 }
 
@@ -336,7 +315,7 @@ fn bin_depths(seed: u64, solver: SolverConfig) -> Result<BinDepths, PhysicsError
 /// onto each other at step 169: after the solve of that step the two links still approach at
 /// 2.2 m/s with the preset, at 1.1 m/s with the default (step 170, 0.010 m deep); the speed before
 /// the hit was not measured. The test also pins that this contact is the deepest of the whole world
-/// once calm, which is what the property takes. Among the bodies of the bin the preset is the shallower
+/// once calm, which is what the property took before card 8-69. Among the bodies of the bin the preset is the shallower
 /// (0.001 m against 0.0075 m).
 #[test]
 fn the_deep_contact_of_seed_1147_is_two_links_of_the_whip_meeting_fast_not_a_calm_contact()
