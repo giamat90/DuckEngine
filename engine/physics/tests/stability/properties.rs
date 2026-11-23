@@ -40,11 +40,11 @@ const SETTLE_STEPS: u32 = 240;
 /// body that lands at several metres per second goes deeper than the bound for a few steps, also
 /// after its speed has dropped (seed 1000: 0.027 m at step 21; seed 1014: 0.0455 m at 4.6 m/s);
 /// the bound is for bodies at rest. Defined after the first runs, with the bound unchanged.
-const CALM_SPEED: f32 = 1.0;
-const CALM_STEPS: u32 = 30;
+pub const CALM_SPEED: f32 = 1.0;
+pub const CALM_STEPS: u32 = 30;
 
 /// Steps of the penetration run (8 s): some piles take several seconds to become calm.
-const CALM_RUN_STEPS: u32 = 480;
+pub const CALM_RUN_STEPS: u32 = 480;
 
 /// The number of calm steps the property must have checked in every scene, so that it cannot pass
 /// because a scene was never calm.
