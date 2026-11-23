@@ -5,7 +5,7 @@
 use super::execution::{executions, trace};
 use super::generator::{generate, generate_with_bin, generate_with_solver};
 use super::limits::{DT, ENERGY_SLACK_PER_BODY, ENERGY_SLACK_RATIO, PENETRATION};
-use super::measure::{all_finite, deepest, dynamic_count, energy};
+use super::measure::{all_finite, deepest_where, dynamic_count, energy};
 use super::scene::{Scene, config, hinge_at};
 use base::math::Vec2;
 use base::rng::Pcg32;
@@ -122,11 +122,34 @@ fn energy_never_rises_above_its_start_by_more_than_the_slack_when_nothing_bounce
     Ok(())
 }
 
-/// The deepest contact of the scene of `seed` over the steps at which its bin has been calm, and
-/// the number of such steps.
-pub fn calm_depth(seed: u64, solver: SolverConfig) -> Result<(f32, u32), PhysicsError> {
+/// What the random bin of a seed shows over its run: the deepest contact among the bodies of the bin
+/// (the whip is left out) over the steps at which the bin has been calm and the number of such
+/// steps, and the worst hit between two links of the whip over the whole run. The whip swings all
+/// the time, so the calm test of the bin says nothing about it; its hit is held to a speed instead.
+pub struct CalmContacts {
+    pub bin_depth: f32,
+    pub calm_steps: u32,
+    /// The deepest contact between a link of the whip and a body that is no link (a body of the
+    /// bin, the floor or a wall) over the calm steps, in metres.
+    pub touch_depth: f32,
+    /// The deepest contact between two links of the whip at any step, in metres.
+    pub whip_depth: f32,
+    /// The speed at which the links of that contact still approach after the step, in metres per
+    /// second.
+    pub whip_approach: f32,
+}
+
+pub fn calm_contacts(seed: u64, solver: SolverConfig) -> Result<CalmContacts, PhysicsError> {
     let (mut scene, in_bin) = generate_with_solver(seed, SleepConfig::DISABLED, solver)?;
-    let (mut calm, mut checked, mut deepest_calm) = (0_u32, 0_u32, 0.0_f32);
+    let whip: Vec<BodyHandle> = scene.tracked.iter().skip(in_bin).copied().collect();
+    let mut found = CalmContacts {
+        bin_depth: 0.0,
+        calm_steps: 0,
+        touch_depth: 0.0,
+        whip_depth: 0.0,
+        whip_approach: 0.0,
+    };
+    let mut calm = 0_u32;
     for _ in 0..CALM_RUN_STEPS {
         scene.world.step(DT)?;
         let mut fastest = 0.0_f32;
@@ -134,31 +157,64 @@ pub fn calm_depth(seed: u64, solver: SolverConfig) -> Result<(f32, u32), Physics
             fastest = fastest.max(scene.world.body(handle)?.linear_velocity().length());
         }
         calm = if fastest < CALM_SPEED { calm + 1 } else { 0 };
+        let (depth, approach) =
+            deepest_where(&scene.world, |a, b| whip.contains(&a) && whip.contains(&b))?;
+        if depth > found.whip_depth {
+            (found.whip_depth, found.whip_approach) = (depth, approach);
+        }
+        let (bin, _) = deepest_where(&scene.world, |a, b| {
+            !whip.contains(&a) && !whip.contains(&b)
+        })?;
+        let (touch, _) =
+            deepest_where(&scene.world, |a, b| whip.contains(&a) != whip.contains(&b))?;
         if calm >= CALM_STEPS {
-            checked += 1;
-            deepest_calm = deepest_calm.max(deepest(&scene.world));
+            found.calm_steps += 1;
+            found.bin_depth = found.bin_depth.max(bin);
+            found.touch_depth = found.touch_depth.max(touch);
         }
     }
-    Ok((deepest_calm, checked))
+    Ok(found)
 }
+
+/// The fastest two links of the whip may still approach after the step in which they hit, in
+/// metres per second (3.95 measured over the 25 seeds with both solvers: seed 1063 with the preset,
+/// a shallow hit).
+pub const WHIP_APPROACH: f32 = 5.0;
 
 #[test]
 fn no_contact_is_deep_once_the_bin_has_been_calm_for_half_a_second() -> Result<(), PhysicsError> {
     let mut too_short = Vec::new();
     for seed in seeds() {
-        let (depth, steps) = calm_depth(seed, SolverConfig::DEFAULT)?;
+        let found = calm_contacts(seed, SolverConfig::DEFAULT)?;
         assert!(
-            depth < PENETRATION,
-            "seed {seed}: a contact is {depth} m deep"
+            found.bin_depth < PENETRATION && found.touch_depth < PENETRATION,
+            "seed {seed}: a contact is {} m deep (bin) or {} m (whip against the rest)",
+            found.bin_depth,
+            found.touch_depth
         );
-        if steps < MIN_CALM_CHECKS {
-            too_short.push((seed, steps));
+        if found.calm_steps < MIN_CALM_CHECKS {
+            too_short.push((seed, found.calm_steps));
         }
     }
     assert!(
         too_short.is_empty(),
         "seeds with fewer than {MIN_CALM_CHECKS} calm steps checked: {too_short:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn two_links_of_the_whip_never_hit_each_other_faster_than_the_bound_and_not_deeply_with_the_default()
+-> Result<(), PhysicsError> {
+    for seed in seeds() {
+        let found = calm_contacts(seed, SolverConfig::DEFAULT)?;
+        assert!(
+            found.whip_depth < PENETRATION && found.whip_approach < WHIP_APPROACH,
+            "seed {seed}: the whip hit itself {} m deep at {} m/s",
+            found.whip_depth,
+            found.whip_approach
+        );
+    }
     Ok(())
 }
 
