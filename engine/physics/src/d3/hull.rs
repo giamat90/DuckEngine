@@ -168,6 +168,14 @@ struct Solid {
     tolerance: f32,
 }
 
+/// The distance of the farthest of `corners` from `reference` (zero for no corner).
+fn reach_from(corners: &[Vec3], reference: Vec3) -> f32 {
+    corners
+        .iter()
+        .map(|corner| (*corner - reference).length())
+        .fold(0.0, f32::max)
+}
+
 /// Whether the points are not all on one line (within `reach`).
 fn spans_a_plane(points: &[Vec3], reach: f32) -> bool {
     let Some(first) = points.first().copied() else {
@@ -514,10 +522,7 @@ impl Solid {
         for plane in &self.planes[..self.plane_count] {
             self.add_face(plane, reference, &mut sums)?;
         }
-        let reach = self.corners[..self.count]
-            .iter()
-            .map(|c| (*c - reference).length())
-            .fold(0.0, f32::max);
+        let reach = reach_from(&self.corners[..self.count], reference);
         if !(sums.volume.is_finite() && sums.volume > 0.0 && sums.is_closed(reach)) {
             return Err(PhysicsError::InvalidShape);
         }
@@ -866,6 +871,22 @@ mod tests {
         ];
         assert!(!spans_a_plane(&line, 0.5));
         assert!(spans_a_plane(&line, 0.499));
+    }
+
+    /// Card 8-34 (a survivor of the mutation run of card 8-24): the reach is the distance of the
+    /// farthest corner from the reference point, so it changes with the reference.
+    #[test]
+    fn the_reach_is_the_distance_of_the_farthest_corner_from_the_reference_point() {
+        let corners = [Vec3::new(3.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)];
+        assert_eq!(
+            reach_from(&corners, Vec3::new(1.0, 0.0, 0.0)).to_bits(),
+            2.0_f32.to_bits()
+        );
+        assert_eq!(
+            reach_from(&corners, Vec3::ZERO).to_bits(),
+            3.0_f32.to_bits()
+        );
+        assert_eq!(reach_from(&[], Vec3::X).to_bits(), 0.0_f32.to_bits());
     }
 
     /// The matrix whose columns are the turned axes.
