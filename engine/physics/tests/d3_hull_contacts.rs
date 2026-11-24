@@ -4,7 +4,7 @@
 //! a hull cube is the same as a box cube (through another code path: `face_clip` for the hull, `box_box` for the box) in every number below, so what remains of the first two
 //! limits is the solver's, not the hull's; the switch from four points to two at a tilt of 1.5
 //! degrees is the box's too (an edge contact is two points); a prism at rest has fixed points, and
-//! a rolling prism shows steps with one point (a finding, with no visible harm).
+//! a rolling prism keeps both points of the edge it touches (card 8-71).
 
 use base::math::{Quat, Vec3};
 use physics::core::PhysicsError;
@@ -291,36 +291,39 @@ fn largest_move(before: &[Vec3], after: &[Vec3]) -> f32 {
 }
 
 /// What a prism that is let roll along x shows over 240 steps: the steps with one point and with
-/// none, the farthest it moved sideways, and its peak spin about x and y.
+/// none, its highest centre, the farthest it moved sideways, and its peak spin about x and y.
 struct Roll {
     one_point_steps: u32,
-    airborne_steps: u32,
+    no_contact_steps: u32,
+    highest: f32,
     sideways: f32,
     cross_spin: f32,
 }
 
-fn roll(sides: u8) -> Result<Roll, PhysicsError> {
+fn roll(sides: u8, speed: f32) -> Result<Roll, PhysicsError> {
     let mut w = world(STANDARD_GRAVITY)?;
     add_floor(&mut w)?;
     let prism = prism(sides)?;
     let body = add_body(&mut w, Vec3::new(0.0, HALF, 0.0), &prism, |d| {
-        d.linear_velocity = Vec3::new(2.0, 0.0, 0.0);
-        d.angular_velocity = Vec3::new(0.0, 0.0, -4.0);
+        d.linear_velocity = Vec3::new(speed, 0.0, 0.0);
+        d.angular_velocity = Vec3::new(0.0, 0.0, -2.0 * speed);
     })?;
     let mut found = Roll {
         one_point_steps: 0,
-        airborne_steps: 0,
+        no_contact_steps: 0,
+        highest: 0.0,
         sideways: 0.0,
         cross_spin: 0.0,
     };
     for _ in 0..ROLL_STEPS {
         w.step(DT)?;
         match most_points(&w) {
-            0 => found.airborne_steps += 1,
+            0 => found.no_contact_steps += 1,
             1 => found.one_point_steps += 1,
             _ => {}
         }
         let at = w.body(body)?;
+        found.highest = found.highest.max(at.position().y);
         found.sideways = found.sideways.max(at.position().z.abs());
         let spin = at.angular_velocity();
         found.cross_spin = found.cross_spin.max(spin.x.abs().max(spin.y.abs()));
@@ -330,38 +333,53 @@ fn roll(sides: u8) -> Result<Roll, PhysicsError> {
 
 const ROLL_STEPS: u32 = 240;
 
-/// A rolling prism has steps with one point where an edge (two points) is what touches: 52, 65 and
-/// 58 of 240 steps for 8, 12 and 16 sides (a quarter of them). It never leaves the floor and goes
-/// sideways by at most 5 mm over the 240 steps, so the one-point steps do no visible harm. Pinned as a
-/// finding, both sides, with a wide margin: a rolling prism is a chaotic scene (the first probe with
-/// another sine gave 27, 53 and 67).
-const ONE_POINT_STEPS: (u32, u32) = (10, 120);
+/// Speeds of the roll in m/s (the spin is twice the speed, so the prism rolls without slipping).
+/// Above about 2.2 m/s the prism hops by 3 to 4 mm, before and after card 8-71, so they are left out.
+const ROLL_SPEEDS: [f32; 4] = [1.0, 1.4, 1.8, 2.0];
 
-/// Sideways drift (5 mm measured) and the peak spin about the other axes (0.26 rad/s measured).
-const SIDEWAYS: f32 = 0.02;
+/// Card 8-71. A rolling prism had one point in a quarter of the steps where an edge (two points)
+/// touches: 52, 65 and 58 of 240 steps for 8, 12 and 16 sides at 2 m/s, 31 to 70 over the speeds
+/// below. The cause was twofold: the normal of EPA at a corner leans past the 1.8 degrees a fitted
+/// face allows, so neither shape had a face and the single point stood; and a tilted edge kept only
+/// its lower end. Now at most 9 of 240 steps were measured over these 12 scenes; the bound sits between that and
+/// the 31 of the old code, because a rolling prism is a chaotic scene.
+const ONE_POINT_STEPS: u32 = 20;
+
+/// Steps with no contact at all while the centre stays at the height of the prism: at most 1
+/// measured over these scenes, as before the change (a miss of GJK on a shallow contact, card 8-75).
+const NO_CONTACT_STEPS: u32 = 6;
+
+/// The centre never rises more than 2 mm above the radius (0.5 mm measured), sideways drift (11 mm
+/// measured) and the peak spin about the other axes (0.23 rad/s measured).
+const RISE: f32 = 0.002;
+const SIDEWAYS: f32 = 0.03;
 const CROSS_SPIN: f32 = 0.6;
 
 #[test]
-fn finding_a_rolling_prism_has_steps_with_one_contact_point_and_still_rolls_straight()
+fn a_rolling_prism_keeps_both_points_of_the_edge_it_touches_and_rolls_straight()
 -> Result<(), PhysicsError> {
     for sides in PRISM_SIDES {
-        let found = roll(sides)?;
-        assert!(
-            (ONE_POINT_STEPS.0..ONE_POINT_STEPS.1).contains(&found.one_point_steps),
-            "{sides} sides: {} steps with one point",
-            found.one_point_steps
-        );
-        assert_eq!(found.airborne_steps, 0, "{sides} sides");
-        assert!(
-            found.sideways < SIDEWAYS,
-            "{sides} sides: {} m sideways",
-            found.sideways
-        );
-        assert!(
-            found.cross_spin < CROSS_SPIN,
-            "{sides} sides: spin {}",
-            found.cross_spin
-        );
+        for speed in ROLL_SPEEDS {
+            let found = roll(sides, speed)?;
+            let scene = format!("{sides} sides at {speed} m/s");
+            assert!(
+                found.one_point_steps <= ONE_POINT_STEPS,
+                "{scene}: {} steps with one point",
+                found.one_point_steps
+            );
+            assert!(
+                found.no_contact_steps <= NO_CONTACT_STEPS,
+                "{scene}: {} steps with no contact",
+                found.no_contact_steps
+            );
+            assert!(found.highest < HALF + RISE, "{scene}: {} m", found.highest);
+            assert!(found.sideways < SIDEWAYS, "{scene}: {}", found.sideways);
+            assert!(
+                found.cross_spin < CROSS_SPIN,
+                "{scene}: {}",
+                found.cross_spin
+            );
+        }
     }
     Ok(())
 }

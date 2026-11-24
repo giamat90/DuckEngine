@@ -10,6 +10,13 @@
 //! the margin from the reference plane are dropped, more than four are cut down to the four that
 //! spread most, and when nothing is left the single point of GJK stands.
 //!
+//! Two more tries serve a contact that is no deeper than [`FACE_WINDOW`] of the reach (card 8-71):
+//! when the normal of EPA leans past [`MIN_FACE_COSINE`] from every face, the nearest face within
+//! about 45 degrees is tried ([`widened`]); and when the other shape has no face, every corner
+//! within the margin of its farthest plane is a candidate, so a slightly tilted edge keeps both
+//! ends. The first is accepted only when its deepest point and gap agree with GJK ([`agrees`]); the
+//! second only adds points to a manifold that the first rule already gave.
+//!
 //! A sphere is a point and a capsule a segment, so a capsule that lies on a face gets two points and
 //! a sphere one. Only `+ - * /` and `sqrt` are used, in a fixed order.
 
@@ -38,8 +45,17 @@ const PLANE_TOLERANCE: f32 = 1.0e-4;
 const MIN_TRIANGLE: f32 = 1.0e-8;
 /// The cosine of the largest angle between the search direction and a face that is still taken.
 const MIN_FACE_COSINE: f32 = 0.9995;
+/// The cosine of the largest angle for the second try (card 8-71), when no face is within
+/// [`MIN_FACE_COSINE`] of either shape: about 45 degrees.
+const WIDE_FACE_COSINE: f32 = 0.7;
+/// The corners nearest the search direction that the second try spans planes from.
+const WIDE_CANDIDATES: usize = 8;
+/// How far the deepest point and the gap along the normal of a face of the second try may fall short
+/// of those of GJK, as a share of the reach of the smaller shape.
+const WIDE_AGREEMENT: f32 = 1.0e-3;
 
 /// The corners of a shape's support face, in the order round the face when there are three or more.
+#[derive(Clone, Copy)]
 struct Face {
     corners: Polygon,
     /// The outward unit normal of the face when it was fitted to a plane of the shape.
@@ -91,7 +107,14 @@ fn box_corners(frame: &super::narrowphase::BoxFrame) -> [Vec3; 8] {
 
 /// The support face of `core` along `n`, unordered.
 fn support_corners(core: &Core, n: Vec3) -> Polygon {
-    let tolerance = (reach_of(core) * FACE_TOLERANCE).max(MIN_TOLERANCE);
+    support_corners_within(core, n, 0.0)
+}
+
+/// The corners of `core` within `band` (at least the face tolerance) of the farthest plane along `n`.
+fn support_corners_within(core: &Core, n: Vec3, band: f32) -> Polygon {
+    let tolerance = (reach_of(core) * FACE_TOLERANCE)
+        .max(MIN_TOLERANCE)
+        .max(band);
     let mut out = Polygon::empty();
     match *core {
         Core::Point(p) => out.push(p),
@@ -172,6 +195,15 @@ impl Solid<'_> {
     }
 }
 
+/// What a plane must satisfy to be a face of a solid: the tolerance and the reach of the solid, and
+/// the cosine of the largest angle to the search direction.
+#[derive(Clone, Copy)]
+struct Fit {
+    tolerance: f32,
+    reach: f32,
+    min_cosine: f32,
+}
+
 /// The corners no further than `window` from the farthest plane along `n` (in the shape's frame),
 /// in the order of the solid and at most [`MAX_WINDOW`] of them.
 fn window_of(solid: &Solid, n: Vec3, window: f32) -> ([Vec3; MAX_WINDOW], usize) {
@@ -194,13 +226,12 @@ fn window_of(solid: &Solid, n: Vec3, window: f32) -> ([Vec3; MAX_WINDOW], usize)
 /// The outward unit normal of the plane through `a`, `b`, `c` when it is a face plane of the solid:
 /// within [`MIN_FACE_COSINE`] of `n` (a cheap test that comes first, since most triples of a round
 /// hull fail it) and with every corner of the solid on one side of it (within the tolerance).
-/// `scale` is the tolerance and the reach of the solid.
-fn face_plane(
-    solid: &Solid,
-    (a, b, c): (Vec3, Vec3, Vec3),
-    n: Vec3,
-    (tolerance, reach): (f32, f32),
-) -> Option<Vec3> {
+fn face_plane(solid: &Solid, (a, b, c): (Vec3, Vec3, Vec3), n: Vec3, fit: Fit) -> Option<Vec3> {
+    let Fit {
+        tolerance,
+        reach,
+        min_cosine,
+    } = fit;
     let across = (b - a).cross(c - a);
     if across.length_squared() <= MIN_TRIANGLE * (reach * reach) * (reach * reach) {
         return None;
@@ -209,7 +240,7 @@ fn face_plane(
     if normal.dot(n) < 0.0 {
         normal = -normal;
     }
-    if normal.dot(n) <= MIN_FACE_COSINE {
+    if normal.dot(n) <= min_cosine {
         return None;
     }
     solid
@@ -227,12 +258,22 @@ fn fitted_face(solid: &Solid, n: Vec3) -> Option<Face> {
     let local = solid.rotation.conjugate().rotate(n);
     let reach = solid.reach();
     let (window, len) = window_of(solid, local, reach * FACE_WINDOW);
-    let tolerance = reach * PLANE_TOLERANCE;
+    let fit = Fit {
+        tolerance: reach * PLANE_TOLERANCE,
+        reach,
+        min_cosine: MIN_FACE_COSINE,
+    };
     let found = triples(len).find_map(|(i, j, k)| {
         let triple = (window[i], window[j], window[k]);
-        face_plane(solid, triple, local, (tolerance, reach)).map(|p| (p, window[i]))
+        face_plane(solid, triple, local, fit).map(|p| (p, window[i]))
     });
     let (normal, on_plane) = found?;
+    Some(face_on(solid, normal, on_plane, fit.tolerance))
+}
+
+/// The face of the solid on the plane through `on_plane` with outward `normal` (both in the solid's
+/// frame): the corners on it, in order round the face, in the world.
+fn face_on(solid: &Solid, normal: Vec3, on_plane: Vec3, tolerance: f32) -> Face {
     let mut corners = Polygon::empty();
     for v in solid.corners {
         if (*v - on_plane).dot(normal) >= -tolerance {
@@ -241,10 +282,57 @@ fn fitted_face(solid: &Solid, n: Vec3) -> Option<Face> {
     }
     let world_normal = solid.rotation.rotate(normal);
     order_round(&mut corners, world_normal);
-    Some(Face {
+    Face {
         corners,
         normal: Some(world_normal),
-    })
+    }
+}
+
+/// The [`WIDE_CANDIDATES`] corners farthest along `n` (in the shape's frame), the farthest first.
+fn nearest_corners(solid: &Solid, n: Vec3) -> ([Vec3; WIDE_CANDIDATES], usize) {
+    let mut found = [(f32::MIN, Vec3::ZERO); WIDE_CANDIDATES];
+    let mut len = 0;
+    for c in solid.corners {
+        let height = c.dot(n);
+        let at = found[..len]
+            .iter()
+            .position(|(h, _)| height > *h)
+            .unwrap_or(len);
+        if at < WIDE_CANDIDATES {
+            let end = len.min(WIDE_CANDIDATES - 1);
+            found.copy_within(at..end, at + 1);
+            found[at] = (height, *c);
+            len = (len + 1).min(WIDE_CANDIDATES);
+        }
+    }
+    (found.map(|(_, c)| c), len)
+}
+
+/// The face of a box or hull nearest to `n` within [`WIDE_FACE_COSINE`] (card 8-71): the second try
+/// when [`fitted_face`] found none, because the normal of EPA at a corner of a round hull leans
+/// further than 1.8 degrees from the face that touches. Of the planes spanned by the corners nearest
+/// `n` that bound the whole solid, the one that faces `n` most; `None` when there is none.
+fn widest_face(solid: &Solid, n: Vec3) -> Option<Face> {
+    let local = solid.rotation.conjugate().rotate(n);
+    let reach = solid.reach();
+    let (near, len) = nearest_corners(solid, local);
+    let fit = Fit {
+        tolerance: reach * PLANE_TOLERANCE,
+        reach,
+        min_cosine: WIDE_FACE_COSINE,
+    };
+    let mut best: Option<(f32, Vec3, Vec3)> = None;
+    for (i, j, k) in triples(len) {
+        let Some(normal) = face_plane(solid, (near[i], near[j], near[k]), local, fit) else {
+            continue;
+        };
+        let cosine = normal.dot(local);
+        if best.is_none_or(|(c, _, _)| cosine > c) {
+            best = Some((cosine, normal, near[i]));
+        }
+    }
+    let (_, normal, on_plane) = best?;
+    Some(face_on(solid, normal, on_plane, fit.tolerance))
 }
 
 /// Corner `k` (its three low bits are the signs of x, y, z) of a box of half sizes `half`.
@@ -281,9 +369,16 @@ fn solid_of<'a>(core: &Core<'a>, scratch: &'a mut [Vec3; 8]) -> Option<Solid<'a>
 
 /// The support face of `core` along `n`: a fitted face of a box or hull, else the corners within
 /// the tolerance of the farthest plane (a polygon, an edge or a point).
-fn support_face(core: &Core, n: Vec3) -> Face {
+fn support_face(core: &Core, n: Vec3, wide: bool) -> Face {
     let mut scratch = [Vec3::ZERO; 8];
-    if let Some(face) = solid_of(core, &mut scratch).and_then(|solid| fitted_face(&solid, n)) {
+    let fitted = solid_of(core, &mut scratch).and_then(|solid| {
+        if wide {
+            widest_face(&solid, n)
+        } else {
+            fitted_face(&solid, n)
+        }
+    });
+    if let Some(face) = fitted {
         return face;
     }
     let mut corners = support_corners(core, n);
@@ -457,12 +552,15 @@ fn contacts(
 }
 
 /// The incident face when the reference is fitted: its own fitted face, or else the corners of its
-/// shape within the tolerance of the farthest plane along `toward` (the reference's normal).
-fn incident_for(core: &Core, fitted: Face, toward: Vec3) -> Face {
+/// shape within the tolerance (at least `margin`, see below) of the farthest plane along `toward`
+/// (the reference's normal).
+fn incident_for(core: &Core, fitted: &Face, toward: Vec3, margin: f32) -> Face {
     if fitted.normal.is_some() {
-        return fitted;
+        return *fitted;
     }
-    let mut corners = support_corners(core, toward);
+    // Every corner within the margin of the farthest plane is a contact that may be kept: a tilted
+    // edge keeps both its ends (card 8-71); [`contacts`] drops what is beyond the margin.
+    let mut corners = support_corners_within(core, toward, margin);
     order_round(&mut corners, toward);
     Face {
         corners,
@@ -470,44 +568,149 @@ fn incident_for(core: &Core, fitted: Face, toward: Vec3) -> Face {
     }
 }
 
-/// The manifold of two convex shapes, at most four points, normal from the first to the second;
-/// `None` when they are further apart than `margin`.
-pub(super) fn contact(first: &Convex, second: &Convex, margin: f32) -> Option<Manifold3> {
-    let single = gjk::contact(first, second, margin)?;
-    let (a, b) = (
-        support_face(&first.core, single.normal),
-        support_face(&second.core, -single.normal),
-    );
-    let Some(which) = choose_reference(&a, &b, single.normal) else {
-        return Some(single);
-    };
-    let (reference, other, other_core) = match which {
-        Reference::First => (a, b, &second.core),
-        Reference::Second => (b, a, &first.core),
+/// What GJK and EPA said about a pair: the normal, the margin, and the band of the incident shape
+/// (how far from its farthest plane a corner may be and still be a contact point, see
+/// [`incident_for`]).
+#[derive(Clone, Copy)]
+struct Ask {
+    normal: Vec3,
+    margin: f32,
+    band: f32,
+}
+
+/// Whether a contact is shallow: no deeper than [`FACE_WINDOW`] of the reach of the smaller shape.
+/// The normal of a shallow contact is ambiguous and a face may be looked for wider; that of a deep
+/// overlap is the true way out and the answer of the first try stands.
+fn is_shallow(first: &Convex, second: &Convex, single: &Manifold3) -> bool {
+    let reach = reach_of(&first.core).min(reach_of(&second.core));
+    deepest(single) >= -reach * FACE_WINDOW
+}
+
+/// Whether `manifold` says what GJK and EPA say, to within [`WIDE_AGREEMENT`] of the reach of the
+/// smaller shape: its deepest point is as deep as theirs, and its normal separates the pair as
+/// well. A face may replace the normal of EPA only then (a ridge against a ridge has faces within
+/// 45 degrees that lose much of the gap, and a plane that is not where the shapes touch puts the
+/// points metres off).
+fn agrees(first: &Convex, second: &Convex, manifold: &Manifold3, single: &Manifold3) -> bool {
+    let slack = reach_of(&first.core).min(reach_of(&second.core)) * WIDE_AGREEMENT;
+    let gap = gjk::gap_along(first, second, manifold.normal);
+    (deepest(manifold) - deepest(single)).abs() <= slack
+        && gap >= gjk::gap_along(first, second, single.normal) - slack
+}
+
+/// The deepest separation of a manifold.
+fn deepest(manifold: &Manifold3) -> f32 {
+    manifold
+        .active()
+        .iter()
+        .map(|p| p.separation)
+        .fold(f32::MAX, f32::min)
+}
+
+/// The manifold of `reference` (the face of `which`) against the other face `other`, clipped, with
+/// `normal` the one of EPA; `None` when no point is within the margin.
+fn clip_manifold(
+    (first, second): (&Convex, &Convex),
+    which: Reference,
+    (reference, other): (&Face, &Face),
+    ask: Ask,
+) -> Option<Manifold3> {
+    let Ask {
+        normal,
+        margin,
+        band,
+    } = ask;
+    let other_core = match which {
+        Reference::First => &second.core,
+        Reference::Second => &first.core,
     };
     // The exact normal of a fitted reference replaces the one from EPA; it points from the first
     // shape to the second.
     let n = match (reference.normal, which) {
-        (Some(normal), Reference::First) => normal,
-        (Some(normal), Reference::Second) => -normal,
-        (None, _) => single.normal,
+        (Some(fitted), Reference::First) => fitted,
+        (Some(fitted), Reference::Second) => -fitted,
+        (None, _) => normal,
     };
     let toward = if which == Reference::First { -n } else { n };
     let incident = if reference.normal.is_some() {
-        incident_for(other_core, other, toward)
+        incident_for(other_core, other, toward, band)
     } else {
-        other
+        *other
     };
-    let clipped = clip_to(&Sides::of(&reference, n), &incident);
+    let clipped = clip_to(&Sides::of(reference, n), &incident);
     let radii = (first.radius, second.radius);
     let candidates = contacts(&clipped, (which, reference.first()), n, radii, margin);
     if candidates.len == 0 {
-        return Some(single);
+        return None;
     }
     if candidates.len > MAX_MANIFOLD_POINTS {
         return Some(Manifold3::new(n, &candidates.reduced(n)));
     }
     Some(Manifold3::new(n, candidates.as_slice()))
+}
+
+/// The second try when neither shape has a face within 1.8 degrees of the normal of EPA (card
+/// 8-71): the normal at a corner of a round hull leans because it is ambiguous, and the contact is
+/// that of the nearest face of either shape. Only for a contact no deeper than [`FACE_WINDOW`] of
+/// the reach of the smaller shape (the normal of a deep overlap is the true way out), and only when
+/// its normal separates the pair as well (see [`agrees`]).
+fn widened(first: &Convex, second: &Convex, single: &Manifold3, margin: f32) -> Option<Manifold3> {
+    if !is_shallow(first, second, single) {
+        return None;
+    }
+    let (a, b) = (
+        support_face(&first.core, single.normal, true),
+        support_face(&second.core, -single.normal, true),
+    );
+    let which = choose_reference(&a, &b, single.normal)?;
+    let faces = if which == Reference::First {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+    let ask = Ask {
+        normal: single.normal,
+        margin,
+        band: margin,
+    };
+    let manifold = clip_manifold((first, second), which, faces, ask)?;
+    agrees(first, second, &manifold, single).then_some(manifold)
+}
+
+/// The manifold of two convex shapes, at most four points, normal from the first to the second;
+/// `None` when they are further apart than `margin`.
+pub(super) fn contact(first: &Convex, second: &Convex, margin: f32) -> Option<Manifold3> {
+    let single = gjk::contact(first, second, margin)?;
+    let (a, b) = (
+        support_face(&first.core, single.normal, false),
+        support_face(&second.core, -single.normal, false),
+    );
+    let Some(which) = choose_reference(&a, &b, single.normal) else {
+        return Some(widened(first, second, &single, margin).unwrap_or(single));
+    };
+    let faces = if which == Reference::First {
+        (&a, &b)
+    } else {
+        (&b, &a)
+    };
+    let pair = (first, second);
+    let ask = Ask {
+        normal: single.normal,
+        margin,
+        band: margin,
+    };
+    // The answer of a fitted reference stands as it was (the corners on the farthest plane of the
+    // other shape); when that shape has no face and the contact is shallow, the corners within the
+    // margin of that plane are added (card 8-71): a tilted edge keeps both ends. The normal and the
+    // reference are the same, so only points beyond the old ones can appear.
+    let narrow = clip_manifold(pair, which, faces, Ask { band: 0.0, ..ask });
+    // Only a manifold of one point can gain: two points are an edge or a face already.
+    let lone = narrow.is_some_and(|m| m.count == 1);
+    let wider = (lone && faces.1.normal.is_none() && is_shallow(first, second, &single))
+        .then(|| clip_manifold(pair, which, faces, ask))
+        .flatten();
+    let manifold = wider.or(narrow);
+    Some(manifold.unwrap_or(single))
 }
 
 #[cfg(test)]
@@ -543,6 +746,15 @@ mod tests {
             Vec3::new(-h, 0.0, -h),
             Vec3::new(-h, 0.0, h),
         ]
+    }
+
+    /// The fit of a face of the first try: the tolerance, the reach and 1.8 degrees.
+    fn fit(tolerance: f32, reach: f32) -> Fit {
+        Fit {
+            tolerance,
+            reach,
+            min_cosine: MIN_FACE_COSINE,
+        }
     }
 
     fn unit_box_corners() -> [Vec3; 8] {
@@ -774,12 +986,12 @@ mod tests {
             Vec3::new(0.5, 0.5, -0.5),
             Vec3::new(-0.5, 0.5, -0.5),
         );
-        let normal = face_plane(&solid, top, Vec3::Y, (1e-4, solid.reach()));
+        let normal = face_plane(&solid, top, Vec3::Y, fit(1e-4, solid.reach()));
         assert!(normal.is_some_and(|n| near(n, Vec3::Y)), "{normal:?}");
         // The same corners in the other order give the other cross product: it is turned to `n`.
         let reversed = (top.2, top.1, top.0);
         assert!(
-            face_plane(&solid, reversed, Vec3::Y, (1e-4, solid.reach()))
+            face_plane(&solid, reversed, Vec3::Y, fit(1e-4, solid.reach()))
                 .is_some_and(|n| near(n, Vec3::Y))
         );
         // The plane of the bottom face seen from above has the cube on its wrong side.
@@ -788,24 +1000,24 @@ mod tests {
             Vec3::new(0.5, -0.5, -0.5),
             Vec3::new(-0.5, -0.5, -0.5),
         );
-        assert!(face_plane(&solid, bottom, Vec3::Y, (1e-4, solid.reach())).is_none());
+        assert!(face_plane(&solid, bottom, Vec3::Y, fit(1e-4, solid.reach())).is_none());
         // A plane through the middle of the cube has corners on both sides.
         let middle = (
             Vec3::new(0.5, 0.5, 0.5),
             Vec3::new(-0.5, 0.5, -0.5),
             Vec3::new(0.5, -0.5, -0.5),
         );
-        assert!(face_plane(&solid, middle, Vec3::Y, (1e-4, solid.reach())).is_none());
+        assert!(face_plane(&solid, middle, Vec3::Y, fit(1e-4, solid.reach())).is_none());
         // Corners on a line span no plane.
         let line = (Vec3::ZERO, Vec3::X, Vec3::new(2.0, 0.0, 0.0));
-        assert!(face_plane(&solid, line, Vec3::Y, (1e-4, solid.reach())).is_none());
+        assert!(face_plane(&solid, line, Vec3::Y, fit(1e-4, solid.reach())).is_none());
         // A tiny triangle spans no plane worth the name.
         let tiny = (
             Vec3::new(0.5, 0.5, 0.5),
             Vec3::new(0.5, 0.5, 0.4999),
             Vec3::new(0.4999, 0.5, 0.5),
         );
-        assert!(face_plane(&solid, tiny, Vec3::Y, (1e-4, solid.reach())).is_none());
+        assert!(face_plane(&solid, tiny, Vec3::Y, fit(1e-4, solid.reach())).is_none());
     }
 
     #[test]
@@ -818,7 +1030,7 @@ mod tests {
             Vec3::new(0.5, 0.5, -0.5),
             Vec3::new(0.5, -0.5, -0.5),
         );
-        let scale = (1.0e-4, cube().reach());
+        let scale = fit(1.0e-4, cube().reach());
         assert!(face_plane(&cube(), side, Vec3::X, scale).is_some());
         assert!(face_plane(&cube(), side, Vec3::Y, scale).is_none());
         // Just inside and just outside the angle (1.8 degrees: a lean of 0.0314).
@@ -850,7 +1062,7 @@ mod tests {
                 rotation: Quat::IDENTITY,
             };
             assert_eq!(
-                face_plane(&solid, top, Vec3::Y, (1e-4, solid.reach())).is_some(),
+                face_plane(&solid, top, Vec3::Y, fit(1e-4, solid.reach())).is_some(),
                 found,
                 "{by}"
             );
@@ -936,9 +1148,10 @@ mod tests {
         let found = support_face(
             &Core::Segment(Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)),
             Vec3::Y,
+            false,
         );
         assert!(found.normal.is_none() && found.corners.len == 2);
-        let found = support_face(&Core::Point(Vec3::X), Vec3::Y);
+        let found = support_face(&Core::Point(Vec3::X), Vec3::Y, false);
         assert!(found.normal.is_none() && found.corners.len == 1);
     }
 
@@ -1152,5 +1365,208 @@ mod tests {
             second.as_slice()[0].point,
             Vec3::new(0.0, 0.95 - 0.05, 0.0)
         ));
+    }
+
+    /// A unit cube turned about z by `degrees`, so a top-pointing search direction is tilted that far
+    /// from the face it should find.
+    fn lean(degrees: f32) -> Vec3 {
+        let angle = degrees.to_radians();
+        Vec3::new(base::dmath::sin(angle), base::dmath::cos(angle), 0.0)
+    }
+
+    #[test]
+    fn the_widest_face_is_the_face_nearest_the_direction_up_to_forty_five_degrees() {
+        // At 20 and 40 degrees no face is fitted (1.8 degrees) but the top face is the nearest.
+        for degrees in [0.0, 20.0, 40.0, -30.0] {
+            let n = lean(degrees);
+            let found = widest_face(&cube(), n);
+            assert!(
+                found.is_some_and(
+                    |f| f.normal.is_some_and(|f| near(f, Vec3::Y)) && f.corners.len == 4
+                ),
+                "no top face for {degrees} degrees"
+            );
+        }
+        assert!(fitted_face(&cube(), lean(20.0)).is_none());
+        // At 60 degrees the nearest face is the side (30 degrees away), and a corner direction is
+        // further than 45 degrees from every face.
+        let side = widest_face(&cube(), lean(60.0));
+        assert!(side.is_some_and(|f| f.normal.is_some_and(|f| near(f, Vec3::X))));
+        let corner = Vec3::new(1.0, 1.0, 1.0) * (1.0 / 3.0_f32.sqrt());
+        assert!(widest_face(&cube(), corner).is_none());
+    }
+
+    #[test]
+    fn the_widest_face_of_a_round_hull_is_a_face_not_a_cut_across_the_corners() {
+        // A 12-gon prism (radius 1, half length 1): its faces are 30 degrees apart, so the normal at
+        // a corner leans 15 degrees from both neighbours.
+        let mut corners = Vec::new();
+        for i in 0..12_u8 {
+            let angle = std::f32::consts::TAU * f32::from(i) / 12.0;
+            let rim = Vec3::new(base::dmath::cos(angle), base::dmath::sin(angle), 0.0);
+            corners.push(rim - Vec3::Z);
+            corners.push(rim + Vec3::Z);
+        }
+        let solid = Solid {
+            corners: &corners,
+            centre: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+        };
+        // The corner at 90 degrees: the direction at 91 degrees is 14 degrees off the face between
+        // the corners at 90 and 120 degrees (normal at 105), which no fitted face accepts.
+        let at = 91.0_f32.to_radians();
+        let n = Vec3::new(base::dmath::cos(at), base::dmath::sin(at), 0.0);
+        assert!(fitted_face(&solid, n).is_none());
+        let found = widest_face(&solid, n);
+        assert!(found.is_some_and(|f| f.corners.len == 4));
+    }
+
+    #[test]
+    fn the_nearest_corners_are_the_farthest_along_the_direction_and_at_most_sixteen() {
+        let (found, len) = nearest_corners(&cube(), Vec3::Y);
+        assert_eq!(len, 8);
+        assert!(found[..4].iter().all(|c| c.y > 0.0));
+        let ladder: Vec<Vec3> = (0..20_u8)
+            .map(|i| Vec3::new(f32::from(i), 0.0, 0.0))
+            .collect();
+        let solid = Solid {
+            corners: &ladder,
+            centre: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+        };
+        let (found, len) = nearest_corners(&solid, Vec3::X);
+        assert_eq!(len, WIDE_CANDIDATES);
+        // The sixteen largest x, the largest first: 19 down to 4.
+        for (rank, c) in (4_u8..20).rev().zip(found.iter()) {
+            assert!((c.x - f32::from(rank)).abs() < 1e-6, "{rank}: {}", c.x);
+        }
+    }
+
+    #[test]
+    fn a_tilted_edge_keeps_both_ends_within_the_margin_and_only_the_lower_one_beyond() {
+        // A segment 1 m long, one end 5 mm above the other along y.
+        let core = Core::Segment(Vec3::new(-0.5, 0.005, 0.0), Vec3::new(0.5, 0.0, 0.0));
+        let fitted = Face {
+            corners: Polygon::empty(),
+            normal: None,
+        };
+        let wide = incident_for(&core, &fitted, -Vec3::Y, 0.02);
+        assert_eq!(wide.corners.len, 2);
+        let fitted = Face {
+            corners: Polygon::empty(),
+            normal: None,
+        };
+        let narrow = incident_for(&core, &fitted, -Vec3::Y, 0.0);
+        assert_eq!(narrow.corners.len, 1);
+    }
+
+    /// A manifold of one point with the given normal and separation.
+    fn one_point(normal: Vec3, separation: f32) -> Manifold3 {
+        let point = ContactPoint3 {
+            point: Vec3::ZERO,
+            separation,
+        };
+        Manifold3::new(normal, &[point])
+    }
+
+    fn point_shape(at: Vec3) -> Convex<'static> {
+        Convex {
+            core: Core::Point(at),
+            radius: 0.0,
+        }
+    }
+
+    #[test]
+    fn a_face_replaces_the_normal_of_gjk_only_when_it_loses_neither_depth_nor_gap() {
+        // Two points 1 m apart along y: the gap along y is 1, along a normal leaning by 0.436 it is
+        // 0.9. The shapes have no reach, so no slack.
+        let (first, second) = (point_shape(Vec3::ZERO), point_shape(Vec3::Y));
+        let single = one_point(Vec3::Y, 1.0);
+        assert!(agrees(&first, &second, &one_point(Vec3::Y, 1.0), &single));
+        // The same normal with a deepest point that is not where GJK put it.
+        assert!(!agrees(&first, &second, &one_point(Vec3::Y, 0.5), &single));
+        // The right depth with a normal that separates the pair less.
+        let leaning = Vec3::new(0.436, 0.9, 0.0);
+        let leaning = leaning * (1.0 / leaning.length());
+        assert!(!agrees(&first, &second, &one_point(leaning, 1.0), &single));
+    }
+
+    #[test]
+    fn a_contact_is_shallow_up_to_the_window_share_of_the_smaller_reach() {
+        // A box of half sizes (0.5, 0.5, 0.5) has a reach of 0.87: a window of 0.043 m.
+        let frame = BoxFrame {
+            centre: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            half: Vec3::new(0.5, 0.5, 0.5),
+        };
+        let boxed = Convex {
+            core: Core::Box(frame),
+            radius: 0.0,
+        };
+        let other = Convex {
+            core: Core::Box(frame),
+            radius: 0.0,
+        };
+        assert!(is_shallow(&boxed, &other, &one_point(Vec3::Y, -0.04)));
+        assert!(!is_shallow(&boxed, &other, &one_point(Vec3::Y, -0.05)));
+        assert!(is_shallow(&boxed, &other, &one_point(Vec3::Y, 0.3)));
+    }
+
+    /// A floor box (top at y = 0) and an octagonal prism along z (radius 0.5, half length 0.5)
+    /// with a corner edge down, tilted about x so that the two ends of that edge are `rise` apart,
+    /// the lower end `sunk` below the floor.
+    fn prism_on_the_floor(rise: f32, sunk: f32) -> Option<Manifold3> {
+        let ring = |i: u8| {
+            let angle = std::f32::consts::TAU * (f32::from(i) + 0.5) / 8.0;
+            Vec3::new(
+                0.5 * base::dmath::cos(angle),
+                0.5 * base::dmath::sin(angle),
+                0.0,
+            )
+        };
+        let mut corners = Vec::new();
+        for i in 0..8 {
+            corners.push(ring(i) - Vec3::Z * 0.5);
+            corners.push(ring(i) + Vec3::Z * 0.5);
+        }
+        let floor = Convex {
+            core: Core::Box(BoxFrame {
+                centre: Vec3::new(0.0, -5.0, 0.0),
+                rotation: Quat::IDENTITY,
+                half: Vec3::new(50.0, 5.0, 50.0),
+            }),
+            radius: 0.0,
+        };
+        // Corners at 22.5 degrees + k 45: the lowest edge (at 247.5 and 292.5 degrees) is a flat
+        // face; turn by 22.5 degrees about z so a corner edge points down.
+        let down =
+            Quat::from_axis_angle(Vec3::Z, std::f32::consts::FRAC_PI_8).unwrap_or(Quat::IDENTITY);
+        let tilt = Quat::from_axis_angle(Vec3::X, base::dmath::sin(rise)).unwrap_or(Quat::IDENTITY);
+        let rotation = tilt * down;
+        let lowest = corners
+            .iter()
+            .map(|c| rotation.rotate(*c).y)
+            .fold(f32::MAX, f32::min);
+        let prism = Convex {
+            core: Core::Hull {
+                vertices: &corners,
+                centre: Vec3::new(0.0, -lowest - sunk, 0.0),
+                rotation,
+            },
+            radius: 0.0,
+        };
+        contact(&floor, &prism, 0.02)
+    }
+
+    #[test]
+    fn a_prism_with_an_edge_down_keeps_both_ends_of_the_edge_when_it_is_tilted_a_little() {
+        // Level, and with the ends 0.2 mm, 5 mm and 15 mm apart (inside the margin): two points.
+        for rise in [0.0, 0.0002, 0.005, 0.015] {
+            let found = prism_on_the_floor(rise, 0.001);
+            assert!(
+                found.is_some_and(|m| m.count == 2),
+                "rise {rise}: {found:?}"
+            );
+        }
     }
 }
