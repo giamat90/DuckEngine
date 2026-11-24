@@ -4,7 +4,7 @@
 format = 1
 feature = "cross-platform-determinism"
 toolchain = "1.94.1"
-recorded = "2026-11-24, Windows x86-64; identical on Linux x86-64 (hosted run 45425319779)"
+recorded = "2026-11-24, Windows x86-64; Linux x86-64 confirmed at step 10 only (hosted run 45425319779), the rest to be compared by the next ci run"
 recorder = "cargo test -p physics --features cross-platform-determinism --test golden3d -- print_the_golden_lines --nocapture --test-threads=1"
 
 [[scene]]
