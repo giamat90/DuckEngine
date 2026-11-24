@@ -14,7 +14,7 @@ use super::execution::SolverExecution;
 use super::hash::{HashBits, StateHasher};
 use super::islands::Islands;
 use super::joint::{JointDesc, JointEntry, JointHandle, JointTable};
-use super::manifolds::{ContactManifold, ManifoldList};
+use super::manifolds::{ContactManifold, ManifoldList, Overlap};
 use super::pairs::{Pair, PairList};
 use super::sleep::SleepConfig;
 use super::solver::{ContactSolver, SolverConfig, SolverStats, StepFrame};
@@ -487,6 +487,33 @@ impl<D: Dim> World<D> {
     #[must_use]
     pub fn manifolds(&self) -> &ManifoldList<D> {
         &self.manifolds
+    }
+
+    /// The deepest overlap among the manifolds of the last step (card 8-53), or `None` when no
+    /// shapes overlap (a speculative contact that does not touch yet is not an overlap). A stack
+    /// that a heavy body squashes shows here before it topples, and no speed bound sees it. It is
+    /// found when asked, by one pass over [`World::manifolds`]: a step stores and costs nothing
+    /// for it, and a call allocates nothing. The first of equal depths in manifold order wins. It
+    /// reads the manifolds as they are, so before the first step it is `None`. Creating or
+    /// destroying a body does not remake them until the next [`World::step`] or
+    /// [`World::collide`], so until then the report can name a body destroyed since (its handle
+    /// is stale), and a step refused as an error after such a change has already remade them;
+    /// otherwise a refused step leaves the report as it was.
+    #[must_use]
+    pub fn deepest_overlap(&self) -> Option<Overlap<D>> {
+        self.manifolds
+            .as_slice()
+            .iter()
+            .map(|entry| Overlap {
+                first: entry.first,
+                second: entry.second,
+                depth: D::overlap_depth(&entry.manifold),
+            })
+            .filter(|overlap| overlap.depth > 0.0)
+            .fold(None, |best: Option<Overlap<D>>, overlap| match best {
+                Some(found) if found.depth >= overlap.depth => Some(found),
+                _ => Some(overlap),
+            })
     }
 
     /// The box the broadphase holds for a body: its tight box grown by the margin when the box was
