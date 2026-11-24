@@ -1,6 +1,7 @@
 //! Card 8-49: which bodies crossed the bound in a refused step. `PhysicsError::Diverged` names no
 //! body, and in the refused chain of card 8-48 destroying the fast first body did not cure it;
-//! `World::diverged_bodies` names the bodies whose speed passed the bound, in slot order.
+//! `World::diverged_bodies` names the bodies whose speed passed the bound, in slot order. Card
+//! 8-38: it names the bodies of a step refused as `NotFinite` too.
 
 use base::math::{Vec2, Vec3};
 use physics::core::PhysicsError;
@@ -259,10 +260,12 @@ fn the_names_are_cleared_by_the_next_step_and_kept_by_a_call_that_is_not_a_step(
 }
 
 #[test]
-fn a_value_that_overflows_names_no_body_because_it_is_not_a_speed_past_the_bound()
+fn a_value_that_overflows_names_its_body_though_it_is_not_a_speed_past_the_bound()
 -> Result<(), PhysicsError> {
+    // Card 8-38 (owner's choice): a step refused as `NotFinite` names the bodies whose new state
+    // is not finite or cannot be held, like `Diverged` does; before it named nobody.
     let mut world = world2()?;
-    world.create_body(&d2::BodyDesc {
+    let body = world.create_body(&d2::BodyDesc {
         linear_velocity: Vec2::new(d2::MAX_GIVEN_SPEED, 0.0),
         ..d2::BodyDesc::new(
             d2::BodyKind::Dynamic,
@@ -271,6 +274,110 @@ fn a_value_that_overflows_names_no_body_because_it_is_not_a_speed_past_the_bound
         )
     })?;
     assert_eq!(world.step(1.0e35), Err(PhysicsError::NotFinite));
+    assert_eq!(world.diverged_bodies(), &[body]);
+    Ok(())
+}
+
+/// A light ball (about 3e-7 kg in 2D, 4e-9 kg in 3D) between two ordinary ones, far apart: a force
+/// of `f32::MAX` on it is a finite number that `apply_force` accepts, and overflows in the step.
+fn light_middle2() -> Result<(d2::World, Vec<d2::BodyHandle>), PhysicsError> {
+    let mut world = world2()?;
+    let mut handles = Vec::new();
+    for (index, (radius, density)) in [(0.5, 1.0), (0.01, 0.001), (0.5, 1.0)]
+        .into_iter()
+        .enumerate()
+    {
+        handles.push(world.create_body(&d2::BodyDesc {
+            density,
+            ..d2::BodyDesc::new(
+                d2::BodyKind::Dynamic,
+                Vec2::new(10.0 * f32::from(u8::try_from(index).unwrap_or(0)), 0.0),
+                d2::Shape2::Circle { radius },
+            )
+        })?);
+    }
+    Ok((world, handles))
+}
+
+fn light_middle3() -> Result<(d3::World, Vec<d3::BodyHandle>), PhysicsError> {
+    let mut world = world3()?;
+    let mut handles = Vec::new();
+    for (index, (radius, density)) in [(0.5, 1.0), (0.01, 0.001), (0.5, 1.0)]
+        .into_iter()
+        .enumerate()
+    {
+        handles.push(world.create_body(&d3::BodyDesc {
+            density,
+            ..d3::BodyDesc::new(
+                d3::BodyKind::Dynamic,
+                Vec3::new(10.0 * f32::from(u8::try_from(index).unwrap_or(0)), 0.0, 0.0),
+                d3::Shape3::Sphere { radius },
+            )
+        })?);
+    }
+    Ok((world, handles))
+}
+
+#[test]
+fn a_huge_force_names_the_body_it_was_applied_to() -> Result<(), PhysicsError> {
+    let (mut world, handles) = light_middle2()?;
+    world.apply_force(handles[1], Vec2::new(f32::MAX, 0.0))?;
+    assert_eq!(world.step(DT), Err(PhysicsError::NotFinite));
+    assert_eq!(world.diverged_bodies(), &[handles[1]]);
+    let (mut world, handles) = light_middle3()?;
+    world.apply_force(handles[1], Vec3::new(f32::MAX, 0.0, 0.0))?;
+    assert_eq!(world.step(DT), Err(PhysicsError::NotFinite));
+    assert_eq!(world.diverged_bodies(), &[handles[1]]);
+    Ok(())
+}
+
+#[test]
+fn a_huge_torque_names_the_body_it_was_applied_to() -> Result<(), PhysicsError> {
+    let (mut world, handles) = light_middle2()?;
+    world.apply_torque(handles[1], f32::MAX)?;
+    assert_eq!(world.step(DT), Err(PhysicsError::NotFinite));
+    assert_eq!(world.diverged_bodies(), &[handles[1]]);
+    let (mut world, handles) = light_middle3()?;
+    world.apply_torque(handles[1], Vec3::new(0.0, 0.0, f32::MAX))?;
+    assert_eq!(world.step(DT), Err(PhysicsError::NotFinite));
+    assert_eq!(world.diverged_bodies(), &[handles[1]]);
+    Ok(())
+}
+
+#[test]
+fn the_world_steps_again_once_the_body_named_for_a_huge_force_is_destroyed()
+-> Result<(), PhysicsError> {
+    let (mut world, handles) = light_middle2()?;
+    world.apply_force(handles[1], Vec2::new(f32::MAX, 0.0))?;
+    assert_eq!(world.step(DT), Err(PhysicsError::NotFinite));
+    for handle in world.diverged_bodies().to_vec() {
+        world.destroy_body(handle)?;
+    }
+    assert_eq!(world.step(DT), Ok(()));
+    assert!(world.diverged_bodies().is_empty());
+    let (mut world, handles) = light_middle3()?;
+    world.apply_force(handles[1], Vec3::new(f32::MAX, 0.0, 0.0))?;
+    assert_eq!(world.step(DT), Err(PhysicsError::NotFinite));
+    for handle in world.diverged_bodies().to_vec() {
+        world.destroy_body(handle)?;
+    }
+    assert_eq!(world.step(DT), Ok(()));
+    assert!(world.diverged_bodies().is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_good_step_after_a_refusal_for_a_huge_force_names_nobody() -> Result<(), PhysicsError> {
+    // The refused step dropped every force, so the next one is an ordinary step.
+    let (mut world, handles) = light_middle2()?;
+    world.apply_force(handles[1], Vec2::new(f32::MAX, 0.0))?;
+    assert_eq!(world.step(DT), Err(PhysicsError::NotFinite));
+    assert_eq!(world.step(DT), Ok(()));
+    assert!(world.diverged_bodies().is_empty());
+    let (mut world, handles) = light_middle3()?;
+    world.apply_force(handles[1], Vec3::new(f32::MAX, 0.0, 0.0))?;
+    assert_eq!(world.step(DT), Err(PhysicsError::NotFinite));
+    assert_eq!(world.step(DT), Ok(()));
     assert!(world.diverged_bodies().is_empty());
     Ok(())
 }

@@ -15,7 +15,9 @@ pub enum PhysicsError {
     },
     /// The handle names a body that was destroyed, or one that never existed in this world.
     StaleHandle,
-    /// A number that must be finite (NaN or infinity was given).
+    /// A number that must be finite (NaN or infinity was given), or a step whose result overflows
+    /// (for example a huge force on a light body); the bodies that did are
+    /// [`World::diverged_bodies`](crate::core::World::diverged_bodies) (card 8-38).
     NotFinite,
     /// A shape, density or damping outside its range (size or density not above zero, damping
     /// below zero), or one whose mass properties are not representable as `f32`.
