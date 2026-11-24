@@ -82,7 +82,7 @@ fn segment_support(start: Vec3, end: Vec3, direction: Vec3) -> Vec3 {
 
 impl Core<'_> {
     /// The point of the core farthest along `direction`.
-    fn support(&self, direction: Vec3) -> Vec3 {
+    pub(super) fn support(&self, direction: Vec3) -> Vec3 {
         match *self {
             Self::Point(point) => point,
             Self::Segment(start, end) => segment_support(start, end, direction),
@@ -106,6 +106,15 @@ impl Core<'_> {
             Self::Hull { centre, .. } => centre,
         }
     }
+}
+
+/// How far apart the two shapes are along the unit `direction` (first to second): the gap of their
+/// supports, less the radii. Negative when they overlap along it; the largest value over all
+/// directions is their distance.
+pub(super) fn gap_along(first: &Convex, second: &Convex, direction: Vec3) -> f32 {
+    let on_first = first.core.support(direction);
+    let on_second = second.core.support(-direction);
+    (on_second - on_first).dot(direction) - first.radius - second.radius
 }
 
 /// A point of the difference of the two cores, with the points of the cores it came from.
@@ -837,5 +846,32 @@ mod tests {
             (over.face_count, over.vertex_count),
             (MAX_POLYTOPE_FACES - 2 * seen + 1, 4)
         );
+    }
+
+    #[test]
+    fn the_gap_along_a_direction_is_the_gap_of_the_supports_less_the_radii() {
+        let first = Convex {
+            core: Core::Point(Vec3::ZERO),
+            radius: 0.1,
+        };
+        let second = Convex {
+            core: Core::Point(Vec3::new(1.0, 0.0, 0.0)),
+            radius: 0.2,
+        };
+        assert!((gap_along(&first, &second, Vec3::X) - 0.7).abs() < 1e-6);
+        assert!((gap_along(&first, &second, -Vec3::X) + 1.3).abs() < 1e-6);
+        // Across the line between them the supports are level: only the radii remain.
+        assert!((gap_along(&first, &second, Vec3::Y) + 0.3).abs() < 1e-6);
+        // A box is as wide as its farthest corner along the direction.
+        let frame = BoxFrame {
+            centre: Vec3::new(3.0, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            half: Vec3::new(1.0, 1.0, 1.0),
+        };
+        let boxed = Convex {
+            core: Core::Box(frame),
+            radius: 0.0,
+        };
+        assert!((gap_along(&first, &boxed, Vec3::X) - 1.9).abs() < 1e-6);
     }
 }
