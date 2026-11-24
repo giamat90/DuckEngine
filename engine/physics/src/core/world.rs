@@ -94,6 +94,8 @@ pub struct World<D: Dim> {
     joints: JointTable<D>,
     speculative_margin: f32,
     solver: D::Solver,
+    /// Whether bodies keep their angular momentum ([`SolverConfig::gyroscopic`], card 8-26).
+    gyroscopic: bool,
     sleep: SleepConfig,
     /// What a step does with a speed beyond the bounds (card 8-50); refuse by default.
     speed_policy: SpeedPolicy,
@@ -240,6 +242,7 @@ impl<D: Dim> World<D> {
             joints,
             speculative_margin: config.speculative_margin,
             solver,
+            gyroscopic: config.solver.gyroscopic,
             sleep: config.sleep,
             speed_policy: SpeedPolicy::Refuse,
             clamped: 0,
@@ -761,6 +764,7 @@ impl<D: Dim> World<D> {
         let frame = StepFrame {
             gravity: self.gravity,
             dt,
+            gyroscopic: self.gyroscopic,
         };
         self.solver.solve(
             &mut self.scratch,

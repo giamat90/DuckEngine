@@ -6,10 +6,12 @@
 //! capsules, boxes and convex hulls, the debug-draw port and the contact solver ([`Solver3`], card
 //! 8-6: soft step, friction, warm start, restitution, sleeping; serial; the parallel solve is card 8-19)
 //! and the joints ([`Joint3`], card 8-7: ball-and-socket, hinge with limits, distance) are complete.
-//! Gyroscopic torque is not modelled (the integrator is semi-implicit
-//! Euler on the angular velocity). Known limitation: with no gyroscopic term a torque-free body keeps
-//! its angular velocity, which is not physical for a body whose principal moments differ (angular
-//! momentum should be what is kept). 2D has no such term to miss.
+//! The gyroscopic term is opt-in (card 8-26, [`SolverConfig::gyroscopic`], off by default). With it
+//! off the integrator is semi-implicit Euler on the angular velocity: a torque-free body keeps its
+//! angular velocity, which is not physical for a body whose principal moments differ (angular
+//! momentum should be what is kept). With it on, each step (each sub-step of a body a constraint
+//! touches) takes one implicit Newton step of Euler's equation in the body frame, so a box spun
+//! about its middle axis tumbles. 2D has no such term.
 
 mod aabb;
 mod box_box;
@@ -17,6 +19,7 @@ mod clip;
 mod debug_draw;
 mod face_clip;
 mod gjk;
+mod gyroscopic;
 mod hull;
 mod joint;
 mod manifold;
@@ -139,6 +142,10 @@ impl Dim for D3 {
         )
         .normalized()
         .unwrap_or(rot)
+    }
+
+    fn gyroscopic_spin(rot: Quat, inv_inertia: Vec3, spin: Vec3, dt: f32) -> Vec3 {
+        gyroscopic::gyroscopic_spin(rot, inv_inertia, spin, dt)
     }
 
     fn shape_bounds(shape: &Shape3, position: Vec3, rot: Quat) -> Aabb3 {

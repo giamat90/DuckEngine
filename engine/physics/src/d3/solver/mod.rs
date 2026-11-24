@@ -223,6 +223,7 @@ impl ContactSolver<D3> for Solver3 {
         let terms = StepTerms {
             gravity: frame.gravity,
             h,
+            gyroscopic: frame.gyroscopic,
         };
         self.prepare(bodies, contacts, joints, terms);
         self.colouring.assign();
@@ -563,7 +564,7 @@ impl Solver3 {
                     angular_velocity: solved.spin,
                 });
             }
-            _ => body.integrate(frame.gravity, frame.dt),
+            _ => body.integrate(frame.gravity, frame.dt, frame.gyroscopic),
         }
     }
 }
@@ -708,6 +709,7 @@ mod tests {
         let frame = StepFrame {
             gravity: Vec3::new(0.0, -9.8, 0.0),
             dt: 1.0 / 60.0,
+            gyroscopic: false,
         };
         solver_with_a_solved_body().write_back(0, &mut slot, &frame);
         slot
@@ -786,6 +788,7 @@ mod tests {
         let terms = StepTerms {
             gravity: Vec3::ZERO,
             h: H,
+            gyroscopic: false,
         };
         let (soft, stiff) = solver.softness(H);
         solver.prepare(&bodies, with_floor.manifolds().as_slice(), &[], terms);
