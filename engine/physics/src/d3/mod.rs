@@ -26,6 +26,7 @@ mod manifold;
 mod narrowphase;
 mod shape;
 mod solver;
+mod wide;
 
 use crate::core::{Dim, HashBits, MassProperties, Placed, Quantity, StateHasher};
 use base::math::{Quat, Vec3};
