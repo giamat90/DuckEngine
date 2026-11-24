@@ -63,6 +63,8 @@ pub type PairList = crate::core::PairList<D3>;
 pub type Placed3 = Placed<D3>;
 /// A 3D contact manifold with the two bodies it joins.
 pub type ContactManifold = crate::core::ContactManifold<D3>;
+/// The deepest overlap of the last step.
+pub type Overlap = crate::core::Overlap<D3>;
 /// The manifolds of a step.
 pub type ManifoldList = crate::core::ManifoldList<D3>;
 /// A handle to a 3D body.
@@ -146,6 +148,13 @@ impl Dim for D3 {
 
     fn gyroscopic_spin(rot: Quat, inv_inertia: Vec3, spin: Vec3, dt: f32) -> Vec3 {
         gyroscopic::gyroscopic_spin(rot, inv_inertia, spin, dt)
+    }
+
+    fn overlap_depth(manifold: &Manifold3) -> f32 {
+        manifold
+            .active()
+            .iter()
+            .fold(0.0, |deepest, point| deepest.max(-point.separation))
     }
 
     fn shape_bounds(shape: &Shape3, position: Vec3, rot: Quat) -> Aabb3 {

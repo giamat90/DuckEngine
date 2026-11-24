@@ -49,6 +49,8 @@ pub type PairList = crate::core::PairList<D2>;
 pub type Placed2 = Placed<D2>;
 /// The manifold of one pair of a 2D world.
 pub type ContactManifold = crate::core::ContactManifold<D2>;
+/// The deepest overlap of the last step.
+pub type Overlap = crate::core::Overlap<D2>;
 /// The manifolds of a 2D world, in the order of the pair list.
 pub type ManifoldList = crate::core::ManifoldList<D2>;
 /// Names one body of a 2D world.
@@ -84,6 +86,13 @@ impl Dim for D2 {
 
     fn advance_rotation(rot: Rot2, angular_velocity: f32, dt: f32) -> Rot2 {
         rot.advanced(angular_velocity * dt)
+    }
+
+    fn overlap_depth(manifold: &Manifold2) -> f32 {
+        manifold
+            .points()
+            .iter()
+            .fold(0.0, |deepest, point| deepest.max(-point.separation))
     }
 
     fn shape_bounds(shape: &Shape2, position: Vec2, rot: Rot2) -> Aabb2 {

@@ -44,6 +44,41 @@ impl<D: Dim> std::fmt::Debug for ContactManifold<D> {
     }
 }
 
+/// The deepest overlap of the last step: the two bodies of the contact (in the order of its
+/// manifold) and how far their shapes overlap, in metres, above zero (card 8-53).
+pub struct Overlap<D: Dim> {
+    /// The body the contact normal points away from.
+    pub first: BodyHandle<D>,
+    /// The body the contact normal points to.
+    pub second: BodyHandle<D>,
+    /// The depth in metres.
+    pub depth: f32,
+}
+
+impl<D: Dim> Clone for Overlap<D> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<D: Dim> Copy for Overlap<D> {}
+
+impl<D: Dim> PartialEq for Overlap<D> {
+    fn eq(&self, other: &Self) -> bool {
+        self.first == other.first && self.second == other.second && self.depth == other.depth
+    }
+}
+
+impl<D: Dim> std::fmt::Debug for Overlap<D> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Overlap")
+            .field("first", &self.first)
+            .field("second", &self.second)
+            .field("depth", &self.depth)
+            .finish()
+    }
+}
+
 /// The manifolds of one step, in the order of the pair list, in a buffer that never grows.
 pub struct ManifoldList<D: Dim> {
     entries: Vec<ContactManifold<D>>,

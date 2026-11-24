@@ -178,6 +178,10 @@ pub trait Dim: Sized {
     /// orientation (normalised) without calling `sin`, `cos` or `atan2`.
     fn advance_rotation(rot: Self::Rot, angular_velocity: Self::Ang, dt: f32) -> Self::Rot;
 
+    /// How deep the shapes of `manifold` overlap at its deepest point, in metres; zero when no
+    /// point overlaps (a separation of zero or more, which a speculative contact has).
+    fn overlap_depth(manifold: &Self::Manifold) -> f32;
+
     /// The tightest axis-aligned box around `shape` placed at `position` with orientation `rot`.
     /// Not valid (see [`Bounds::is_valid`]) when an input is not finite or a coordinate overflows.
     fn shape_bounds(shape: &Self::Shape, position: Self::Vec, rot: Self::Rot) -> Self::Bounds;

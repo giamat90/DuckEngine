@@ -109,6 +109,10 @@ impl Dim for Planar3 {
         rot + angular_velocity * dt
     }
 
+    fn overlap_depth(manifold: &Depth) -> f32 {
+        (-manifold.0).max(0.0)
+    }
+
     fn shape_bounds(shape: &Sphere, position: Vec3, _rot: f32) -> Box3 {
         let r = shape.radius + shape.reach;
         Box3 {

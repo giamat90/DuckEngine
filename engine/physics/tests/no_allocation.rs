@@ -434,3 +434,25 @@ fn a_not_finite_step_and_the_names_it_leaves_allocate_nothing() -> Result<(), Ph
     assert_eq!(counts.calls(), 0, "{counts:?}");
     Ok(())
 }
+
+/// Card 8-53: the deepest overlap is found by a pass over the manifolds and returned by value, so
+/// asking for it allocates nothing.
+#[test]
+fn asking_for_the_deepest_overlap_allocates_nothing() -> Result<(), PhysicsError> {
+    let mut world = World::new(WorldConfig {
+        gravity: Vec2::ZERO,
+        ..config()
+    })?;
+    for x in [0.0, 0.9] {
+        world.create_body(&BodyDesc::new(
+            BodyKind::Dynamic,
+            Vec2::new(x, 0.0),
+            Shape2::Circle { radius: 0.5 },
+        ))?;
+    }
+    world.step(1.0e-6)?;
+    let (found, counts) = count_allocations(|| world.deepest_overlap());
+    assert!(found.is_some());
+    assert_eq!(counts.calls(), 0, "{counts:?}");
+    Ok(())
+}

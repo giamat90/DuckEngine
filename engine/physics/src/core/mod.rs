@@ -35,7 +35,7 @@ pub use error::PhysicsError;
 pub use execution::{DEFAULT_CHUNK, SolverExecution};
 pub use hash::{HashBits, StateHasher};
 pub use joint::{JointDesc, JointEntry, JointHandle, JointShape, JointTag, MAX_JOINTS, NoJoint};
-pub use manifolds::{ContactManifold, ManifoldList};
+pub use manifolds::{ContactManifold, ManifoldList, Overlap};
 pub use pairs::{Pair, PairList};
 pub use sleep::{
     DEFAULT_SLEEP_ANGULAR_SPEED, DEFAULT_SLEEP_LINEAR_SPEED, DEFAULT_TIME_TO_SLEEP, SleepConfig,
