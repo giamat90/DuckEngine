@@ -13,6 +13,8 @@ pub(super) struct StepTerms {
     pub gravity: Vec3,
     /// Length of a sub-step.
     pub h: f32,
+    /// Whether a body keeps its angular momentum (card 8-26).
+    pub gyroscopic: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -28,6 +30,10 @@ pub(super) struct SolverBody {
     pub inv_inertia: Mat3,
     accel: Vec3,
     spin_accel: Vec3,
+    /// The orientation at the start of the step and the inverse principal moments, for the
+    /// gyroscopic term; the moments are zero when the term is off, which leaves the spin alone.
+    start: Quat,
+    principal: Vec3,
     linear_factor: f32,
     angular_factor: f32,
 }
@@ -43,6 +49,8 @@ impl SolverBody {
             inv_inertia: Mat3::from_scale(Vec3::ZERO),
             accel: Vec3::ZERO,
             spin_accel: Vec3::ZERO,
+            start: Quat::IDENTITY,
+            principal: Vec3::ZERO,
             linear_factor: 1.0,
             angular_factor: 1.0,
         }
@@ -60,6 +68,12 @@ impl SolverBody {
             inv_inertia,
             accel: terms.gravity + body.force() * inv_mass,
             spin_accel: D3::apply_inverse_inertia(rotation, body.inverse_inertia(), body.torque()),
+            start: rotation,
+            principal: if terms.gyroscopic {
+                body.inverse_inertia()
+            } else {
+                Vec3::ZERO
+            },
             linear_factor: damping_factor(body.linear_damping(), terms.h),
             angular_factor: damping_factor(body.angular_damping(), terms.h),
             ..Self::at_rest()
@@ -69,7 +83,11 @@ impl SolverBody {
     /// Gravity, forces and damping over `h` seconds (semi-implicit Euler, as `Body::integrate`).
     pub(super) fn integrate_velocity(&mut self, h: f32) {
         self.velocity = (self.velocity + self.accel * h) * self.linear_factor;
-        self.spin = (self.spin + self.spin_accel * h) * self.angular_factor;
+        let mut spin = self.spin + self.spin_accel * h;
+        if self.principal != Vec3::ZERO {
+            spin = D3::gyroscopic_spin(self.turn * self.start, self.principal, spin, h);
+        }
+        self.spin = spin * self.angular_factor;
     }
 
     /// Moves the body by its velocities over `h` seconds.
@@ -210,6 +228,7 @@ mod tests {
             StepTerms {
                 gravity: Vec3::new(0.0, -10.0, 0.0),
                 h: 0.01,
+                gyroscopic: false,
             },
         );
         let local = body.inverse_inertia();

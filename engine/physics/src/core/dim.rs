@@ -162,6 +162,18 @@ pub trait Dim: Sized {
         torque: Self::Ang,
     ) -> Self::Ang;
 
+    /// The angular velocity after `dt` seconds of the gyroscopic term, for a body at orientation
+    /// `rot` with inverse principal inertia `inv_inertia` and angular velocity `spin` (card 8-26).
+    /// The default is `spin`: a dimension with no such term (2D has one axis) keeps it.
+    fn gyroscopic_spin(
+        _rot: Self::Rot,
+        _inv_inertia: Self::InvInertia,
+        spin: Self::Ang,
+        _dt: f32,
+    ) -> Self::Ang {
+        spin
+    }
+
     /// The orientation after turning with `angular_velocity` for `dt` seconds. Must return a valid
     /// orientation (normalised) without calling `sin`, `cos` or `atan2`.
     fn advance_rotation(rot: Self::Rot, angular_velocity: Self::Ang, dt: f32) -> Self::Rot;

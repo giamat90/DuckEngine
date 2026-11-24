@@ -446,7 +446,7 @@ impl<D: Dim> Body<D> {
 
     /// One semi-implicit Euler step of length `dt` under `gravity`; clears the force and the torque.
     /// A static body and a sleeping body stay where they are.
-    pub(crate) fn integrate(&mut self, gravity: D::Vec, dt: f32) {
+    pub(crate) fn integrate(&mut self, gravity: D::Vec, dt: f32, gyroscopic: bool) {
         if self.kind == BodyKind::Static || self.asleep {
             return;
         }
@@ -458,8 +458,11 @@ impl<D: Dim> Body<D> {
 
         let angular_acceleration =
             D::apply_inverse_inertia(self.rotation, self.inv_inertia, self.torque);
-        let spin = (self.angular_velocity + angular_acceleration * dt)
-            * damping_factor(self.angular_damping, dt);
+        let mut spin = self.angular_velocity + angular_acceleration * dt;
+        if gyroscopic {
+            spin = D::gyroscopic_spin(self.rotation, self.inv_inertia, spin, dt);
+        }
+        let spin = spin * damping_factor(self.angular_damping, dt);
         self.angular_velocity = spin;
         self.rotation = D::advance_rotation(self.rotation, spin, dt);
 
@@ -751,10 +754,10 @@ mod tests {
         let mut sleeper = resting_ball(BodyKind::Dynamic);
         sleeper.fall_asleep();
         let before = sleeper;
-        sleeper.integrate(Vec2::new(0.0, -9.81), 1.0 / 60.0);
+        sleeper.integrate(Vec2::new(0.0, -9.81), 1.0 / 60.0, false);
         assert_eq!(hash_of_body(&sleeper), hash_of_body(&before));
         let mut awake = resting_ball(BodyKind::Dynamic);
-        awake.integrate(Vec2::new(0.0, -9.81), 1.0 / 60.0);
+        awake.integrate(Vec2::new(0.0, -9.81), 1.0 / 60.0, false);
         assert!(awake.linear_velocity().y < 0.0);
     }
 

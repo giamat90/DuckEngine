@@ -105,6 +105,11 @@ pub struct SolverConfig {
     pub joint_hertz: f32,
     /// Damping ratio of a rigid joint, zero or more ([`DEFAULT_JOINT_DAMPING_RATIO`]).
     pub joint_damping_ratio: f32,
+    /// Whether a 3D body keeps its angular momentum instead of its angular velocity (card 8-26),
+    /// `false` by default: with the term on, a torque-free body whose principal moments differ
+    /// tumbles as a real one does (a box spun about its middle axis flips); with it off the
+    /// angular velocity is kept, as before. 2D has no such term and ignores this.
+    pub gyroscopic: bool,
 }
 
 impl SolverConfig {
@@ -119,6 +124,7 @@ impl SolverConfig {
         linear_slop: DEFAULT_LINEAR_SLOP,
         joint_hertz: DEFAULT_JOINT_HERTZ,
         joint_damping_ratio: DEFAULT_JOINT_DAMPING_RATIO,
+        gyroscopic: false,
     };
 
     /// Stiffer contacts for stacks that carry a heavy body (card 8-54): eight sub-steps, two relax
@@ -203,6 +209,8 @@ pub struct StepFrame<D: Dim> {
     pub gravity: D::Vec,
     /// Length of the step in seconds, finite and above zero.
     pub dt: f32,
+    /// Whether bodies keep their angular momentum ([`SolverConfig::gyroscopic`]).
+    pub gyroscopic: bool,
 }
 
 /// Moves the bodies of one step and answers their contacts. One value lives in each world.
@@ -278,7 +286,7 @@ impl<D: Dim> ContactSolver<D> for FreeSolver {
         frame: StepFrame<D>,
     ) {
         for body in bodies.iter_mut().flatten() {
-            body.integrate(frame.gravity, frame.dt);
+            body.integrate(frame.gravity, frame.dt, frame.gyroscopic);
         }
     }
 
