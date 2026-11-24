@@ -345,9 +345,11 @@ const ROLL_SPEEDS: [f32; 4] = [1.0, 1.4, 1.8, 2.0];
 /// the 31 of the old code, because a rolling prism is a chaotic scene.
 const ONE_POINT_STEPS: u32 = 20;
 
-/// Steps with no contact at all while the centre stays at the height of the prism: at most 1
-/// measured over these scenes, as before the change (a miss of GJK on a shallow contact, card 8-75).
-const NO_CONTACT_STEPS: u32 = 6;
+/// Steps with no contact at all while the centre stays at the height of the prism. GJK used to miss
+/// a touching prism on 0 to 5 of 240 steps (a sliver of its simplex lost its digits over the wide
+/// floor, card 8-75); none is missed over these 12 scenes (0 measured, 1 allowed: the scene is
+/// chaotic and the machine without FMA was not run).
+const NO_CONTACT_STEPS: u32 = 1;
 
 /// The centre never rises more than 2 mm above the radius (0.5 mm measured), sideways drift (11 mm
 /// measured) and the peak spin about the other axes (0.23 rad/s measured).
