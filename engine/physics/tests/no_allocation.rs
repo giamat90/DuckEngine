@@ -408,3 +408,29 @@ fn a_diverged_step_and_the_names_it_leaves_allocate_nothing() -> Result<(), Phys
     assert_eq!(counts.calls(), 0);
     Ok(())
 }
+
+/// Card 8-38: a step refused as `NotFinite` (a huge force on a light body) names the bodies whose
+/// state overflowed into the same reserved list, so it allocates nothing either.
+#[test]
+fn a_not_finite_step_and_the_names_it_leaves_allocate_nothing() -> Result<(), PhysicsError> {
+    let mut world = World::new(WorldConfig {
+        gravity: Vec2::ZERO,
+        ..config()
+    })?;
+    let mut desc = BodyDesc::new(
+        BodyKind::Dynamic,
+        Vec2::ZERO,
+        Shape2::Circle { radius: 0.01 },
+    );
+    desc.density = 0.001;
+    let light = world.create_body(&desc)?;
+    world.apply_force(light, Vec2::new(f32::MAX, 0.0))?;
+    let (outcome, counts) = count_allocations(|| {
+        let step = world.step(DT);
+        (step, world.diverged_bodies().len())
+    });
+    assert_eq!(outcome.0, Err(PhysicsError::NotFinite));
+    assert_eq!(outcome.1, 1);
+    assert_eq!(counts.calls(), 0, "{counts:?}");
+    Ok(())
+}

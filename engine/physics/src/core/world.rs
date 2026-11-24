@@ -181,6 +181,24 @@ fn partner<D: Dim>(entry: &ContactManifold<D>, handle: BodyHandle<D>) -> Option<
     }
 }
 
+/// Appends to `out` the handle of every live body whose copy in `scratch` `unfit` accepts, in
+/// slot order.
+fn name_bodies<D: Dim>(
+    slots: &[Option<Slot<D>>],
+    scratch: &[Option<Body<D>>],
+    out: &mut Vec<BodyHandle<D>>,
+    unfit: impl Fn(&Body<D>) -> bool,
+) {
+    let named = slots
+        .iter()
+        .zip(scratch)
+        .filter_map(|(slot, copy)| match (slot, copy) {
+            (Some(slot), Some(copy)) if unfit(copy) => Some(slot.handle),
+            _ => None,
+        });
+    out.extend(named);
+}
+
 /// Mutable form of [`live_slot`].
 fn live_slot_mut<D: Dim>(
     slots: &mut [Option<Slot<D>>],
@@ -778,6 +796,7 @@ impl<D: Dim> World<D> {
                 body.motion_is_finite() && broadphase.can_hold(body.kind(), &body.bounds())
             });
         if !stays_finite {
+            self.note_unfit();
             return Err(self.refuse(PhysicsError::NotFinite));
         }
         // Under the clamp policy (card 8-50) a body beyond the limits is brought back to them.
@@ -809,21 +828,30 @@ impl<D: Dim> World<D> {
 
     /// Remembers which bodies of the step's copies are beyond the bounds, in slot order.
     fn note_diverged(&mut self) {
-        let beyond = self
-            .slots
-            .iter()
-            .zip(&self.scratch)
-            .filter_map(|(slot, copy)| match (slot, copy) {
-                (Some(slot), Some(copy)) if !copy.motion_is_bounded() => Some(slot.handle),
-                _ => None,
-            });
-        self.diverged.extend(beyond);
+        name_bodies(&self.slots, &self.scratch, &mut self.diverged, |copy| {
+            !copy.motion_is_bounded()
+        });
     }
 
-    /// The bodies whose speed passed [`MAX_SPEED`](crate::core::MAX_SPEED) or
-    /// [`MAX_SPIN`](crate::core::MAX_SPIN) in the last step when that step was refused as
-    /// [`PhysicsError::Diverged`], in slot order (card 8-49); empty after any other step, whether
-    /// it succeeded or was refused as `NotFinite`. A call with a time step that is not valid is not
+    /// Remembers which bodies of the step's copies are not finite or cannot be held by the
+    /// broadphase (card 8-38), in slot order: the culprits of a step refused as
+    /// [`PhysicsError::NotFinite`]. A solver that overflowed with every body still finite names
+    /// nobody.
+    fn note_unfit(&mut self) {
+        let broadphase = &self.broadphase;
+        name_bodies(&self.slots, &self.scratch, &mut self.diverged, |copy| {
+            !(copy.motion_is_finite() && broadphase.can_hold(copy.kind(), &copy.bounds()))
+        });
+    }
+
+    /// The bodies behind the last step's refusal, in slot order: those whose speed passed
+    /// [`MAX_SPEED`](crate::core::MAX_SPEED) or [`MAX_SPIN`](crate::core::MAX_SPIN) when the step
+    /// was refused as [`PhysicsError::Diverged`] (card 8-49), and those whose new state was not a
+    /// finite number or left the space the broadphase can hold when it was refused as
+    /// [`PhysicsError::NotFinite`] (card 8-38: a huge force or torque on one body names that
+    /// body); empty after a step that succeeded. A body that overflowed only through a contact with
+    /// the culprit is named too. A refusal of `NotFinite` names nobody when only the solver
+    /// overflowed and every body stayed finite. A call with a time step that is not valid is not
     /// a step and leaves the list as it was. The list is a snapshot: it still names a body that was
     /// destroyed since (a destroyed handle never names a later body), and changing the speed policy
     /// does not clear it; only the next step does.
