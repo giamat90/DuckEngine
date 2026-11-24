@@ -1,10 +1,10 @@
-# D2 golden hashes of the 3D scenes of the physics crate (card 8-13). Protected path (gates/): a change is a governance change.
+# D2 golden hashes of the 3D scenes of the physics crate (card 8-13, re-recorded in card 8-81). Protected path (gates/): a change is a governance change.
 # State hash (FNV-1a 64 bit, World::state_hash) after the listed steps of each scene, scalar serial reference,
 # feature cross-platform-determinism on. Regenerate only in a governance task: see wiki/architecture/physics.md section 3.
 format = 1
 feature = "cross-platform-determinism"
 toolchain = "1.94.1"
-recorded = "2026-11-19, Windows x86-64; identical on Linux x86-64 (WSL2)"
+recorded = "2026-11-24, Windows x86-64; identical on Linux x86-64 (hosted run 45425319779)"
 recorder = "cargo test -p physics --features cross-platform-determinism --test golden3d -- print_the_golden_lines --nocapture --test-threads=1"
 
 [[scene]]
@@ -88,26 +88,26 @@ steps = 200
 stride = 10
 [scene.hash]
 1 = "f6f4573dcb202972"
-10 = "2f32f2855f043035"
-20 = "b4e3cb24ce5bcf85"
-30 = "d98f67f76d8e4aab"
-40 = "908518cbfed7a4c3"
-50 = "360e5c81b07c21e1"
-60 = "6abaec69170f2086"
-70 = "2cd10eb307ad35ed"
-80 = "c0aa4173674e0bd9"
-90 = "5b0b155ab3389a1c"
-100 = "76a67da63e82fe22"
-110 = "1f2656add03302e3"
-120 = "edeb1d7e3c03d410"
-130 = "163d6ee402d2752e"
-140 = "c65bb3bd86221921"
-150 = "27cd4e9be2945091"
-160 = "b66e46b6e29f6457"
-170 = "5b2ebfaa8a53e794"
-180 = "2166325606642f61"
-190 = "92c0d3ea46a05bab"
-200 = "7f1cd0757d6bfc36"
+10 = "84c05f7c4af789c5"
+20 = "7fef038a6e275942"
+30 = "c223412d4ee5e729"
+40 = "2524290c50554d22"
+50 = "11e196b4b009c2f6"
+60 = "c1000c41462c6780"
+70 = "98900e2ca06b4889"
+80 = "06a572ac2825ace1"
+90 = "cf1d1f9df7c585d8"
+100 = "419110121bd6a72b"
+110 = "e53240d8b2149e19"
+120 = "1b642285b206d7ab"
+130 = "0018133558feacaf"
+140 = "0ac93463b8dce144"
+150 = "d78ae4d6e7725a29"
+160 = "ffa59ab7723927aa"
+170 = "aeb9eea38828df7f"
+180 = "6a1b915f8117844e"
+190 = "1d8c9f9525b37977"
+200 = "96da500c6b3a4e52"
 
 [[scene]]
 name = "joint chain 3d"
