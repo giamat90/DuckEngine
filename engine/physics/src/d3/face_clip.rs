@@ -54,6 +54,11 @@ const WIDE_CANDIDATES: usize = 8;
 /// of those of GJK, as a share of the reach of the smaller shape.
 const WIDE_AGREEMENT: f32 = 1.0e-3;
 
+/// How much deeper than GJK's depth a contact point may be, as a share of the reach of the smaller
+/// shape (card 8-77): a face that is not where the shapes touch can put points metres behind the
+/// reference plane, and a point deeper than this is not a contact of the pair.
+const DEPTH_ALLOWANCE: f32 = 0.25;
+
 /// The corners of a shape's support face, in the order round the face when there are three or more.
 #[derive(Clone, Copy)]
 struct Face {
@@ -524,7 +529,7 @@ fn contacts(
     reference: (Reference, Vec3),
     n: Vec3,
     radii: (f32, f32),
-    margin: f32,
+    (margin, floor): (f32, f32),
 ) -> Candidates {
     let (which, plane_point) = reference;
     let shift = (radii.0 - radii.1) * 0.5;
@@ -541,7 +546,7 @@ fn contacts(
             }
         };
         let separation = gap - radii.0 - radii.1;
-        if separation <= margin {
+        if (floor..=margin).contains(&separation) {
             list.push(ContactPoint3 {
                 point: middle + n * shift,
                 separation,
@@ -576,6 +581,8 @@ struct Ask {
     normal: Vec3,
     margin: f32,
     band: f32,
+    /// The lowest separation a point may have and still be a contact (see [`depth_floor`]).
+    floor: f32,
 }
 
 /// Whether a contact is shallow: no deeper than [`FACE_WINDOW`] of the reach of the smaller shape.
@@ -607,6 +614,13 @@ fn deepest(manifold: &Manifold3) -> f32 {
         .fold(f32::MAX, f32::min)
 }
 
+/// The lowest separation a contact point of the pair may have: GJK's depth less [`DEPTH_ALLOWANCE`]
+/// of the reach of the smaller shape.
+fn depth_floor(first: &Convex, second: &Convex, single: &Manifold3) -> f32 {
+    let reach = reach_of(&first.core).min(reach_of(&second.core));
+    deepest(single) - reach * DEPTH_ALLOWANCE
+}
+
 /// The manifold of `reference` (the face of `which`) against the other face `other`, clipped, with
 /// `normal` the one of EPA; `None` when no point is within the margin.
 fn clip_manifold(
@@ -619,6 +633,7 @@ fn clip_manifold(
         normal,
         margin,
         band,
+        floor,
     } = ask;
     let other_core = match which {
         Reference::First => &second.core,
@@ -639,7 +654,13 @@ fn clip_manifold(
     };
     let clipped = clip_to(&Sides::of(reference, n), &incident);
     let radii = (first.radius, second.radius);
-    let candidates = contacts(&clipped, (which, reference.first()), n, radii, margin);
+    let candidates = contacts(
+        &clipped,
+        (which, reference.first()),
+        n,
+        radii,
+        (margin, floor),
+    );
     if candidates.len == 0 {
         return None;
     }
@@ -672,6 +693,7 @@ fn widened(first: &Convex, second: &Convex, single: &Manifold3, margin: f32) -> 
         normal: single.normal,
         margin,
         band: margin,
+        floor: depth_floor(first, second, single),
     };
     let manifold = clip_manifold((first, second), which, faces, ask)?;
     agrees(first, second, &manifold, single).then_some(manifold)
@@ -698,6 +720,7 @@ pub(super) fn contact(first: &Convex, second: &Convex, margin: f32) -> Option<Ma
         normal: single.normal,
         margin,
         band: margin,
+        floor: depth_floor(first, second, &single),
     };
     // The answer of a fitted reference stands as it was (the corners on the farthest plane of the
     // other shape); when that shape has no face and the contact is shallow, the corners within the
@@ -1331,7 +1354,7 @@ mod tests {
             (Reference::First, Vec3::ZERO),
             Vec3::Y,
             (0.2, 0.0),
-            0.5,
+            (0.5, f32::MIN),
         );
         assert_eq!(first.len, 2);
         // Corner 0: gap -0.1, separation -0.3, point halfway (y = -0.05) shifted by half the radius.
@@ -1348,7 +1371,7 @@ mod tests {
             (Reference::First, Vec3::ZERO),
             Vec3::Y,
             (0.2, 0.0),
-            0.1,
+            (0.1, f32::MIN),
         );
         assert_eq!(tight.len, 1);
         // The reference is the second shape's face at y = 1 (corners on the first shape's face).
@@ -1357,7 +1380,7 @@ mod tests {
             (Reference::Second, Vec3::new(0.0, 1.0, 0.0)),
             Vec3::Y,
             (0.0, 0.1),
-            0.5,
+            (0.5, f32::MIN),
         );
         // Gap 0.1, separation 0.1 - 0.1 = 0; the point is halfway (y = 0.95), less half the radii.
         assert!(second.as_slice()[0].separation.abs() < 1e-6);
@@ -1568,5 +1591,40 @@ mod tests {
                 "rise {rise}: {found:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_point_far_behind_the_reference_plane_is_not_a_contact() {
+        // The reference face is at y = 0; one incident corner is 50 m behind it (a face that is not
+        // where the shapes touch), one is 5 mm behind it.
+        let clipped = polygon(&[Vec3::new(0.0, -50.0, 0.0), Vec3::new(1.0, -0.005, 0.0)]);
+        let found = contacts(
+            &clipped,
+            (Reference::First, Vec3::ZERO),
+            Vec3::Y,
+            (0.0, 0.0),
+            (0.02, -0.1),
+        );
+        assert_eq!(found.len, 1);
+        assert!((found.as_slice()[0].separation + 0.005).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_depth_floor_is_the_depth_of_gjk_less_a_share_of_the_smaller_reach() {
+        // Two unit cubes have a reach of 0.87 each: an allowance of 0.25 x 0.87 = 0.2165 m.
+        let frame = BoxFrame {
+            centre: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            half: Vec3::new(0.5, 0.5, 0.5),
+        };
+        let cube = || Convex {
+            core: Core::Box(frame),
+            radius: 0.0,
+        };
+        let floor = depth_floor(&cube(), &cube(), &one_point(Vec3::Y, -0.03));
+        assert!(
+            (floor - (-0.03 - 0.25 * 0.866_025_4)).abs() < 1e-5,
+            "floor {floor}"
+        );
     }
 }
