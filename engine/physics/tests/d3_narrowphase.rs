@@ -202,6 +202,66 @@ fn two_parallel_capsules_side_by_side_get_two_points_along_the_overlap() {
     assert!(near_vec(m.normal, Vec3::X));
 }
 
+/// A capsule beside the upright capsule `a` (radius 0.25, half height 1, on the y axis), its axis
+/// turned by `lean` about z, so that its ends are `2 sin(lean)` apart in distance from `a`; `gap` is
+/// the distance between the axes at its middle.
+fn leaning_beside(lean: f32, gap: f32) -> (Placed3, Placed3) {
+    let a = capsule(1.0, 0.25, [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let b = capsule(1.0, 0.25, [gap, 0.0, 0.0], about(Vec3::Z, lean));
+    (a, b)
+}
+
+#[test]
+fn a_capsule_leaning_by_a_few_millimetres_beside_another_keeps_both_ends() {
+    for lean in [0.0, 0.0005, 0.002, 0.005, 0.02, 0.04] {
+        let (a, b) = leaning_beside(lean, 0.45);
+        let m = must(collide(&a, &b));
+        assert_eq!(m.active().len(), 2, "lean {lean}");
+        assert!(
+            near_vec(m.normal, Vec3::X) || m.normal.x > 0.99,
+            "{:?}",
+            m.normal
+        );
+    }
+}
+
+#[test]
+fn the_far_end_of_a_leaning_capsule_beside_another_is_kept_up_to_the_margin_and_not_beyond() {
+    // The ends are 2 sin(lean) apart in distance (about 2 lean): 0.049 m against the margin 0.1
+    // is within it, 0.15 m is not.
+    let (a, near_end) = leaning_beside(0.0245, 0.45);
+    assert_eq!(must(collide(&a, &near_end)).active().len(), 2);
+    let (a, far_end) = leaning_beside(0.075, 0.45);
+    assert_eq!(must(collide(&a, &far_end)).active().len(), 1);
+}
+
+/// Card 8-89: two skew capsules (the axes 0.3 rad apart, 0.45 between them at the middle, their
+/// closest points) have a second point at an end of the overlap whose separation is the true distance
+/// of the surfaces there, 0.0312 (the end of the overlap along `a`, y = cos 0.3, against the nearest
+/// point of `b`; not the -0.05 of the closest pair), in either order.
+#[test]
+fn the_far_point_of_two_skew_capsules_has_the_true_distance_of_the_surfaces() {
+    let a = capsule(1.0, 0.25, [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let b = capsule(1.0, 0.25, [0.45, 0.0, 0.0], about(Vec3::X, 0.3));
+    for m in [must(collide(&a, &b)), must(collide(&b, &a))] {
+        let mut seps: Vec<f32> = m.active().iter().map(|p| p.separation).collect();
+        seps.sort_by(f32::total_cmp);
+        assert_eq!(seps.len(), 2, "{seps:?}");
+        assert!(near(seps[0], 0.45 - 0.5), "{seps:?}");
+        assert!(near(seps[1], 0.0312), "{seps:?}");
+    }
+}
+
+/// Card 8-89: a short capsule across a long one at a wide angle (about 34 degrees) has both ends
+/// within the margin of it, but is a crossing and not two capsules alongside: one point (with both,
+/// the mixed pile of card 8-21 no longer sleeps within 2000 steps).
+#[test]
+fn a_short_capsule_across_another_at_a_wide_angle_gets_one_point() {
+    let a = capsule(1.0, 0.25, [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let b = capsule(0.05, 0.25, [0.45, 0.0, 0.0], about(Vec3::Z, 0.6));
+    assert_eq!(must(collide(&a, &b)).active().len(), 1);
+}
+
 #[test]
 fn capsules_end_to_end_on_one_axis_meet_at_the_end_caps() {
     let a = capsule(1.0, 0.5, [0.0, 0.0, 0.0], Quat::IDENTITY);
@@ -293,6 +353,70 @@ fn a_capsule_lying_along_a_box_edge_gets_two_points_and_one_across_it_gets_one()
         "{}",
         t.active()[0].separation
     );
+}
+
+/// A capsule (half length 1, radius 0.5) lying on the top face (y = 0) of a box, turned from flat
+/// by `lean` radians so that its two ends are `2 sin(lean)` apart in height, the lower end 0.02
+/// into the box.
+fn leaning_capsule(lean: f32, sink: f32) -> Placed3 {
+    let turn = std::f32::consts::FRAC_PI_2 - lean;
+    capsule(
+        1.0,
+        0.5,
+        [0.0, 0.5 - sink + base::dmath::sin(lean), 0.0],
+        about(Vec3::Z, turn),
+    )
+}
+
+#[test]
+fn a_capsule_leaning_by_a_few_millimetres_keeps_both_ends_while_both_are_within_the_margin() {
+    // Card 8-21: the ends are 8 mm apart in height (lean 0.004), more than the 5 mm an end was
+    // allowed from the nearest point, so the upper end lost its point and the capsule rocked on the
+    // other; the margin (0.1 here) is what makes a point worth keeping.
+    let ground = cuboid([5.0, 0.5, 5.0], [0.0, -0.5, 0.0], Quat::IDENTITY);
+    for lean in [0.0, 0.002, 0.004, 0.02, 0.04] {
+        let m = must(collide(&ground, &leaning_capsule(lean, 0.02)));
+        assert_eq!(m.active().len(), 2, "lean {lean}: {:?}", m.active());
+    }
+    // Further apart than the margin (0.1): the upper end is out of reach, one point.
+    let far = must(collide(&ground, &leaning_capsule(0.08, 0.02)));
+    assert_eq!(far.active().len(), 1, "{:?}", far.active());
+}
+
+#[test]
+fn the_end_of_a_leaning_capsule_is_kept_up_to_the_margin_and_not_beyond() {
+    // Ends 0.0979 and 0.1020 apart, the margin 0.1: the band is the margin (card 8-21).
+    let ground = cuboid([5.0, 0.5, 5.0], [0.0, -0.5, 0.0], Quat::IDENTITY);
+    let inside = must(collide(&ground, &leaning_capsule(0.049, 0.02)));
+    assert_eq!(inside.active().len(), 2, "{:?}", inside.active());
+    let beyond = must(collide(&ground, &leaning_capsule(0.051, 0.02)));
+    assert_eq!(beyond.active().len(), 1, "{:?}", beyond.active());
+}
+
+#[test]
+fn a_leaning_capsule_keeps_both_ends_at_the_default_margin_and_at_a_margin_of_zero() {
+    // The margin of the pile scenes is 0.02 (ends 8 mm apart lost one before); a margin of zero
+    // must not lose the end of a capsule lying flat to rounding.
+    let ground = cuboid([5.0, 0.5, 5.0], [0.0, -0.5, 0.0], Quat::IDENTITY);
+    for (lean, margin) in [(0.004, 0.02), (0.0, 0.0), (0.002, 0.0), (0.0, 0.001)] {
+        let m = must(D3::collide(&ground, &leaning_capsule(lean, 0.02), margin));
+        assert_eq!(
+            m.active().len(),
+            2,
+            "lean {lean} margin {margin}: {:?}",
+            m.active()
+        );
+    }
+}
+
+#[test]
+fn a_capsule_sunk_through_a_box_face_and_leaning_keeps_both_ends() {
+    // The same lean, with the whole segment inside the box (card 8-21, the deep path).
+    let ground = cuboid([5.0, 0.5, 5.0], [0.0, -0.5, 0.0], Quat::IDENTITY);
+    for lean in [0.0, 0.004, 0.02] {
+        let m = must(collide(&ground, &leaning_capsule(lean, 0.7)));
+        assert_eq!(m.active().len(), 2, "lean {lean}: {:?}", m.active());
+    }
 }
 
 // ---- boxes ----------------------------------------------------------------------------------
