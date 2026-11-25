@@ -1004,15 +1004,16 @@ mod tests {
         }
     }
 
-    /// Card 8-79: the same sweep over floors that are wider (500 m and 2000 m across) and turned
-    /// about the vertical axis (0.3 and 0.785 rad), the cases card 8-75 did not try. No failing
+    /// Card 8-79: the same sweep over floors that are wider (500 m and 2000 m across, each turned
+    /// about the vertical axis by 0, 0.3 and 0.785 rad), the cases card 8-75 did not try. No failing
     /// pose was found: this pins that, it is not a fix. Evidence for these floors, not a proof for
     /// every shape (EPA and `adds_dimension` are still `f32`).
     #[test]
     fn a_prism_touching_a_wider_or_turned_floor_always_gives_a_contact_at_its_height() {
-        let floors = [(250.0_f32, 0.0_f32), (250.0, 0.3), (1000.0, 0.785)];
+        let floors = [250.0_f32, 1000.0].map(|half| [0.0_f32, 0.3, 0.785].map(|yaw| (half, yaw)));
         let bad: Vec<_> = floors
             .iter()
+            .flatten()
             .flat_map(|&(half, yaw)| [8_u16, 16].map(|sides| (half, yaw, sides)))
             .filter_map(|(half, yaw, sides)| {
                 first_bad_pose(sides, &floor_turned(half, yaw)).map(|pose| (half, yaw, sides, pose))
