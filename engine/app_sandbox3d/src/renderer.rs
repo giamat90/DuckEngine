@@ -7,7 +7,7 @@
 use crate::error::Error;
 use crate::mesh::{MeshData, scenery_meshes, unit_meshes};
 use crate::sandbox::Draw;
-use app_sprite_sample::sample::{create_buffer, create_texture};
+use app_sprite_sample::sample::create_buffer;
 use app_sprite_sample::scene::{CHECKER_SIDE, checker_pixels};
 use assets::dshd::{Module, Program, Stage};
 use base::math::Mat4;
@@ -24,6 +24,7 @@ use render::lit::{
 };
 use render::mesh::{MESH_VERTEX_STRIDE, mesh_vertex_attributes};
 use render::mesh_scene::{MeshInstance, MeshScene};
+use render::mips::{level_count, level_size, mip_chain};
 use render::stream::CommandStream;
 
 /// The lit shader asset as GLSL text, for the OpenGL device.
@@ -127,6 +128,35 @@ fn create_pipeline(
     })?)
 }
 
+/// An RGBA8 texture of `side` by `side` texels with its whole chain of mip levels, each level the
+/// average of the 2x2 texels above it, so a surface seen from afar shows the mean colour of the
+/// pattern and not an aliased pick of its texels.
+fn create_mipmapped_texture(
+    device: &mut dyn IRenderDevice,
+    side: u32,
+    pixels: &[u8],
+) -> Result<TextureId, Error> {
+    let chain = mip_chain(pixels, side, side)
+        .ok_or_else(|| Error::Render("the texture pixels do not fit its size".to_owned()))?;
+    let texture = device.create_texture(TextureDesc {
+        width: side,
+        height: side,
+        mip_count: level_count(side, side),
+        format: TextureFormat::Rgba8,
+    })?;
+    for (level, texels) in (0..).zip(&chain) {
+        let (width, height) = level_size(side, side, level);
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+        device.write_texture_level(texture, level, area, texels)?;
+    }
+    Ok(texture)
+}
+
 /// A depth texture of the size of the view.
 fn depth_texture(device: &mut dyn IRenderDevice, size: (u32, u32)) -> Result<TextureId, Error> {
     Ok(device.create_texture(TextureDesc {
@@ -209,7 +239,7 @@ impl Renderer {
             depth: depth_texture(device, size)?,
             target: RenderTarget::Backbuffer,
             pipeline,
-            texture: create_texture(device, CHECKER_SIDE, &checker_pixels())?,
+            texture: create_mipmapped_texture(device, CHECKER_SIDE, &checker_pixels())?,
             sampler: device.create_sampler(SamplerDesc {
                 // Averaging when a face is far (card 8-31), crisp squares when it is near; the
                 // scenery repeats the texture every few metres.

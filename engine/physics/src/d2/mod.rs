@@ -21,9 +21,9 @@ pub use crate::core::{
     DEFAULT_JOINT_DAMPING_RATIO, DEFAULT_JOINT_HERTZ, DEFAULT_LINEAR_SLOP,
     DEFAULT_RELAX_ITERATIONS, DEFAULT_RESTITUTION, DEFAULT_RESTITUTION_THRESHOLD,
     DEFAULT_SLEEP_ANGULAR_SPEED, DEFAULT_SLEEP_LINEAR_SPEED, DEFAULT_SPECULATIVE_MARGIN,
-    DEFAULT_SUB_STEPS, DEFAULT_TIME_TO_SLEEP, MAX_COLOURS, MAX_JOINTS, MAX_PAIRS,
-    MAX_RELAX_ITERATIONS, MAX_SUB_STEPS, PhysicsError, SleepConfig, SolverConfig, SolverExecution,
-    SolverStats,
+    DEFAULT_SUB_STEPS, DEFAULT_TIME_TO_SLEEP, MAX_COLOURS, MAX_GIVEN_SPEED, MAX_GIVEN_SPIN,
+    MAX_JOINTS, MAX_PAIRS, MAX_RELAX_ITERATIONS, MAX_SPEED, MAX_SPIN, MAX_SUB_STEPS, PhysicsError,
+    SleepConfig, SolverConfig, SolverExecution, SolverStats, SpeedPolicy,
 };
 pub use aabb::Aabb2;
 pub use debug_draw::{CIRCLE_SEGMENTS, DebugColour, IPhysicsDebugDraw, NORMAL_LENGTH, draw_debug};
@@ -49,6 +49,8 @@ pub type PairList = crate::core::PairList<D2>;
 pub type Placed2 = Placed<D2>;
 /// The manifold of one pair of a 2D world.
 pub type ContactManifold = crate::core::ContactManifold<D2>;
+/// The deepest overlap of the last step.
+pub type Overlap = crate::core::Overlap<D2>;
 /// The manifolds of a 2D world, in the order of the pair list.
 pub type ManifoldList = crate::core::ManifoldList<D2>;
 /// Names one body of a 2D world.
@@ -84,6 +86,13 @@ impl Dim for D2 {
 
     fn advance_rotation(rot: Rot2, angular_velocity: f32, dt: f32) -> Rot2 {
         rot.advanced(angular_velocity * dt)
+    }
+
+    fn overlap_depth(manifold: &Manifold2) -> f32 {
+        manifold
+            .points()
+            .iter()
+            .fold(0.0, |deepest, point| deepest.max(-point.separation))
     }
 
     fn shape_bounds(shape: &Shape2, position: Vec2, rot: Rot2) -> Aabb2 {

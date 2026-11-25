@@ -12,10 +12,13 @@
 //! of a face contact are made from it by [`super::face_clip`] (card 8-18).
 //!
 //! No heap allocation: the simplex and the solid are fixed arrays. Only `+ - * /` and `sqrt` are
-//! used, in a fixed order, with ties broken by index, so the result is the same on every run.
+//! used, in a fixed order, with ties broken by index, so the result is the same on every run. The
+//! nearest point of the simplex to the origin is computed in `f64` ([`super::wide`], card 8-75): over
+//! a floor 100 m wide the simplex holds slivers whose region tests lose all their digits in `f32`.
 
 use super::manifold::{ContactPoint3, Manifold3};
 use super::narrowphase::{BoxFrame, sign};
+use super::wide::{Wide, narrow};
 use base::math::{Quat, Vec3};
 
 /// Rounds of GJK. It needs a handful for shapes of a few dozen corners; this is the guard.
@@ -82,7 +85,7 @@ fn segment_support(start: Vec3, end: Vec3, direction: Vec3) -> Vec3 {
 
 impl Core<'_> {
     /// The point of the core farthest along `direction`.
-    fn support(&self, direction: Vec3) -> Vec3 {
+    pub(super) fn support(&self, direction: Vec3) -> Vec3 {
         match *self {
             Self::Point(point) => point,
             Self::Segment(start, end) => segment_support(start, end, direction),
@@ -106,6 +109,15 @@ impl Core<'_> {
             Self::Hull { centre, .. } => centre,
         }
     }
+}
+
+/// How far apart the two shapes are along the unit `direction` (first to second): the gap of their
+/// supports, less the radii. Negative when they overlap along it; the largest value over all
+/// directions is their distance.
+pub(super) fn gap_along(first: &Convex, second: &Convex, direction: Vec3) -> f32 {
+    let on_first = first.core.support(direction);
+    let on_second = second.core.support(-direction);
+    (on_second - on_first).dot(direction) - first.radius - second.radius
 }
 
 /// A point of the difference of the two cores, with the points of the cores it came from.
@@ -145,10 +157,11 @@ fn at_vertex(index: usize, point: Vec3) -> Nearest {
 
 fn nearest_on_segment(points: &[Vec3; 4], ends: (usize, usize)) -> Nearest {
     let (i, j) = ends;
-    let along = points[j] - points[i];
-    let length = along.length_squared();
+    let (from, to) = (Wide::from(points[i]), Wide::from(points[j]));
+    let along = to - from;
+    let length = along.dot(along);
     let t = if length > 0.0 {
-        -points[i].dot(along) / length
+        -from.dot(along) / length
     } else {
         0.0
     };
@@ -158,38 +171,43 @@ fn nearest_on_segment(points: &[Vec3; 4], ends: (usize, usize)) -> Nearest {
     if t >= 1.0 {
         return at_vertex(j, points[j]);
     }
+    on_edge(i, j, t, from, along)
+}
+
+/// The point `step * fraction` along from `base`, resting on the vertices `from` and `to`.
+fn on_edge(from: usize, to: usize, fraction: f64, base: Wide, step: Wide) -> Nearest {
     Nearest {
-        point: points[i] + along * t,
-        parts: [i, j, 0],
-        weights: [1.0 - t, t, 0.0],
+        point: (base + step * fraction).narrow(),
+        parts: [from, to, 0],
+        weights: [narrow(1.0 - fraction), narrow(fraction), 0.0],
         count: 2,
     }
 }
 
-/// The region of the triangle the origin is nearest: Ericson, "Real-Time Collision Detection" 5.1.5.
+/// The region of the triangle the origin is nearest: Ericson, "Real-Time Collision Detection" 5.1.5,
+/// in double precision (see [`super::wide`]).
 fn nearest_on_triangle(points: &[Vec3; 4], corners: [usize; 3]) -> Nearest {
     let [first, second, third] = corners;
-    let (pa, pb, pc) = (points[first], points[second], points[third]);
+    let (pa, pb, pc) = (
+        Wide::from(points[first]),
+        Wide::from(points[second]),
+        Wide::from(points[third]),
+    );
     let (ab, ac) = (pb - pa, pc - pa);
-    let (d1, d2) = (ab.dot(-pa), ac.dot(-pa));
-    let (d3, d4) = (ab.dot(-pb), ac.dot(-pb));
-    let (d5, d6) = (ab.dot(-pc), ac.dot(-pc));
+    let origin = Wide::ZERO;
+    let (d1, d2) = (ab.dot(origin - pa), ac.dot(origin - pa));
+    let (d3, d4) = (ab.dot(origin - pb), ac.dot(origin - pb));
+    let (d5, d6) = (ab.dot(origin - pc), ac.dot(origin - pc));
     let (va, vb, vc) = (d3 * d6 - d5 * d4, d5 * d2 - d1 * d6, d1 * d4 - d3 * d2);
     if d1 <= 0.0 && d2 <= 0.0 {
-        return at_vertex(first, pa);
+        return at_vertex(first, points[first]);
     }
     if d3 >= 0.0 && d4 <= d3 {
-        return at_vertex(second, pb);
+        return at_vertex(second, points[second]);
     }
     if d6 >= 0.0 && d5 <= d6 {
-        return at_vertex(third, pc);
+        return at_vertex(third, points[third]);
     }
-    let on_edge = |from: usize, to: usize, fraction: f32, base: Vec3, step: Vec3| Nearest {
-        point: base + step * fraction,
-        parts: [from, to, 0],
-        weights: [1.0 - fraction, fraction, 0.0],
-        count: 2,
-    };
     if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
         return on_edge(first, second, d1 / (d1 - d3), pa, ab);
     }
@@ -201,14 +219,18 @@ fn nearest_on_triangle(points: &[Vec3; 4], corners: [usize; 3]) -> Nearest {
         return on_edge(second, third, (d4 - d3) / across, pb, pc - pb);
     }
     let total = va + vb + vc;
-    if total.abs() <= f32::MIN_POSITIVE {
-        return at_vertex(first, pa);
+    if total.abs() <= f64::MIN_POSITIVE {
+        return at_vertex(first, points[first]);
     }
     let (toward_b, toward_c) = (vb / total, vc / total);
     Nearest {
-        point: pa + ab * toward_b + ac * toward_c,
+        point: (pa + ab * toward_b + ac * toward_c).narrow(),
         parts: [first, second, third],
-        weights: [1.0 - toward_b - toward_c, toward_b, toward_c],
+        weights: [
+            narrow(1.0 - toward_b - toward_c),
+            narrow(toward_b),
+            narrow(toward_c),
+        ],
         count: 3,
     }
 }
@@ -279,8 +301,11 @@ impl Simplex {
     }
 }
 
-/// The nearest point of a tetrahedron to the origin; `None` when the origin is inside it.
+/// The nearest point of a tetrahedron to the origin; `None` when the origin is inside it. The
+/// side tests are in double precision too: the normals of a slab 100 m wide are 1e4 long and the
+/// origin may be 1e-4 from the plane.
 fn nearest_of_tetrahedron(points: &[Vec3; 4]) -> Option<Nearest> {
+    let wide = points.map(Wide::from);
     let mut best: Option<Nearest> = None;
     for (face, opposite) in [
         ([0, 1, 2], 3),
@@ -288,9 +313,9 @@ fn nearest_of_tetrahedron(points: &[Vec3; 4]) -> Option<Nearest> {
         ([0, 2, 3], 1),
         ([1, 3, 2], 0),
     ] {
-        let normal = (points[face[1]] - points[face[0]]).cross(points[face[2]] - points[face[0]]);
-        let toward_opposite = normal.dot(points[opposite] - points[face[0]]);
-        let toward_origin = normal.dot(-points[face[0]]);
+        let normal = (wide[face[1]] - wide[face[0]]).cross(wide[face[2]] - wide[face[0]]);
+        let toward_opposite = normal.dot(wide[opposite] - wide[face[0]]);
+        let toward_origin = normal.dot(Wide::ZERO - wide[face[0]]);
         if toward_opposite != 0.0 && toward_origin * toward_opposite >= 0.0 {
             continue;
         }
@@ -837,5 +862,133 @@ mod tests {
             (over.face_count, over.vertex_count),
             (MAX_POLYTOPE_FACES - 2 * seen + 1, 4)
         );
+    }
+
+    #[test]
+    fn the_gap_along_a_direction_is_the_gap_of_the_supports_less_the_radii() {
+        let first = Convex {
+            core: Core::Point(Vec3::ZERO),
+            radius: 0.1,
+        };
+        let second = Convex {
+            core: Core::Point(Vec3::new(1.0, 0.0, 0.0)),
+            radius: 0.2,
+        };
+        assert!((gap_along(&first, &second, Vec3::X) - 0.7).abs() < 1e-6);
+        assert!((gap_along(&first, &second, -Vec3::X) + 1.3).abs() < 1e-6);
+        // Across the line between them the supports are level: only the radii remain.
+        assert!((gap_along(&first, &second, Vec3::Y) + 0.3).abs() < 1e-6);
+        // A box is as wide as its farthest corner along the direction.
+        let frame = BoxFrame {
+            centre: Vec3::new(3.0, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+            half: Vec3::new(1.0, 1.0, 1.0),
+        };
+        let boxed = Convex {
+            core: Core::Box(frame),
+            radius: 0.0,
+        };
+        assert!((gap_along(&first, &boxed, Vec3::X) - 1.9).abs() < 1e-6);
+    }
+
+    /// The corners of a prism of `sides` sides (radius 0.5, 1 m long along z).
+    fn prism_corners(sides: u16) -> Vec<Vec3> {
+        let mut corners = Vec::new();
+        for i in 0..sides {
+            let angle = std::f32::consts::TAU * f32::from(i) / f32::from(sides);
+            let rim = Vec3::new(
+                0.5 * base::dmath::cos(angle),
+                0.5 * base::dmath::sin(angle),
+                0.0,
+            );
+            corners.push(rim - Vec3::Z * 0.5);
+            corners.push(rim + Vec3::Z * 0.5);
+        }
+        corners
+    }
+
+    /// The prism turned `turn` about z, then tilted `tilt` about x, and put so that its lowest
+    /// corner is `height` above the floor (top at y = 0).
+    fn prism_pose(corners: &[Vec3], turn: f32, tilt: f32, height: f32) -> (Quat, Vec3) {
+        let about_z = Quat::from_axis_angle(Vec3::Z, turn).unwrap_or(Quat::IDENTITY);
+        let rotation = Quat::from_axis_angle(Vec3::X, tilt).unwrap_or(Quat::IDENTITY) * about_z;
+        let low = corners
+            .iter()
+            .map(|c| rotation.rotate(*c).y)
+            .fold(f32::MAX, f32::min);
+        (rotation, Vec3::new(0.0, height - low, 0.0))
+    }
+
+    /// How far the deepest point of the contact of the prism and the floor is from `height`, or
+    /// `None` when there is no contact.
+    fn height_error(corners: &[Vec3], floor: &Convex, pose: (f32, f32, f32)) -> Option<f32> {
+        let (turn, tilt, height) = pose;
+        let (rotation, centre) = prism_pose(corners, turn, tilt, height);
+        let hull = Convex {
+            core: Core::Hull {
+                vertices: corners,
+                centre,
+                rotation,
+            },
+            radius: 0.0,
+        };
+        let found = contact(floor, &hull, 0.02)?;
+        let deepest = found
+            .active()
+            .iter()
+            .map(|p| p.separation)
+            .fold(f32::MAX, f32::min);
+        Some((deepest - height).abs())
+    }
+
+    /// Four tilts and five heights (three above the floor, two sunk into it), at one turn.
+    fn poses_at(turn: f32) -> Vec<(f32, f32, f32)> {
+        let mut poses = Vec::new();
+        for tilt in [0.0_f32, 0.0006, 0.003, 0.01] {
+            poses.extend(
+                [0.0005_f32, 0.0001, 0.0, -0.001, -0.005, -0.02, -0.05, -0.2]
+                    .map(|height| (turn, tilt, height)),
+            );
+        }
+        poses
+    }
+
+    /// Turns in steps of half a degree over half a turn, each with its tilts and heights.
+    fn sweep_poses() -> Vec<(f32, f32, f32)> {
+        (0..360_u16)
+            .map(|k| (0.5 * f32::from(k) + 0.13) * std::f32::consts::PI / 180.0)
+            .flat_map(poses_at)
+            .collect()
+    }
+
+    /// The first pose of the sweep with no contact or a wrong height, with its error.
+    fn first_bad_pose(sides: u16, floor: &Convex) -> Option<((f32, f32, f32), Option<f32>)> {
+        let corners = prism_corners(sides);
+        sweep_poses()
+            .into_iter()
+            .map(|pose| (pose, height_error(&corners, floor, pose)))
+            .find(|(_, error)| !error.is_some_and(|e| e < 1.0e-4))
+    }
+
+    /// Card 8-75. A prism over a floor 100 m wide: the difference of the two cores is a slab with
+    /// slivers 140 m long and under 1 m wide, where the nearest-point arithmetic of the simplex lost
+    /// all its digits (the distance grew, the loop ran 64 rounds and ended with a gap 0.03 m wrong,
+    /// so a touching prism had no contact, and a sunk one a depth of the wrong sign). Every pose of
+    /// the sweep must give a contact whose separation is the height of the lowest corner above the
+    /// floor (negative when sunk).
+    #[test]
+    fn a_prism_touching_a_wide_floor_always_gives_a_contact_at_its_height() {
+        let floor = Convex {
+            core: Core::Box(BoxFrame {
+                centre: Vec3::new(13.7, -1.0, -21.3),
+                rotation: Quat::IDENTITY,
+                half: Vec3::new(50.0, 1.0, 50.0),
+            }),
+            radius: 0.0,
+        };
+        for sides in [8_u16, 16] {
+            let bad = first_bad_pose(sides, &floor);
+            assert!(bad.is_none(), "{sides} sides: {bad:?}");
+        }
     }
 }

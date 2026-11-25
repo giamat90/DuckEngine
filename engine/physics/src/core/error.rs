@@ -15,7 +15,9 @@ pub enum PhysicsError {
     },
     /// The handle names a body that was destroyed, or one that never existed in this world.
     StaleHandle,
-    /// A number that must be finite (NaN or infinity was given).
+    /// A number that must be finite (NaN or infinity was given), or a step whose result overflows
+    /// (for example a huge force on a light body); the bodies that did are
+    /// [`World::diverged_bodies`](crate::core::World::diverged_bodies) (card 8-38).
     NotFinite,
     /// A shape, density or damping outside its range (size or density not above zero, damping
     /// below zero), or one whose mass properties are not representable as `f32`.
@@ -57,6 +59,29 @@ pub enum PhysicsError {
     /// limit that is not an ordered pair inside minus pi to pi, a length that is not above zero, a
     /// spring below zero and so on (a number that is not finite is [`PhysicsError::NotFinite`]).
     InvalidJoint,
+    /// A step would give a body a linear speed above [`MAX_SPEED`](crate::core::MAX_SPEED) or an
+    /// angular speed above [`MAX_SPIN`](crate::core::MAX_SPIN): the simulation has diverged (a body
+    /// tiny for its joint arm, a mass ratio far beyond the stated limits, a huge force). The step
+    /// dropped the forces and torques applied for it and changed nothing else, so a scene that
+    /// diverges by itself gives the same answer again until it is changed: set the body's velocity
+    /// down ([`World::set_linear_velocity`](crate::core::World::set_linear_velocity)) or destroy
+    /// a body. The bodies that crossed the bound are
+    /// [`World::diverged_bodies`](crate::core::World::diverged_bodies); destroying them was enough in
+    /// the chains tested (setting one down may not be enough when its neighbours keep the same contact, and
+    /// destroying the fast body that started the chain does not help, card 8-48), or choose
+    /// [`SpeedPolicy::Clamp`](crate::core::SpeedPolicy::Clamp) so the step does not refuse. A speed given directly above the limit for given speeds is [`PhysicsError::SpeedTooHigh`] instead.
+    Diverged,
+    /// A body description or a setter was given a linear speed above
+    /// [`MAX_GIVEN_SPEED`](crate::core::MAX_GIVEN_SPEED) or an angular speed above
+    /// [`MAX_GIVEN_SPIN`](crate::core::MAX_GIVEN_SPIN), half of the bounds a step enforces
+    /// ([`MAX_SPEED`](crate::core::MAX_SPEED), [`MAX_SPIN`](crate::core::MAX_SPIN)), so that a
+    /// body given its speed is not refused by the first step for gravity or a force alone (card
+    /// 8-46); a collision can still take it past a bound. Nothing changed.
+    SpeedTooHigh,
+    /// A [`SpeedPolicy::Clamp`](crate::core::SpeedPolicy::Clamp) limit is not finite, not above
+    /// zero, or above [`MAX_GIVEN_SPEED`](crate::core::MAX_GIVEN_SPEED) (linear) or
+    /// [`MAX_GIVEN_SPIN`](crate::core::MAX_GIVEN_SPIN) (angular). Nothing changed.
+    InvalidSpeedLimit,
 }
 
 impl fmt::Display for PhysicsError {
@@ -86,6 +111,9 @@ impl fmt::Display for PhysicsError {
             }
             Self::StaleJoint => f.write_str("the handle names no live joint of this world"),
             Self::InvalidJoint => f.write_str("a joint setting is out of range"),
+            Self::Diverged => f.write_str("the step would give a body a speed beyond the limit"),
+            Self::SpeedTooHigh => f.write_str("the speed is beyond the limit"),
+            Self::InvalidSpeedLimit => f.write_str("a speed limit is out of range"),
             Self::ManifoldCapacityTooLarge { max } => {
                 write!(
                     f,
@@ -154,8 +182,21 @@ mod tests {
                 PhysicsError::InvalidSleepConfig,
                 "a sleep setting is out of range",
             ),
+            (
+                PhysicsError::Diverged,
+                "the step would give a body a speed beyond the limit",
+            ),
+            (PhysicsError::SpeedTooHigh, "the speed is beyond the limit"),
         ];
         check_messages(cases);
+    }
+
+    #[test]
+    fn the_speed_limit_error_has_its_own_readable_message() {
+        check_messages([(
+            PhysicsError::InvalidSpeedLimit,
+            "a speed limit is out of range",
+        )]);
     }
 
     #[test]

@@ -132,6 +132,13 @@ pub(crate) struct Region {
     pub height: i32,
 }
 
+/// One mip level of one texture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Level {
+    pub texture: u32,
+    pub level: i32,
+}
+
 /// Client pixel format and type of a transfer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Transfer {
@@ -244,11 +251,11 @@ impl Api {
         unsafe { (self.texture_parameter_i)(texture, TEXTURE_MAX_LEVEL, levels.saturating_sub(1)) };
     }
 
-    /// Writes `bytes` (tightly packed, four bytes per texel) into a region of level 0. `false`
+    /// Writes `bytes` (tightly packed, four bytes per texel) into a region of a mip level. `false`
     /// without a call when `bytes` is not exactly the region's size.
     pub fn texture_sub_image(
         &self,
-        texture: u32,
+        target: Level,
         region: Region,
         transfer: Transfer,
         bytes: &[u8],
@@ -265,8 +272,8 @@ impl Api {
         // RGBA/BGRA/depth transfer of 8-bit or 32-bit components reads.
         unsafe {
             (self.texture_sub_image_2d)(
-                texture,
-                0,
+                target.texture,
+                target.level,
                 region.x,
                 region.y,
                 region.width,

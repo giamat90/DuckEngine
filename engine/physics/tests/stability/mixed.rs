@@ -8,9 +8,10 @@ use super::limits::{DRIFT, HINGE_ERROR, PENETRATION, W1_STEPS};
 use super::measure::{all_finite, below, check_energy, observe};
 use super::scene::{
     ChainPlan, Lie, Scene, W1_HALF, chain, dynamic_ball, place_pyramid, static_box,
-    world_with_floor,
+    world_with_floor_solver,
 };
 use base::math::Vec2;
+use physics::core::SolverConfig;
 use physics::d2::{BodyHandle, PhysicsError, SleepConfig};
 
 /// The pyramid, the chain and the circles of the mixed scene.
@@ -29,7 +30,7 @@ const LINKS: u8 = 8;
 
 /// No body of the whip scene may move faster than this, in metres per second (an explosion bound;
 /// the fastest body measured is at 5.2 m/s when the whip hits the apex).
-const MAX_BODY_SPEED: f32 = 15.0;
+pub const MAX_BODY_SPEED: f32 = 15.0;
 
 /// Radius of a circle in the bin, in metres.
 const RADIUS: f32 = 0.3;
@@ -57,15 +58,52 @@ const CIRCLES: [(f32, f32); 5] = [
 /// A pyramid centred on x = 0, a chain hung from just above its apex and five circles in a bin on
 /// its right.
 pub fn mixed(lie: Lie, sleep: SleepConfig) -> Result<Mixed, PhysicsError> {
-    let mut world = world_with_floor(40, 16, sleep)?;
+    mixed_with(lie, sleep, SolverConfig::DEFAULT)
+}
+
+/// [`mixed`] with a chosen solver configuration.
+pub fn mixed_with(
+    lie: Lie,
+    sleep: SleepConfig,
+    solver: SolverConfig,
+) -> Result<Mixed, PhysicsError> {
+    mixed_tuned(lie, sleep, solver, Pin::STANDARD)
+}
+
+/// Where the chain of the mixed scene is pinned and how heavy its last link is (card 8-59 moves
+/// them to see how marginal the hit of the whip is; [`Pin::STANDARD`] is the scene of [`mixed`]).
+#[derive(Clone, Copy)]
+pub struct Pin {
+    /// How far above the standard pin the chain hangs from, in metres.
+    pub lift: f32,
+    /// Density of the last link (the other links have density 1).
+    pub last_density: f32,
+}
+
+impl Pin {
+    /// The pin of [`mixed`]: at the standard height, the last link of density 5.
+    pub const STANDARD: Self = Self {
+        lift: 0.0,
+        last_density: 5.0,
+    };
+}
+
+/// [`mixed_with`] with the chain pinned as `pin` says.
+pub fn mixed_tuned(
+    lie: Lie,
+    sleep: SleepConfig,
+    solver: SolverConfig,
+    pin: Pin,
+) -> Result<Mixed, PhysicsError> {
+    let mut world = world_with_floor_solver(40, 16, sleep, solver)?;
     let mut boxes = Vec::new();
     place_pyramid(&mut world, &mut boxes, ROWS, W1_HALF, 0.0)?;
-    let top = Vec2::new(0.0, PYRAMID_TOP + 0.5 * f32::from(LINKS));
+    let top = Vec2::new(0.0, PYRAMID_TOP + 0.5 * f32::from(LINKS) + pin.lift);
     let plan = ChainPlan {
         top,
         links: LINKS,
         lie,
-        last_density: 5.0,
+        last_density: pin.last_density,
     };
     let links = chain(&mut world, plan)?;
     let wall = Vec2::new(0.25, 1.0);
@@ -101,7 +139,12 @@ fn assert_circles_in_bin(mixed: &Mixed) -> Result<(), PhysicsError> {
 #[test]
 fn a_chain_hanging_on_the_apex_and_a_bin_of_circles_beside_the_pyramid_all_stay_in_order()
 -> Result<(), PhysicsError> {
-    let mut mixed = mixed(Lie::Hanging, SleepConfig::DISABLED)?;
+    check_resting_mixed(SolverConfig::DEFAULT)
+}
+
+/// The resting mixed scene held to its bounds, run with `solver`.
+pub fn check_resting_mixed(solver: SolverConfig) -> Result<(), PhysicsError> {
+    let mut mixed = mixed_with(Lie::Hanging, SleepConfig::DISABLED, solver)?;
     let name = "mixed (pyramid 6, chain 8 on the apex, 5 circles)";
     let report = observe(&mut mixed.scene, W1_STEPS)?;
     below(name, "pyramid max drift (m)", report.max_drift, DRIFT);

@@ -164,6 +164,7 @@ const RED: [u8; 4] = [255, 0, 0, 255];
 const BLUE: [u8; 4] = [0, 0, 255, 255];
 
 /// What the sprite pipeline draws with.
+#[derive(Clone, Copy)]
 struct Sprite {
     pipeline: PipelineId,
     uniforms: BufferId,
@@ -366,6 +367,186 @@ fn pixel(rows: &[u8], x: u32, y: u32) -> [u8; 4] {
     [rows[at], rows[at + 1], rows[at + 2], rows[at + 3]]
 }
 
+const GREEN: [u8; 4] = [0, 255, 0, 255];
+const YELLOW: [u8; 4] = [255, 255, 0, 255];
+const MAGENTA: [u8; 4] = [255, 0, 255, 255];
+
+/// Two triangles over the whole clip space, white, with texture coordinates 0 to 1 across it, so
+/// a texture larger than the target is minified and the sampler picks a mip level by the ratio.
+fn full_quad(device: &mut VulkanDevice) -> BufferId {
+    let corner = |x: f32, y: f32| {
+        [
+            x,
+            y,
+            f32::midpoint(x, 1.0),
+            f32::midpoint(y, 1.0),
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ]
+    };
+    let vertices: Vec<f32> = [
+        corner(-1.0, -1.0),
+        corner(1.0, -1.0),
+        corner(1.0, 1.0),
+        corner(-1.0, -1.0),
+        corner(1.0, 1.0),
+        corner(-1.0, 1.0),
+    ]
+    .concat();
+    let bytes: Vec<u8> = vertices.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let buffer = must(
+        device.create_buffer(BufferDesc {
+            size: u32::try_from(bytes.len()).unwrap_or(0),
+            usage: BufferUsage::Vertex,
+        }),
+        "making the vertex buffer",
+    );
+    must(
+        device.write_buffer(buffer, 0, &bytes),
+        "writing the vertices",
+    );
+    buffer
+}
+
+/// A square texture of `size` texels with all its levels; level `n` is filled with `colours[n]`.
+fn chain_texture(device: &mut VulkanDevice, size: u32, colours: &[[u8; 4]]) -> TextureId {
+    let texture = must(
+        device.create_texture(TextureDesc {
+            width: size,
+            height: size,
+            mip_count: render::mips::level_count(size, size),
+            format: TextureFormat::Rgba8,
+        }),
+        "making the mip texture",
+    );
+    for (level, colour) in (0..).zip(colours) {
+        let (edge, _) = render::mips::level_size(size, size, level);
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: edge,
+            height: edge,
+        };
+        let texels = colour.repeat(usize::try_from(edge * edge).unwrap_or(0));
+        must(
+            device.write_texture_level(texture, level, area, &texels),
+            "writing a mip level",
+        );
+    }
+    texture
+}
+
+/// Draws `texture` over the whole target and returns the picture.
+fn minified_picture(rig: &mut Rig, sprite: &Sprite, texture: TextureId) -> Vec<u8> {
+    let vertices = full_quad(&mut rig.device);
+    picture_of(rig, sprite, texture, vertices)
+}
+
+/// Draws `texture` with the sprite pipeline over the target with the given quad, returns the picture.
+fn picture_of(rig: &mut Rig, sprite: &Sprite, texture: TextureId, vertices: BufferId) -> Vec<u8> {
+    let surface = must(rig.device.create_surface(rig.surface), "making the surface");
+    let target = target_texture(&mut rig.device);
+    let drawn = Sprite {
+        white: texture,
+        ..*sprite
+    };
+    let stream = quad_pass(&drawn, RenderTarget::Texture(target), vertices);
+    run_frame(rig, surface, &stream);
+    let rows = read_target(rig, target);
+    rig.device.destroy_surface(surface);
+    rows
+}
+
+/// How far a channel may be from the colour that was written when the sampler blends levels, in
+/// units of 1/255: a device whose level of detail is a little coarse can blend two levels by a step.
+const MIP_TOLERANCE: u8 = 2;
+
+/// Whether every pixel of `rows` is within `tolerance` per channel of `colour`.
+fn all_near(rows: &[u8], colour: [u8; 4], tolerance: u8) -> bool {
+    rows.chunks_exact(4).all(|texel| {
+        texel
+            .iter()
+            .zip(colour)
+            .all(|(a, b)| a.abs_diff(b) <= tolerance)
+    })
+}
+
+/// The sampler the sandbox uses for its textures: linear minification, which makes the mip mode
+/// linear, and nearest magnification.
+fn linear_mipmapped_sampler(device: &mut VulkanDevice) -> SamplerId {
+    must(
+        device.create_sampler(SamplerDesc {
+            min_filter: Filter::Linear,
+            mag_filter: Filter::Nearest,
+            address: AddressMode::Clamp,
+        }),
+        "making the linear mipmapped sampler",
+    )
+}
+
+/// The level checks of the two tests (the sizes are exact powers of two over the target, so the
+/// level of detail is a whole number and the linear mip mode has nothing to blend: blending of a
+/// fractional level of detail is not covered): a texture of 16, 32 and 64 texels over the 16 texel target
+/// shows the colour of level 0, 1 and 2 (within `tolerance`), and a rewritten level 1 shows the new
+/// colour, a colour no level has.
+fn check_minified_levels(rig: &mut Rig, sprite: &Sprite, tolerance: u8) {
+    let levels = [RED, GREEN, YELLOW, BLUE, BLUE];
+    for (size, expected) in [(16, RED), (32, GREEN), (64, YELLOW)] {
+        let texture = chain_texture(&mut rig.device, size, &levels);
+        let rows = minified_picture(rig, sprite, texture);
+        assert!(
+            all_near(&rows, expected, tolerance),
+            "a {size} texel texture shows {:?} first, expected {expected:?}",
+            &rows[..4]
+        );
+    }
+    let texture = chain_texture(&mut rig.device, 32, &levels);
+    let before = minified_picture(rig, sprite, texture);
+    assert!(all_near(&before, GREEN, tolerance), "level 1 before");
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 16,
+        height: 16,
+    };
+    must(
+        rig.device
+            .write_texture_level(texture, 1, area, &MAGENTA.repeat(16 * 16)),
+        "rewriting level 1",
+    );
+    let rows = minified_picture(rig, sprite, texture);
+    assert!(all_near(&rows, MAGENTA, tolerance), "level 1 was rewritten");
+}
+
+#[test]
+fn a_minified_texture_samples_the_mip_level_that_was_written_on_the_vulkan_device() {
+    let mut rig = match Rig::start() {
+        Ok(rig) => rig,
+        Err(reason) => return not_run(&reason),
+    };
+    let sprite = sprite(&mut rig.device);
+    // The sampler of the sprite is nearest, so the level is picked, not blended: exact colours.
+    check_minified_levels(&mut rig, &sprite, 0);
+    rig.assert_quiet();
+}
+
+#[test]
+fn a_minified_texture_under_the_linear_mipmapped_sampler_shows_the_level_that_was_written() {
+    let mut rig = match Rig::start() {
+        Ok(rig) => rig,
+        Err(reason) => return not_run(&reason),
+    };
+    let sprite = sprite(&mut rig.device);
+    let sprite = Sprite {
+        sampler: linear_mipmapped_sampler(&mut rig.device),
+        ..sprite
+    };
+    check_minified_levels(&mut rig, &sprite, MIP_TOLERANCE);
+    rig.assert_quiet();
+}
+
 #[test]
 fn the_sprite_shaders_draw_a_quad_into_a_texture_with_row_0_at_the_bottom() {
     let mut rig = match Rig::start() {
@@ -526,5 +707,209 @@ fn two_cubes_render_with_the_near_one_in_front_on_the_vulkan_device() {
     let pixels = mesh::render(&mut rig.device, surface, codes, false);
     mesh::assert_control(&pixels);
     rig.device.destroy_surface(surface);
+    rig.assert_quiet();
+}
+
+// ----- a picture that moves by an eighth of a pixel per frame (card 8-62) -----
+
+/// Frames of a moving picture: two pixels of travel in steps of an eighth.
+const MOTION_FRAMES: u32 = 16;
+/// A step between two frames above this (of 255) is a pop, not a smooth move.
+const POP: u8 = 64;
+/// The share of pixel steps that must pop without mip levels is more than 1 in this many.
+const POP_ONE_IN: u64 = 10;
+/// Texels in a cell of the checker.
+const CELL: u32 = 4;
+/// Pixel travel per frame, as a fraction of a pixel.
+const STEP_PIXELS: f32 = 1.0 / 8.0;
+
+/// The vertices of the full quad with the texture coordinate `u` shifted by `shift` of the target.
+fn shifted_quad(device: &mut VulkanDevice, shift: f32) -> BufferId {
+    let corner = |x: f32, y: f32| {
+        [
+            x,
+            y,
+            f32::midpoint(x, 1.0) + shift,
+            f32::midpoint(y, 1.0),
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ]
+    };
+    let vertices: Vec<f32> = [
+        corner(-1.0, -1.0),
+        corner(1.0, -1.0),
+        corner(1.0, 1.0),
+        corner(-1.0, -1.0),
+        corner(1.0, 1.0),
+        corner(-1.0, 1.0),
+    ]
+    .concat();
+    let bytes: Vec<u8> = vertices.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let buffer = must(
+        device.create_buffer(BufferDesc {
+            size: u32::try_from(bytes.len()).unwrap_or(0),
+            usage: BufferUsage::Vertex,
+        }),
+        "making the vertex buffer",
+    );
+    must(
+        device.write_buffer(buffer, 0, &bytes),
+        "writing the vertices",
+    );
+    buffer
+}
+
+/// The texels of a black and white checker of `size` texels with cells of `cell` texels.
+fn checker_texels(size: u32, cell: u32) -> Vec<u8> {
+    let shade = |x: u32, y: u32| {
+        if (x / cell + y / cell).is_multiple_of(2) {
+            255
+        } else {
+            0
+        }
+    };
+    (0..size)
+        .flat_map(|y| (0..size).map(move |x| (x, y)))
+        .flat_map(|(x, y)| [shade(x, y), shade(x, y), shade(x, y), 255])
+        .collect()
+}
+
+/// A checker texture with all its mip levels when `chain` is set (else the single level 0).
+fn checker_texture(device: &mut VulkanDevice, size: u32, cell: u32, chain: bool) -> TextureId {
+    let base = checker_texels(size, cell);
+    let levels = if chain {
+        let Some(chain) = render::mips::mip_chain(&base, size, size) else {
+            panic!("the texels do not make a mip chain");
+        };
+        chain
+    } else {
+        vec![base]
+    };
+    let texture = must(
+        device.create_texture(TextureDesc {
+            width: size,
+            height: size,
+            mip_count: u32::try_from(levels.len()).unwrap_or(1),
+            format: TextureFormat::Rgba8,
+        }),
+        "making the checker",
+    );
+    for (level, texels) in (0..).zip(&levels) {
+        let (width, height) = render::mips::level_size(size, size, level);
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        };
+        must(
+            device.write_texture_level(texture, level, area, texels),
+            "writing a level of the checker",
+        );
+    }
+    texture
+}
+
+/// What a picture that moves by an eighth of a pixel per frame does from one frame to the next.
+struct Motion {
+    /// The largest change of any pixel between two frames, of 255.
+    largest_step: u8,
+    /// Pixel changes above [`POP`], and all pixel changes.
+    pops: u64,
+    steps: u64,
+}
+
+/// Draws `texture` shifted by an eighth of a pixel per frame with `sampler`; measures the red channel.
+fn watch(rig: &mut Rig, sprite: &Sprite, texture: TextureId, sampler: SamplerId) -> Motion {
+    let drawn = Sprite { sampler, ..*sprite };
+    let mut frames: Vec<Vec<u8>> = Vec::new();
+    for n in 0..MOTION_FRAMES {
+        let pixels = STEP_PIXELS * f32::from(u16::try_from(n).unwrap_or(0));
+        let shift = pixels / f32::from(u16::try_from(SIZE).unwrap_or(1));
+        let vertices = shifted_quad(&mut rig.device, shift);
+        frames.push(picture_of(rig, &drawn, texture, vertices));
+        rig.device.destroy_buffer(vertices);
+    }
+    let mut motion = Motion {
+        largest_step: 0,
+        pops: 0,
+        steps: 0,
+    };
+    for pair in frames.windows(2) {
+        for (before, after) in pair[0].chunks_exact(4).zip(pair[1].chunks_exact(4)) {
+            let step = before[0].abs_diff(after[0]);
+            motion.largest_step = motion.largest_step.max(step);
+            motion.pops += u64::from(step > POP);
+            motion.steps += 1;
+        }
+    }
+    motion
+}
+
+/// A sampler with linear minification (the sandbox's), the given magnification, and repeat.
+fn moving_sampler(device: &mut VulkanDevice, mag_filter: Filter) -> SamplerId {
+    must(
+        device.create_sampler(SamplerDesc {
+            min_filter: Filter::Linear,
+            mag_filter,
+            address: AddressMode::Repeat,
+        }),
+        "making the moving sampler",
+    )
+}
+
+#[test]
+fn a_checker_moving_at_four_texels_per_pixel_pops_without_mip_levels_and_does_not_with_them_on_the_vulkan_device()
+ {
+    let mut rig = match Rig::start() {
+        Ok(rig) => rig,
+        Err(reason) => return not_run(&reason),
+    };
+    let sprite = sprite(&mut rig.device);
+    let sampler = moving_sampler(&mut rig.device, Filter::Nearest);
+    // 64 texels over the 16 pixel target: four texels per pixel; cells of 4 texels.
+    let alone = checker_texture(&mut rig.device, 4 * SIZE, CELL, false);
+    let without = watch(&mut rig, &sprite, alone, sampler);
+    let chained = checker_texture(&mut rig.device, 4 * SIZE, CELL, true);
+    let with = watch(&mut rig, &sprite, chained, sampler);
+    assert!(
+        without.pops * POP_ONE_IN > without.steps,
+        "without levels: {} of {} steps pop",
+        without.pops,
+        without.steps
+    );
+    assert!(with.largest_step > 0, "with levels: the picture moves");
+    assert_eq!(with.pops, 0, "with levels");
+    assert!(
+        with.largest_step < POP,
+        "with levels: {}",
+        with.largest_step
+    );
+    rig.assert_quiet();
+}
+
+#[test]
+fn at_one_texel_per_pixel_nearest_magnification_pops_when_moving_and_linear_magnification_does_not_on_the_vulkan_device()
+ {
+    let mut rig = match Rig::start() {
+        Ok(rig) => rig,
+        Err(reason) => return not_run(&reason),
+    };
+    let sprite = sprite(&mut rig.device);
+    let texture = checker_texture(&mut rig.device, SIZE, CELL, true);
+    let nearest = moving_sampler(&mut rig.device, Filter::Nearest);
+    let popping = watch(&mut rig, &sprite, texture, nearest);
+    let linear = moving_sampler(&mut rig.device, Filter::Linear);
+    let smooth = watch(&mut rig, &sprite, texture, linear);
+    assert_eq!(popping.largest_step, 255, "nearest magnification");
+    assert!(popping.pops > 0, "nearest magnification pops");
+    assert!(
+        smooth.largest_step > 0,
+        "linear magnification: the picture moves"
+    );
+    assert_eq!(smooth.pops, 0, "linear magnification");
+    assert!(smooth.largest_step < POP, "linear: {}", smooth.largest_step);
     rig.assert_quiet();
 }

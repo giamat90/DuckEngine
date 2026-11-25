@@ -223,6 +223,7 @@ impl ContactSolver<D3> for Solver3 {
         let terms = StepTerms {
             gravity: frame.gravity,
             h,
+            gyroscopic: frame.gyroscopic,
         };
         self.prepare(bodies, contacts, joints, terms);
         self.colouring.assign();
@@ -563,7 +564,7 @@ impl Solver3 {
                     angular_velocity: solved.spin,
                 });
             }
-            _ => body.integrate(frame.gravity, frame.dt),
+            _ => body.integrate(frame.gravity, frame.dt, frame.gyroscopic),
         }
     }
 }
@@ -681,6 +682,74 @@ mod tests {
         Ok(())
     }
 
+    /// A solver that holds one solved body (slot 0) which moved 1 m in x and fell at 5 m/s.
+    fn solver_with_a_solved_body() -> Solver3 {
+        let mut solver = solver();
+        solver.touched[0] = true;
+        solver.bodies[0].velocity = Vec3::new(0.0, -5.0, 0.0);
+        solver.bodies[0].shift = Vec3::new(1.0, 0.0, 0.0);
+        solver
+    }
+
+    fn one_body(kind: BodyKind, asleep: bool) -> Option<Body<D3>> {
+        let half = Shape3::Box {
+            half_extents: Vec3::new(0.5, 0.5, 0.5),
+        };
+        let mut w = world().ok()?;
+        w.create_body(&BodyDesc::new(kind, Vec3::ZERO, half)).ok()?;
+        let mut body = w.iter().map(|(_, b)| *b).next()?;
+        if asleep {
+            body.fall_asleep();
+        }
+        Some(body)
+    }
+
+    fn written_back(kind: BodyKind, asleep: bool) -> Option<Body<D3>> {
+        let mut slot = Some(one_body(kind, asleep)?);
+        let frame = StepFrame {
+            gravity: Vec3::new(0.0, -9.8, 0.0),
+            dt: 1.0 / 60.0,
+            gyroscopic: false,
+        };
+        solver_with_a_solved_body().write_back(0, &mut slot, &frame);
+        slot
+    }
+
+    #[test]
+    fn a_solved_awake_body_takes_the_solved_motion() {
+        let Some(body) = written_back(BodyKind::Dynamic, false) else {
+            panic!("the slot is not emptied");
+        };
+        assert!(
+            (body.position().x - 1.0).abs() < 1.0e-6,
+            "{:?}",
+            body.position()
+        );
+        assert!((body.linear_velocity().y + 5.0).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn a_sleeping_body_stays_where_it_is_even_if_the_solver_holds_a_motion_for_it() {
+        // Through a world a sleeper can be touched (a contact or joint with a static body does not
+        // wake it) but its solved motion is zero, so an unguarded write would change nothing. The
+        // hand-made nonzero motion pins the guard against a solver that gives a sleeper one.
+        let Some(body) = written_back(BodyKind::Dynamic, true) else {
+            panic!("the slot is not emptied");
+        };
+        assert_eq!(body.position(), Vec3::ZERO);
+        assert_eq!(body.linear_velocity(), Vec3::ZERO);
+        assert!(body.is_asleep());
+    }
+
+    #[test]
+    fn a_static_body_stays_where_it_is_even_if_the_solver_holds_a_motion_for_it() {
+        let Some(body) = written_back(BodyKind::Static, false) else {
+            panic!("the slot is not emptied");
+        };
+        assert_eq!(body.position(), Vec3::ZERO);
+        assert_eq!(body.linear_velocity(), Vec3::ZERO);
+    }
+
     #[test]
     fn a_contact_with_one_awake_body_and_one_static_body_is_solved() -> Result<(), PhysicsError> {
         let mut awake = world()?;
@@ -719,6 +788,7 @@ mod tests {
         let terms = StepTerms {
             gravity: Vec3::ZERO,
             h: H,
+            gyroscopic: false,
         };
         let (soft, stiff) = solver.softness(H);
         solver.prepare(&bodies, with_floor.manifolds().as_slice(), &[], terms);

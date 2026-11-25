@@ -18,7 +18,11 @@ const SLOTS: usize = 64;
 const DT: f32 = 1.0 / 60.0;
 
 fn build_world() -> Result<World, PhysicsError> {
-    World::new(WorldConfig {
+    World::new(config())
+}
+
+fn config() -> WorldConfig {
+    WorldConfig {
         max_bodies: CAPACITY,
         gravity: STANDARD_GRAVITY,
         max_pairs: 256,
@@ -28,7 +32,7 @@ fn build_world() -> Result<World, PhysicsError> {
         speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
         sleep: physics::d2::SleepConfig::DEFAULT,
-    })
+    }
 }
 
 fn box_desc(x: f32, y: f32) -> BodyDesc {
@@ -367,6 +371,88 @@ fn the_colour_overflow_set_makes_no_allocator_call() -> Result<(), PhysicsError>
         Ok::<usize, PhysicsError>(overflow)
     });
     assert_eq!(result, Ok(6));
+    assert_eq!(counts.calls(), 0, "{counts:?}");
+    Ok(())
+}
+
+/// Card 8-49: a step refused as `Diverged` writes the names of the bodies beyond the bound into a
+/// list whose capacity was reserved with the world, so it allocates nothing either.
+#[test]
+fn a_diverged_step_and_the_names_it_leaves_allocate_nothing() -> Result<(), PhysicsError> {
+    let mut world = World::new(WorldConfig {
+        gravity: Vec2::ZERO,
+        ..config()
+    })?;
+    for (index, density) in [9.0, 3.0, 1.0].into_iter().enumerate() {
+        let mut desc = BodyDesc::new(
+            BodyKind::Dynamic,
+            Vec2::new(0.9 * f32::from(u8::try_from(index).unwrap_or(0)), 0.0),
+            Shape2::Box {
+                half_extents: Vec2::new(0.5, 0.5),
+            },
+        );
+        desc.density = density;
+        desc.restitution = 1.0;
+        if index == 0 {
+            desc.linear_velocity = Vec2::new(physics::d2::MAX_GIVEN_SPEED, 0.0);
+        }
+        world.create_body(&desc)?;
+    }
+    let (outcome, counts) = count_allocations(|| {
+        let first = world.step(DT);
+        let second = world.step(DT);
+        (first, second, world.diverged_bodies().len())
+    });
+    assert_eq!(outcome.1, Err(PhysicsError::Diverged));
+    assert!(outcome.2 > 0);
+    assert_eq!(counts.calls(), 0);
+    Ok(())
+}
+
+/// Card 8-38: a step refused as `NotFinite` (a huge force on a light body) names the bodies whose
+/// state overflowed into the same reserved list, so it allocates nothing either.
+#[test]
+fn a_not_finite_step_and_the_names_it_leaves_allocate_nothing() -> Result<(), PhysicsError> {
+    let mut world = World::new(WorldConfig {
+        gravity: Vec2::ZERO,
+        ..config()
+    })?;
+    let mut desc = BodyDesc::new(
+        BodyKind::Dynamic,
+        Vec2::ZERO,
+        Shape2::Circle { radius: 0.01 },
+    );
+    desc.density = 0.001;
+    let light = world.create_body(&desc)?;
+    world.apply_force(light, Vec2::new(f32::MAX, 0.0))?;
+    let (outcome, counts) = count_allocations(|| {
+        let step = world.step(DT);
+        (step, world.diverged_bodies().len())
+    });
+    assert_eq!(outcome.0, Err(PhysicsError::NotFinite));
+    assert_eq!(outcome.1, 1);
+    assert_eq!(counts.calls(), 0, "{counts:?}");
+    Ok(())
+}
+
+/// Card 8-53: the deepest overlap is found by a pass over the manifolds and returned by value, so
+/// asking for it allocates nothing.
+#[test]
+fn asking_for_the_deepest_overlap_allocates_nothing() -> Result<(), PhysicsError> {
+    let mut world = World::new(WorldConfig {
+        gravity: Vec2::ZERO,
+        ..config()
+    })?;
+    for x in [0.0, 0.9] {
+        world.create_body(&BodyDesc::new(
+            BodyKind::Dynamic,
+            Vec2::new(x, 0.0),
+            Shape2::Circle { radius: 0.5 },
+        ))?;
+    }
+    world.step(1.0e-6)?;
+    let (found, counts) = count_allocations(|| world.deepest_overlap());
+    assert!(found.is_some());
     assert_eq!(counts.calls(), 0, "{counts:?}");
     Ok(())
 }

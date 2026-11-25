@@ -17,6 +17,7 @@ pub mod ids;
 pub mod lit;
 pub mod mesh;
 pub mod mesh_scene;
+pub mod mips;
 pub mod null;
 pub mod scene;
 pub mod shapes;

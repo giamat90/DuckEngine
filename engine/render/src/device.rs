@@ -76,13 +76,32 @@ pub trait IRenderDevice {
         bytes: &[u8],
     ) -> Result<(), RenderError>;
 
-    /// Copies tightly packed texels into a region of mip level 0.
+    /// Copies tightly packed texels into a region of mip level 0. The same as
+    /// [`IRenderDevice::write_texture_level`] with level 0.
     ///
     /// # Errors
     /// `InvalidHandle`, or `InvalidDescription` when the region or byte count does not fit.
     fn write_texture(
         &mut self,
         texture: TextureId,
+        region: Rect,
+        bytes: &[u8],
+    ) -> Result<(), RenderError> {
+        self.write_texture_level(texture, 0, region, bytes)
+    }
+
+    /// Copies tightly packed texels into a region of one mip level (level 0 is the full size,
+    /// each next level is half as wide and high, never below one texel). The region and the byte
+    /// count are those of the level, not of level 0. The device does not make the levels: a texture
+    /// with `mip_count` above 1 samples garbage from the levels nobody wrote.
+    ///
+    /// # Errors
+    /// `InvalidHandle`, or `InvalidDescription` when the level is not below `mip_count`, or the
+    /// region or byte count does not fit the level.
+    fn write_texture_level(
+        &mut self,
+        texture: TextureId,
+        level: u32,
         region: Rect,
         bytes: &[u8],
     ) -> Result<(), RenderError>;

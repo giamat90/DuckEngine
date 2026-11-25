@@ -6,10 +6,12 @@
 //! capsules, boxes and convex hulls, the debug-draw port and the contact solver ([`Solver3`], card
 //! 8-6: soft step, friction, warm start, restitution, sleeping; serial; the parallel solve is card 8-19)
 //! and the joints ([`Joint3`], card 8-7: ball-and-socket, hinge with limits, distance) are complete.
-//! Gyroscopic torque is not modelled (the integrator is semi-implicit
-//! Euler on the angular velocity). Known limitation: with no gyroscopic term a torque-free body keeps
-//! its angular velocity, which is not physical for a body whose principal moments differ (angular
-//! momentum should be what is kept). 2D has no such term to miss.
+//! The gyroscopic term is opt-in (card 8-26, [`SolverConfig::gyroscopic`], off by default). With it
+//! off the integrator is semi-implicit Euler on the angular velocity: a torque-free body keeps its
+//! angular velocity, which is not physical for a body whose principal moments differ (angular
+//! momentum should be what is kept). With it on, each step (each sub-step of a body a constraint
+//! touches) takes one implicit Newton step of Euler's equation in the body frame, so a box spun
+//! about its middle axis tumbles. 2D has no such term.
 
 mod aabb;
 mod box_box;
@@ -17,12 +19,14 @@ mod clip;
 mod debug_draw;
 mod face_clip;
 mod gjk;
+mod gyroscopic;
 mod hull;
 mod joint;
 mod manifold;
 mod narrowphase;
 mod shape;
 mod solver;
+mod wide;
 
 use crate::core::{Dim, HashBits, MassProperties, Placed, Quantity, StateHasher};
 use base::math::{Quat, Vec3};
@@ -32,8 +36,9 @@ pub use crate::core::{
     DEFAULT_CONTACT_HERTZ, DEFAULT_CONTACT_PUSH_SPEED, DEFAULT_FRICTION, DEFAULT_LINEAR_SLOP,
     DEFAULT_RELAX_ITERATIONS, DEFAULT_RESTITUTION, DEFAULT_RESTITUTION_THRESHOLD,
     DEFAULT_SLEEP_ANGULAR_SPEED, DEFAULT_SLEEP_LINEAR_SPEED, DEFAULT_SPECULATIVE_MARGIN,
-    DEFAULT_SUB_STEPS, DEFAULT_TIME_TO_SLEEP, MAX_COLOURS, MAX_PAIRS, MAX_RELAX_ITERATIONS,
-    MAX_SUB_STEPS, PhysicsError, SleepConfig, SolverConfig, SolverExecution, SolverStats,
+    DEFAULT_SUB_STEPS, DEFAULT_TIME_TO_SLEEP, MAX_COLOURS, MAX_GIVEN_SPEED, MAX_GIVEN_SPIN,
+    MAX_PAIRS, MAX_RELAX_ITERATIONS, MAX_SPEED, MAX_SPIN, MAX_SUB_STEPS, PhysicsError, SleepConfig,
+    SolverConfig, SolverExecution, SolverStats, SpeedPolicy,
 };
 pub use aabb::Aabb3;
 pub use debug_draw::{ARC_SEGMENTS, DebugColour, IPhysicsDebugDraw, NORMAL_LENGTH, draw_debug};
@@ -59,6 +64,8 @@ pub type PairList = crate::core::PairList<D3>;
 pub type Placed3 = Placed<D3>;
 /// A 3D contact manifold with the two bodies it joins.
 pub type ContactManifold = crate::core::ContactManifold<D3>;
+/// The deepest overlap of the last step.
+pub type Overlap = crate::core::Overlap<D3>;
 /// The manifolds of a step.
 pub type ManifoldList = crate::core::ManifoldList<D3>;
 /// A handle to a 3D body.
@@ -138,6 +145,17 @@ impl Dim for D3 {
         )
         .normalized()
         .unwrap_or(rot)
+    }
+
+    fn gyroscopic_spin(rot: Quat, inv_inertia: Vec3, spin: Vec3, dt: f32) -> Vec3 {
+        gyroscopic::gyroscopic_spin(rot, inv_inertia, spin, dt)
+    }
+
+    fn overlap_depth(manifold: &Manifold3) -> f32 {
+        manifold
+            .active()
+            .iter()
+            .fold(0.0, |deepest, point| deepest.max(-point.separation))
     }
 
     fn shape_bounds(shape: &Shape3, position: Vec3, rot: Quat) -> Aabb3 {

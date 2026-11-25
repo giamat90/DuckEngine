@@ -552,7 +552,7 @@ impl Solver2 {
                 linear_velocity: solved.velocity,
                 angular_velocity: solved.spin,
             }),
-            _ => body.integrate(frame.gravity, frame.dt),
+            _ => body.integrate(frame.gravity, frame.dt, frame.gyroscopic),
         }
     }
 }

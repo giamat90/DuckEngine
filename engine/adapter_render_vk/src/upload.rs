@@ -185,6 +185,13 @@ pub fn tight_region(aspect: u32, x: i32, y: i32, width: u32, height: u32) -> Buf
     }
 }
 
+/// The same copy aimed at mip level `level` of the image.
+#[must_use]
+pub fn at_level(mut copy: BufferImageCopy, level: u32) -> BufferImageCopy {
+    copy.image_subresource.mip_level = level;
+    copy
+}
+
 /// The staging buffer and its memory.
 struct Staging {
     buffer: BufferHandle,

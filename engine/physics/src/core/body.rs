@@ -8,6 +8,7 @@
 use super::dim::{Dim, Magnitude, Placed, Quantity};
 use super::error::PhysicsError;
 use super::hash::{HashBits, StateHasher};
+use super::{MAX_GIVEN_SPEED, MAX_GIVEN_SPIN, MAX_SPEED, MAX_SPIN};
 use base::pool::Handle;
 use std::marker::PhantomData;
 
@@ -164,6 +165,36 @@ impl<D: Dim> Clone for Body<D> {
 
 impl<D: Dim> Copy for Body<D> {}
 
+/// True when `linear` is within [`MAX_SPEED`] and `angular` within [`MAX_SPIN`]; false for a speed
+/// above them or one that is not a number (squared, so an overflow is also false).
+pub(super) fn speeds_are_bounded<D: Dim>(linear: &D::Vec, angular: &D::Ang) -> bool {
+    linear.length_squared() <= MAX_SPEED * MAX_SPEED
+        && angular.length_squared() <= MAX_SPIN * MAX_SPIN
+}
+
+/// True when `linear` is within [`MAX_GIVEN_SPEED`] and `angular` within [`MAX_GIVEN_SPIN`], the
+/// speeds `create_body` and the setters accept (they leave room below the bounds a step enforces,
+/// card 8-46); false for a speed above them or one that is not a number.
+pub(super) fn given_speeds_are_allowed<D: Dim>(linear: &D::Vec, angular: &D::Ang) -> bool {
+    linear.length_squared() <= MAX_GIVEN_SPEED * MAX_GIVEN_SPEED
+        && angular.length_squared() <= MAX_GIVEN_SPIN * MAX_GIVEN_SPIN
+}
+
+/// Scales `value` down to the size `limit` when it is larger, keeping its direction; true when it
+/// did. The scale is `limit` over the size, from one square root (exact under IEEE 754, so the
+/// result is the same on every machine).
+fn shrink<T>(value: &mut T, limit: f32) -> bool
+where
+    T: Magnitude + Copy + std::ops::Mul<f32, Output = T>,
+{
+    let squared = value.length_squared();
+    if squared <= limit * limit {
+        return false;
+    }
+    *value = *value * (limit / squared.sqrt());
+    true
+}
+
 /// The factor a velocity is multiplied by in one step of length `dt` under `damping` per second.
 pub(crate) fn damping_factor(damping: f32, dt: f32) -> f32 {
     1.0 / (1.0 + dt * damping)
@@ -182,6 +213,9 @@ impl<D: Dim> Body<D> {
             && desc.restitution.is_finite();
         if !finite {
             return Err(PhysicsError::NotFinite);
+        }
+        if !given_speeds_are_allowed::<D>(&desc.linear_velocity, &desc.angular_velocity) {
+            return Err(PhysicsError::SpeedTooHigh);
         }
         if desc.linear_damping < 0.0 || desc.angular_damping < 0.0 {
             return Err(PhysicsError::InvalidShape);
@@ -333,6 +367,9 @@ impl<D: Dim> Body<D> {
     /// Sets the linear velocity.
     pub(super) fn set_linear_velocity(&mut self, velocity: D::Vec) -> Result<(), PhysicsError> {
         self.check_motion(velocity.is_finite())?;
+        if !given_speeds_are_allowed::<D>(&velocity, &D::Ang::default()) {
+            return Err(PhysicsError::SpeedTooHigh);
+        }
         self.linear_velocity = velocity;
         Ok(())
     }
@@ -340,8 +377,17 @@ impl<D: Dim> Body<D> {
     /// Sets the angular velocity.
     pub(super) fn set_angular_velocity(&mut self, velocity: D::Ang) -> Result<(), PhysicsError> {
         self.check_motion(velocity.is_finite())?;
+        if !given_speeds_are_allowed::<D>(&D::Vec::default(), &velocity) {
+            return Err(PhysicsError::SpeedTooHigh);
+        }
         self.angular_velocity = velocity;
         Ok(())
+    }
+
+    /// Drops the force and the torque applied for the next step (a refused step spends them).
+    pub(super) fn clear_forces(&mut self) {
+        self.force = D::Vec::default();
+        self.torque = D::Ang::default();
     }
 
     /// Adds `force` to what acts on the body in the next step only.
@@ -400,7 +446,7 @@ impl<D: Dim> Body<D> {
 
     /// One semi-implicit Euler step of length `dt` under `gravity`; clears the force and the torque.
     /// A static body and a sleeping body stay where they are.
-    pub(crate) fn integrate(&mut self, gravity: D::Vec, dt: f32) {
+    pub(crate) fn integrate(&mut self, gravity: D::Vec, dt: f32, gyroscopic: bool) {
         if self.kind == BodyKind::Static || self.asleep {
             return;
         }
@@ -412,8 +458,11 @@ impl<D: Dim> Body<D> {
 
         let angular_acceleration =
             D::apply_inverse_inertia(self.rotation, self.inv_inertia, self.torque);
-        let spin = (self.angular_velocity + angular_acceleration * dt)
-            * damping_factor(self.angular_damping, dt);
+        let mut spin = self.angular_velocity + angular_acceleration * dt;
+        if gyroscopic {
+            spin = D::gyroscopic_spin(self.rotation, self.inv_inertia, spin, dt);
+        }
+        let spin = spin * damping_factor(self.angular_damping, dt);
         self.angular_velocity = spin;
         self.rotation = D::advance_rotation(self.rotation, spin, dt);
 
@@ -462,6 +511,25 @@ impl<D: Dim> Body<D> {
             && self.rotation.is_finite()
             && self.linear_velocity.is_finite()
             && self.angular_velocity.is_finite()
+    }
+
+    /// Brings a dynamic body's linear speed down to `linear` and its angular speed down to
+    /// `angular` when they are above, keeping the direction; returns true when it changed either
+    /// (card 8-50). A static body, a speed already within its limit and a value that is not a
+    /// number are left alone (the step has refused the last before this is called).
+    pub(super) fn clamp_motion(&mut self, linear: f32, angular: f32) -> bool {
+        if self.kind != BodyKind::Dynamic {
+            return false;
+        }
+        let linear_changed = shrink::<D::Vec>(&mut self.linear_velocity, linear);
+        let angular_changed = shrink::<D::Ang>(&mut self.angular_velocity, angular);
+        linear_changed || angular_changed
+    }
+
+    /// True when the linear and the angular speed are within [`MAX_SPEED`] and [`MAX_SPIN`]; false
+    /// for a speed above them or one that is not a number. Checked after `motion_is_finite`.
+    pub(super) fn motion_is_bounded(&self) -> bool {
+        speeds_are_bounded::<D>(&self.linear_velocity, &self.angular_velocity)
     }
 
     /// Writes every field that decides the future of the body, in a fixed order. `mass` is not
@@ -532,6 +600,99 @@ mod tests {
         Body::from_desc(&desc)
     }
 
+    fn ball_moving(linear: f32, angular: f32) -> Body<crate::d2::D2> {
+        use crate::d2::{D2, Shape2};
+        use base::math::Vec2;
+        let desc = BodyDesc::<D2>::new(
+            BodyKind::Dynamic,
+            Vec2::new(0.0, 0.0),
+            Shape2::Circle { radius: 0.5 },
+        );
+        let mut body = Body::from_desc(&desc).must("a valid body");
+        // Set directly: a speed beyond the bounds is refused at creation (card 8-36), but the
+        // check of a step's result must still be told about one.
+        body.linear_velocity = Vec2::new(linear, 0.0);
+        body.angular_velocity = angular;
+        body
+    }
+
+    #[test]
+    fn motion_is_bounded_up_to_the_two_limits_and_not_beyond() {
+        assert!(ball_moving(0.0, 0.0).motion_is_bounded());
+        assert!(ball_moving(MAX_SPEED, MAX_SPIN).motion_is_bounded());
+        assert!(ball_moving(-MAX_SPEED, -MAX_SPIN).motion_is_bounded());
+        assert!(!ball_moving(MAX_SPEED * 1.001, 0.0).motion_is_bounded());
+        assert!(!ball_moving(0.0, MAX_SPIN * 1.001).motion_is_bounded());
+        assert!(!ball_moving(0.0, -MAX_SPIN * 1.001).motion_is_bounded());
+    }
+
+    #[test]
+    fn given_speeds_are_allowed_up_to_half_the_bounds_and_not_beyond() {
+        let allowed = |linear: f32, angular: f32| {
+            let body = ball_moving(linear, angular);
+            given_speeds_are_allowed::<crate::d2::D2>(&body.linear_velocity, &body.angular_velocity)
+        };
+        assert!(allowed(0.0, 0.0));
+        assert!(allowed(MAX_GIVEN_SPEED, MAX_GIVEN_SPIN));
+        assert!(allowed(-MAX_GIVEN_SPEED, -MAX_GIVEN_SPIN));
+        assert!(!allowed(MAX_GIVEN_SPEED * 1.001, 0.0));
+        assert!(!allowed(0.0, MAX_GIVEN_SPIN * 1.001));
+        assert!(!allowed(0.0, -MAX_GIVEN_SPIN * 1.001));
+        assert!(!allowed(MAX_SPEED, 0.0), "the bound itself is not given");
+        assert!(
+            !allowed(0.0, MAX_SPIN),
+            "the spin bound itself is not given"
+        );
+        assert!(!allowed(f32::NAN, 0.0));
+        assert!(!allowed(0.0, f32::MAX));
+        // What a step may add is the room between the two.
+        const { assert!(MAX_GIVEN_SPEED < MAX_SPEED && MAX_GIVEN_SPIN < MAX_SPIN) };
+    }
+
+    #[test]
+    fn clamping_scales_a_speed_down_to_its_limit_and_keeps_its_direction() {
+        let mut body = ball_moving(0.0, -90.0);
+        body.linear_velocity = base::math::Vec2::new(-300.0, 400.0);
+        assert!(body.clamp_motion(100.0, 30.0));
+        assert!((body.linear_velocity.x - -60.0).abs() < 1.0e-3);
+        assert!((body.linear_velocity.y - 80.0).abs() < 1.0e-3);
+        assert!((body.angular_velocity - -30.0).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn clamping_leaves_a_speed_within_its_limit_exactly_as_it_is() {
+        let mut body = ball_moving(100.0, 30.0);
+        let before = body;
+        assert!(!body.clamp_motion(100.0, 30.0));
+        assert_eq!(body.linear_velocity, before.linear_velocity);
+        assert_eq!(
+            body.angular_velocity.to_bits(),
+            before.angular_velocity.to_bits()
+        );
+        // Only one of the two above its limit: the other is not touched and the call says changed.
+        let mut body = ball_moving(100.0, 30.0);
+        assert!(body.clamp_motion(100.0, 10.0));
+        assert_eq!(body.linear_velocity, before.linear_velocity);
+        assert!((body.angular_velocity - 10.0).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn clamping_never_moves_a_static_body() {
+        let mut body = resting_ball(BodyKind::Static);
+        body.linear_velocity = base::math::Vec2::new(1.0e3, 0.0);
+        assert!(!body.clamp_motion(1.0, 1.0));
+        assert!((body.linear_velocity.x - 1.0e3).abs() < 1.0e-3);
+    }
+
+    #[test]
+    fn a_speed_that_is_not_a_number_or_overflows_when_squared_is_not_bounded() {
+        assert!(!ball_moving(f32::MAX, 0.0).motion_is_bounded());
+        assert!(!ball_moving(0.0, f32::MAX).motion_is_bounded());
+        let mut body = ball_moving(1.0, 1.0);
+        body.linear_velocity.x = f32::NAN;
+        assert!(!body.motion_is_bounded());
+    }
+
     fn resting_ball(kind: BodyKind) -> Body<crate::d2::D2> {
         use crate::d2::{D2, Shape2};
         use base::math::Vec2;
@@ -593,10 +754,10 @@ mod tests {
         let mut sleeper = resting_ball(BodyKind::Dynamic);
         sleeper.fall_asleep();
         let before = sleeper;
-        sleeper.integrate(Vec2::new(0.0, -9.81), 1.0 / 60.0);
+        sleeper.integrate(Vec2::new(0.0, -9.81), 1.0 / 60.0, false);
         assert_eq!(hash_of_body(&sleeper), hash_of_body(&before));
         let mut awake = resting_ball(BodyKind::Dynamic);
-        awake.integrate(Vec2::new(0.0, -9.81), 1.0 / 60.0);
+        awake.integrate(Vec2::new(0.0, -9.81), 1.0 / 60.0, false);
         assert!(awake.linear_velocity().y < 0.0);
     }
 

@@ -60,6 +60,24 @@ pub const DEFAULT_RESTITUTION_THRESHOLD: f32 = 1.0;
 /// manifold (about 1e-6 m) to keep resting contacts from switching on and off.
 pub const DEFAULT_LINEAR_SLOP: f32 = 0.001;
 
+/// Sub-steps of [`SolverConfig::STIFF_CONTACTS`]: eight, twice the default.
+const STIFF_SUB_STEPS: u32 = 8;
+
+/// Contact stiffness of [`SolverConfig::STIFF_CONTACTS`] in hertz: 120, the cap at eight sub-steps
+/// of 60 Hz steps (a quarter of the sub-step rate), four times the default.
+const STIFF_CONTACT_HERTZ: f32 = 120.0;
+
+/// Relax passes of [`SolverConfig::STIFF_CONTACTS`]: two. With one, a column with a heavy body on a
+/// light one keeps creeping at the preset's stiffness (0.05 to 0.2 m/s after 20 s).
+const STIFF_RELAX_ITERATIONS: u32 = 2;
+
+/// Contact damping ratio of [`SolverConfig::STIFF_CONTACTS`]: five. With the default ratio of ten
+/// at 120 Hz a pyramid of 44 rows keeps moving (0.19 m/s after 300 steps, asleep at step 1230);
+/// with five it is at rest (0.0001 m/s), and no time cost showed in the sweep of card 8-59 (card 8-68,
+/// `wiki/spikes/speed-bounds-scan.md` sections 18 and 20). The response is not monotone: of the
+/// ratios tried, 0.2 to 5 calm it, 10, 30 and 100 do not.
+const STIFF_CONTACT_DAMPING_RATIO: f32 = 5.0;
+
 /// The tunables of the contact solver. All are fixed when the world is built.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SolverConfig {
@@ -87,6 +105,11 @@ pub struct SolverConfig {
     pub joint_hertz: f32,
     /// Damping ratio of a rigid joint, zero or more ([`DEFAULT_JOINT_DAMPING_RATIO`]).
     pub joint_damping_ratio: f32,
+    /// Whether a 3D body keeps its angular momentum instead of its angular velocity (card 8-26),
+    /// `false` by default: with the term on, a torque-free body whose principal moments differ
+    /// tumbles as a real one does (a box spun about its middle axis flips); with it off the
+    /// angular velocity is kept, as before. 2D has no such term and ignores this.
+    pub gyroscopic: bool,
 }
 
 impl SolverConfig {
@@ -101,6 +124,28 @@ impl SolverConfig {
         linear_slop: DEFAULT_LINEAR_SLOP,
         joint_hertz: DEFAULT_JOINT_HERTZ,
         joint_damping_ratio: DEFAULT_JOINT_DAMPING_RATIO,
+        gyroscopic: false,
+    };
+
+    /// Stiffer contacts for stacks that carry a heavy body (card 8-54): eight sub-steps, two relax
+    /// passes, a contact stiffness of 120 Hz and a contact damping ratio of 5 (card 8-68),
+    /// everything else as in [`SolverConfig::DEFAULT`].
+    ///
+    /// A contact gives way by the weight it carries over its stiffness, so a light box under a
+    /// heavy one sinks into it; the default 30 Hz lets a column of eight boxes under a top 50 times
+    /// as dense come apart, and this preset keeps it standing (see the scan of card 8-39 and
+    /// `wiki/spikes/speed-bounds-scan.md` section 13). It costs twice the sub-steps of the default and one more relax pass,
+    /// and **assumes steps of 60 Hz**: at a longer step the stiffness is capped at a quarter of the
+    /// sub-step rate (at 30 Hz steps it still settled the tall stacks it was tried on: `tests/stack_mass_ratio.rs`).
+    /// The ratio of 5 (the default is 10) stops a very tall pyramid from ringing at this stiffness;
+    /// in 3D, five boxes under a top 70 times as dense settle in 4 of 5 offsets at 30 Hz steps (all
+    /// five with the default ratio), which is why the ratio is not lower. The default is unchanged.
+    pub const STIFF_CONTACTS: Self = Self {
+        sub_steps: STIFF_SUB_STEPS,
+        relax_iterations: STIFF_RELAX_ITERATIONS,
+        contact_hertz: STIFF_CONTACT_HERTZ,
+        contact_damping_ratio: STIFF_CONTACT_DAMPING_RATIO,
+        ..Self::DEFAULT
     };
 
     /// Checks every field against its range.
@@ -164,6 +209,8 @@ pub struct StepFrame<D: Dim> {
     pub gravity: D::Vec,
     /// Length of the step in seconds, finite and above zero.
     pub dt: f32,
+    /// Whether bodies keep their angular momentum ([`SolverConfig::gyroscopic`]).
+    pub gyroscopic: bool,
 }
 
 /// Moves the bodies of one step and answers their contacts. One value lives in each world.
@@ -239,7 +286,7 @@ impl<D: Dim> ContactSolver<D> for FreeSolver {
         frame: StepFrame<D>,
     ) {
         for body in bodies.iter_mut().flatten() {
-            body.integrate(frame.gravity, frame.dt);
+            body.integrate(frame.gravity, frame.dt, frame.gyroscopic);
         }
     }
 
@@ -258,6 +305,7 @@ impl<D: Dim> ContactSolver<D> for FreeSolver {
 
 #[cfg(test)]
 mod tests {
+    use super::super::soft::HERTZ_LIMIT_FRACTION;
     use super::*;
 
     fn invalid(change: impl FnOnce(&mut SolverConfig)) -> bool {
@@ -285,6 +333,29 @@ mod tests {
             (config.joint_hertz, config.joint_damping_ratio),
             (60.0, 2.0)
         );
+    }
+
+    #[test]
+    fn the_stiff_contact_preset_is_valid_and_differs_from_the_defaults_in_four_fields() {
+        let preset = SolverConfig::STIFF_CONTACTS;
+        assert_eq!(preset.validate(), Ok(()));
+        assert_eq!((preset.sub_steps, preset.relax_iterations), (8, 2));
+        assert_eq!(preset.contact_hertz.to_bits(), 120.0_f32.to_bits());
+        assert_eq!(preset.contact_damping_ratio.to_bits(), 5.0_f32.to_bits());
+        // The stiffness sits on the cap of a contact at 60 Hz steps: a quarter of the sub-step rate.
+        let sub_step_rate = f32::from(u8::try_from(preset.sub_steps).unwrap_or(0)) * 60.0;
+        assert_eq!(
+            preset.contact_hertz.to_bits(),
+            (sub_step_rate * HERTZ_LIMIT_FRACTION).to_bits()
+        );
+        let same_as_default = SolverConfig {
+            sub_steps: DEFAULT_SUB_STEPS,
+            relax_iterations: DEFAULT_RELAX_ITERATIONS,
+            contact_hertz: DEFAULT_CONTACT_HERTZ,
+            contact_damping_ratio: DEFAULT_CONTACT_DAMPING_RATIO,
+            ..preset
+        };
+        assert_eq!(same_as_default, SolverConfig::DEFAULT);
     }
 
     #[test]

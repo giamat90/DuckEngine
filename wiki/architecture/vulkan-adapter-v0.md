@@ -159,7 +159,7 @@ flowchart LR
 
 - A write waits for the GPU (one fence per transfer): simple and correct, but a CPU stall per upload. A frame-batched upload path is a later optimisation, to be justified by a benchmark.
 - Destroying a resource frees it at once; the caller must know no submitted work still uses it. Card 6-9 owns that rule once frames exist.
-- Only mip level 0 is written; the other levels of a texture are undefined until something fills them. A texture never written has undefined contents.
+- `write_texture` writes mip level 0; `write_texture_level` (card 8-35) writes any level of the chain, with the region and the byte count of that level. A level nobody wrote has undefined contents, and `read_back` reads level 0 only. The device does not make levels: the caller sends each one (`render::mips` computes a chain). A texture never written has undefined contents.
 - A failed block allocation is an error; there is no retry with a smaller block.
 - The validation layer is not installed on the development machine, so the real-device tests ran without it (each prints a note); the barrier masks are checked by the fake driver only where stated above, and no real-device test reads a buffer back.
 - Read-back staging uses uncached host-coherent memory; a `HOST_CACHED` placement would read faster.

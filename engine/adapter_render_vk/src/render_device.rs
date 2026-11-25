@@ -545,13 +545,15 @@ impl IRenderDevice for VulkanDevice {
             .map_err(|error| render_error(&error))
     }
 
-    fn write_texture(
+    fn write_texture_level(
         &mut self,
         texture: TextureId,
+        level: u32,
         area: Rect,
         bytes: &[u8],
     ) -> Result<(), RenderError> {
-        self.shadow.write_texture(texture, area, bytes)?;
+        self.shadow
+            .write_texture_level(texture, level, area, bytes)?;
         if self.recording() {
             return Err(RenderError::Unsupported);
         }
@@ -560,7 +562,7 @@ impl IRenderDevice for VulkanDevice {
             .get(texture)
             .ok_or(RenderError::InvalidHandle)?;
         self.resources
-            .write_texture(record.id, region(area), bytes)
+            .write_texture_level(record.id, level, region(area), bytes)
             .map_err(|error| render_error(&error))
     }
 

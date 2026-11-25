@@ -71,6 +71,40 @@ fn no_scene_blows_up() -> Result<(), Failure> {
     Ok(())
 }
 
+/// The fastest spin any scene of the catalogue reaches, in radians per second, is far below the
+/// bound proposed in card 8-37 (measured: a little over 40 for the chain, the fastest scene).
+const SPIN_LIMIT: f32 = 100.0;
+
+/// The fastest spin of any dynamic body now, in radians per second.
+fn fastest_spin(world: &Scene3World) -> f32 {
+    world
+        .world()
+        .iter()
+        .map(|(_, body)| body.angular_velocity().length())
+        .map(|spin| {
+            if spin.is_finite() {
+                spin
+            } else {
+                f32::INFINITY
+            }
+        })
+        .fold(0.0, f32::max)
+}
+
+#[test]
+fn no_scene_spins_wildly() -> Result<(), Failure> {
+    for scene in Scene3::ALL {
+        let mut world = Scene3World::new(scene, &serial(), true)?;
+        let mut peak = 0.0_f32;
+        for _ in 0..STEPS {
+            world.step()?;
+            peak = peak.max(fastest_spin(&world));
+        }
+        assert!(peak < SPIN_LIMIT, "{}: {peak} rad/s", scene.name());
+    }
+    Ok(())
+}
+
 #[test]
 fn the_standing_scenes_stand_still_awake() -> Result<(), Failure> {
     for scene in Scene3::ALL

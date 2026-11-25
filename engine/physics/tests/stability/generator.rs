@@ -4,10 +4,11 @@
 //! hanging in the middle gap of the bin, or (one in four) a whip pinned clear of it. The same seed gives the same scene on every run and platform.
 
 use super::scene::{
-    BALL_ANGULAR_DAMPING, ChainPlan, Lie, Scene, chain, static_box, world_with_floor,
+    BALL_ANGULAR_DAMPING, ChainPlan, Lie, Scene, chain, static_box, world_with_floor_solver,
 };
 use base::math::Vec2;
 use base::rng::Pcg32;
+use physics::core::SolverConfig;
 use physics::d2::{BodyDesc, BodyKind, PhysicsError, Rot2, Shape2, SleepConfig, World};
 
 /// The stream of the generator's `Pcg32`.
@@ -93,8 +94,17 @@ pub fn generate(seed: u64, sleep: SleepConfig) -> Result<Scene, PhysicsError> {
 /// As [`generate`], with the number of bodies dropped in the bin (the first ones of `tracked`; the
 /// links of the whip come after them).
 pub fn generate_with_bin(seed: u64, sleep: SleepConfig) -> Result<(Scene, usize), PhysicsError> {
+    generate_with_solver(seed, sleep, SolverConfig::DEFAULT)
+}
+
+/// As [`generate_with_bin`], with a chosen solver configuration.
+pub fn generate_with_solver(
+    seed: u64,
+    sleep: SleepConfig,
+    solver: SolverConfig,
+) -> Result<(Scene, usize), PhysicsError> {
     let mut rng = Pcg32::new(seed, STREAM);
-    let mut world = world_with_floor(40, 16, sleep)?;
+    let mut world = world_with_floor_solver(40, 16, sleep, solver)?;
     build_bin(&mut world)?;
     let count = 3 + rng.next_u32() % 8;
     let mut tracked = Vec::new();

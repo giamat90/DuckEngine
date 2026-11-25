@@ -236,3 +236,43 @@ impl IPhysicsDebugDraw for Counting {
         self.points += 1;
     }
 }
+
+/// Card 8-74 (the 3D half of the test of card 8-53): asking a world for its deepest overlap is one
+/// pass over the manifolds and returns by value, so it makes no allocator call, for every pair of
+/// shapes that overlaps.
+#[test]
+fn asking_for_the_deepest_overlap_makes_no_allocator_call() -> Result<(), PhysicsError> {
+    let mut asked = 0;
+    for (first, second) in shape_pairs() {
+        // A step of 1e-6 s only fills the manifolds: the bodies do not move visibly.
+        let mut world = World::new(WorldConfig {
+            max_bodies: 4,
+            gravity: Vec3::ZERO,
+            max_pairs: 16,
+            broadphase_margin: DEFAULT_BROADPHASE_MARGIN,
+            max_manifolds: 16,
+            max_joints: 0,
+            speculative_margin: DEFAULT_SPECULATIVE_MARGIN,
+            solver: SolverConfig::DEFAULT,
+            sleep: SleepConfig::DISABLED,
+        })?;
+        world.create_body(&BodyDesc::new(BodyKind::Dynamic, Vec3::ZERO, first))?;
+        world.create_body(&BodyDesc::new(
+            BodyKind::Dynamic,
+            Vec3::new(0.0, 0.3, 0.0),
+            second,
+        ))?;
+        world.step(1.0e-6)?;
+        let (found, counts) = count_allocations(|| world.deepest_overlap());
+        assert_eq!(counts.calls(), 0, "{counts:?}");
+        asked += usize::from(found.is_some());
+    }
+    // Every pair overlaps by construction (measured: all of them gave a report); a pair that did
+    // not would make the test pass on nothing.
+    assert_eq!(
+        asked,
+        shape_pairs().count(),
+        "only {asked} pairs overlapped"
+    );
+    Ok(())
+}
