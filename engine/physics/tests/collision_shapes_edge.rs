@@ -287,7 +287,10 @@ fn a_clamping_world_steps_the_off_centre_throws_that_are_refused_by_default()
 const REFUSED_ROWS: [(Form, u32, f32, f32); 4] = [
     (Form::Box, 6, 10.0, 2500.0),
     (Form::Box, 5, 10.0, 5000.0),
-    (Form::Capsule, 5, 3.0, 2500.0),
+    // Ratio 3 was refused here until card 8-89 (a capsule keeps its far end beside another one
+    // that lies a little off parallel, so the row tumbles differently); ratio 10 is refused before
+    // and after.
+    (Form::Capsule, 5, 10.0, 2500.0),
     (Form::Hull, 5, 10.0, 1250.0),
 ];
 

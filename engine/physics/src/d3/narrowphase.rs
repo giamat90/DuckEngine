@@ -27,6 +27,12 @@ const COINCIDENT_NORMAL: Vec3 = Vec3::X;
 const MIN_LENGTH_SQUARED: f32 = 1.0e-12;
 /// Two segments are parallel when `sin^2` of their angle is at most this.
 const PARALLEL_SINE_SQUARED: f32 = 1.0e-6;
+/// Two capsules lying alongside each other (card 8-89): `sin^2` of the angle between their axes is
+/// at most this (about 18 degrees). An empirical bound, measured on the mixed pile of card 8-21 only:
+/// with no bound 9 of its 90 bodies are asleep at step 1200, with any bound from 0.0025 to 0.1 all
+/// are, at step 683. Why a crossing at a wider angle with a far end inside the margin hurts the pile
+/// was not found (card 8-89, Not verified).
+const NEAR_PARALLEL_SINE_SQUARED: f32 = 0.1;
 /// The shortest overlap of two parallel segments that gets two contact points.
 const MIN_OVERLAP: f32 = 1.0e-4;
 /// The least a capsule end may be from the nearest point and still get a contact, whatever the
@@ -171,6 +177,17 @@ fn contact(from: Vec3, to: Vec3, normal: Vec3, radii: (f32, f32)) -> ContactPoin
     }
 }
 
+/// The contact of two axis points that are not the closest pair (card 8-89), with the true distance
+/// of the two surfaces as its separation. Along the normal of the closest pair every point of one
+/// skew line is as far from the other as the closest pair is, so the separation along it would
+/// be the same everywhere; the distance between the points is what grows away from the closest pair.
+fn tube_contact(from: Vec3, to: Vec3, normal: Vec3, radii: (f32, f32)) -> ContactPoint3 {
+    ContactPoint3 {
+        separation: (to - from).length() - radii.0 - radii.1,
+        ..contact(from, to, normal, radii)
+    }
+}
+
 /// The result with the points that are within `margin`, or nothing when none is.
 fn within_margin(normal: Vec3, points: &[ContactPoint3], margin: f32) -> Option<Manifold3> {
     let mut kept = [ContactPoint3::default(); 2];
@@ -190,7 +207,14 @@ fn parallel_pairs(first: &Round, second: &Round) -> Option<[(Vec3, Vec3); 2]> {
     if first.is_point() || second.is_point() || sine_squared > PARALLEL_SINE_SQUARED * len1 * len2 {
         return None;
     }
-    let length = len1.sqrt();
+    overlap_pairs(first, second)
+}
+
+/// The closest points of two segments, neither a point, at both ends of their overlap along `first`.
+fn overlap_pairs(first: &Round, second: &Round) -> Option<[(Vec3, Vec3); 2]> {
+    let (dir1, dir2) = (first.direction(), second.direction());
+    let len2 = dir2.length_squared();
+    let length = dir1.length_squared().sqrt();
     let unit = dir1 / length;
     let starts = [second.start, second.end].map(|end| (end - first.start).dot(unit));
     let (low, high) = (
@@ -226,7 +250,32 @@ fn round_round(first: &Round, second: &Round, margin: f32) -> Option<Manifold3> 
     let (s, t) = closest_parameters(first, second);
     let (from, to) = (first.at(s), second.at(t));
     let normal = pair_normal(first, second, from, to);
-    within_margin(normal, &[contact(from, to, normal, radii)], margin)
+    let near = contact(from, to, normal, radii);
+    let band = margin.max(MIN_END_BAND);
+    match far_end(first, second, from).map(|(a, b)| tube_contact(a, b, normal, radii)) {
+        Some(far) if far.separation <= near.separation + band => {
+            within_margin(normal, &[near, far], margin)
+        }
+        _ => within_margin(normal, &[near], margin),
+    }
+}
+
+/// The end of the overlap of two segments that is further from `from` (card 8-89): a capsule that
+/// lies a little off parallel beside another has its second contact there, as one on a box has at
+/// its far end (card 8-21), or it would rock on the one point.
+fn far_end(first: &Round, second: &Round, from: Vec3) -> Option<(Vec3, Vec3)> {
+    if first.is_point() || second.is_point() {
+        return None;
+    }
+    let (dir1, dir2) = (first.direction(), second.direction());
+    if dir1.cross(dir2).length_squared()
+        > NEAR_PARALLEL_SINE_SQUARED * dir1.length_squared() * dir2.length_squared()
+    {
+        return None;
+    }
+    let [low, high] = overlap_pairs(first, second)?;
+    let away = |pair: &(Vec3, Vec3)| (pair.0 - from).length_squared();
+    Some(if away(&low) >= away(&high) { low } else { high })
 }
 
 /// A box in the world: where it is, how it is turned, how big.
