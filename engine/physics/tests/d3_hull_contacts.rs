@@ -334,7 +334,8 @@ fn roll(sides: u8, speed: f32) -> Result<Roll, PhysicsError> {
 const ROLL_STEPS: u32 = 240;
 
 /// Speeds of the roll in m/s (the spin is twice the speed, so the prism rolls without slipping).
-/// Above about 2.2 m/s the prism hops by 3 to 4 mm, before and after card 8-71, so they are left out.
+/// Above about 2.2 m/s the prism hops by up to a few millimetres, before and after card 8-71, so
+/// they are left out (card 8-76 pins the hop on its own).
 const ROLL_SPEEDS: [f32; 4] = [1.0, 1.4, 1.8, 2.0];
 
 /// Card 8-71. A rolling prism had one point in a quarter of the steps where an edge (two points)
@@ -386,22 +387,22 @@ fn a_rolling_prism_keeps_both_points_of_the_edge_it_touches_and_rolls_straight()
     Ok(())
 }
 
-/// Card 8-76. A body that rolls over a corner leaves the ground when it is faster than
-/// sqrt(g R): the centre then follows a parabola above the arc of radius R about the corner (here
-/// sqrt(9.81 x 0.5) = 2.2 m/s). A rigid-polygon model of the roll (inelastic corner impacts, no
-/// sliding) hops the same way: nothing for 8, 12 and 16 sides below 2.2 m/s, and for 3.0 m/s 7.2,
-/// 9.0 and 6.3 mm against 8.4, 5.7 and 3.9 mm here. So the hop is the physics of a polygon, not a
-/// contact fault. This pins both sides of the threshold (measured: at most 0.54 mm at 2.0 m/s, at
-/// least 3.9 mm at 3.0 m/s).
+/// Card 8-76. A body that rolls over a corner leaves the ground when it is faster than about
+/// sqrt(g R cos(pi/n)) (the centre follows a parabola above the arc of radius R about the corner;
+/// 2.1 to 2.2 m/s for R = 0.5 m), so a prism hops above that speed. Measured here: at most 0.54 mm
+/// at 2.0 m/s, at least 3.9 mm at 3.0 m/s, and a throwaway 2D model of a rigid polygon (reviews/8-76.md)
+/// gave the same order at 3.0 m/s. Between 2.2 and 2.6 m/s the hop is erratic (0.4 to 3.9 mm) and is not
+/// pinned.
 const HOP_FREE_SPEED: f32 = 2.0;
 const HOP_SPEED: f32 = 3.0;
 const HOP_FREE_RISE: f32 = 0.001;
-const HOP_RISE: f32 = 0.002;
+const HOP_RISE: f32 = 0.0015;
 
 #[test]
 fn a_prism_rolls_without_a_hop_below_the_speed_a_corner_holds_it_and_hops_above()
 -> Result<(), PhysicsError> {
     let critical = (STANDARD_GRAVITY.length() * HALF).sqrt();
+    // The exact onset is a little lower (cos(pi/n)); the speeds are well clear of both.
     assert!(HOP_FREE_SPEED < critical && critical < HOP_SPEED);
     for sides in PRISM_SIDES {
         let slow = roll(sides, HOP_FREE_SPEED)?;
