@@ -573,16 +573,16 @@ fn incident_for(core: &Core, fitted: &Face, toward: Vec3, margin: f32) -> Face {
     }
 }
 
-/// What GJK and EPA said about a pair: the normal, the margin, and the band of the incident shape
+/// What GJK and EPA said about a pair: the one-point manifold, the margin, and the band of the incident shape
 /// (how far from its farthest plane a corner may be and still be a contact point, see
 /// [`incident_for`]).
 #[derive(Clone, Copy)]
 struct Ask {
-    normal: Vec3,
+    /// The one-point answer of GJK and EPA: its normal is the normal of the pair, and its depth
+    /// bounds the points (see [`depth_floor`]).
+    single: Manifold3,
     margin: f32,
     band: f32,
-    /// The lowest separation a point may have and still be a contact (see [`depth_floor`]).
-    floor: f32,
 }
 
 /// Whether a contact is shallow: no deeper than [`FACE_WINDOW`] of the reach of the smaller shape.
@@ -615,10 +615,12 @@ fn deepest(manifold: &Manifold3) -> f32 {
 }
 
 /// The lowest separation a contact point of the pair may have: GJK's depth less [`DEPTH_ALLOWANCE`]
-/// of the reach of the smaller shape.
+/// of the reach (with the radius) of the smaller shape, and at least [`MIN_TOLERANCE`] so that
+/// rounding cannot drop a point of a shape with no reach.
 fn depth_floor(first: &Convex, second: &Convex, single: &Manifold3) -> f32 {
-    let reach = reach_of(&first.core).min(reach_of(&second.core));
-    deepest(single) - reach * DEPTH_ALLOWANCE
+    // A round shape's radius is part of how far it can reach: a sphere has a point as its core.
+    let reach = (reach_of(&first.core) + first.radius).min(reach_of(&second.core) + second.radius);
+    deepest(single) - (reach * DEPTH_ALLOWANCE).max(MIN_TOLERANCE)
 }
 
 /// The manifold of `reference` (the face of `which`) against the other face `other`, clipped, with
@@ -630,11 +632,12 @@ fn clip_manifold(
     ask: Ask,
 ) -> Option<Manifold3> {
     let Ask {
-        normal,
+        single,
         margin,
         band,
-        floor,
     } = ask;
+    let normal = single.normal;
+    let floor = depth_floor(first, second, &single);
     let other_core = match which {
         Reference::First => &second.core,
         Reference::Second => &first.core,
@@ -690,10 +693,9 @@ fn widened(first: &Convex, second: &Convex, single: &Manifold3, margin: f32) -> 
         (&b, &a)
     };
     let ask = Ask {
-        normal: single.normal,
+        single: *single,
         margin,
         band: margin,
-        floor: depth_floor(first, second, single),
     };
     let manifold = clip_manifold((first, second), which, faces, ask)?;
     agrees(first, second, &manifold, single).then_some(manifold)
@@ -717,10 +719,9 @@ pub(super) fn contact(first: &Convex, second: &Convex, margin: f32) -> Option<Ma
     };
     let pair = (first, second);
     let ask = Ask {
-        normal: single.normal,
+        single,
         margin,
         band: margin,
-        floor: depth_floor(first, second, &single),
     };
     // The answer of a fitted reference stands as it was (the corners on the farthest plane of the
     // other shape); when that shape has no face and the contact is shallow, the corners within the
@@ -1626,5 +1627,83 @@ mod tests {
             (floor - (-0.03 - 0.25 * 0.866_025_4)).abs() < 1e-5,
             "floor {floor}"
         );
+    }
+
+    #[test]
+    fn the_depth_floor_counts_the_radius_of_a_round_shape_and_never_drops_to_nothing() {
+        let frame = BoxFrame {
+            centre: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            half: Vec3::new(0.5, 0.5, 0.5),
+        };
+        let cube = Convex {
+            core: Core::Box(frame),
+            radius: 0.0,
+        };
+        // A sphere is a point grown by 0.35: its reach is the radius, not zero.
+        let sphere = Convex {
+            core: Core::Point(Vec3::ZERO),
+            radius: 0.35,
+        };
+        let single = one_point(Vec3::Y, -0.01);
+        let floor = depth_floor(&cube, &sphere, &single);
+        assert!(
+            (floor - (-0.01 - 0.25 * 0.35)).abs() < 1e-6,
+            "floor {floor}"
+        );
+        // Two points: no reach and no radius, still room for rounding.
+        let bare = depth_floor(&point_shape(Vec3::ZERO), &point_shape(Vec3::Y), &single);
+        assert!(bare < -0.01 && bare > -0.011, "floor {bare}");
+    }
+
+    #[test]
+    fn a_clip_against_a_face_that_is_not_where_the_shapes_touch_gives_no_manifold() {
+        // Two unit cubes overlap by 1 mm (GJK's depth). The reference face is the top of the first, at
+        // y = 0.5 (not fitted, so the incident face handed in is used as it is), 50 m below it, as when a face is chosen that is not
+        // where the shapes touch: its points are 50 m behind the plane and are not contacts.
+        let frame = |y: f32| BoxFrame {
+            centre: Vec3::new(0.0, y, 0.0),
+            rotation: Quat::IDENTITY,
+            half: Vec3::new(0.5, 0.5, 0.5),
+        };
+        let (first, second) = (
+            Convex {
+                core: Core::Box(frame(0.0)),
+                radius: 0.0,
+            },
+            Convex {
+                core: Core::Box(frame(0.999)),
+                radius: 0.0,
+            },
+        );
+        let reference = face(&square_at(0.5), None);
+        let ask = Ask {
+            single: one_point(Vec3::Y, -0.001),
+            margin: 0.02,
+            band: 0.0,
+        };
+        let far = face(&square_at(-49.5), None);
+        assert!(
+            clip_manifold((&first, &second), Reference::First, (&reference, &far), ask).is_none()
+        );
+        // The same call with the incident face where the cubes touch keeps its four points.
+        let near = face(&square_at(0.499), None);
+        let kept = clip_manifold(
+            (&first, &second),
+            Reference::First,
+            (&reference, &near),
+            ask,
+        );
+        assert_eq!(kept.map(|m| m.count), Some(4));
+    }
+
+    /// The four corners of a unit square (half 0.5) at height `y`.
+    fn square_at(y: f32) -> [Vec3; 4] {
+        [
+            Vec3::new(-0.5, y, -0.5),
+            Vec3::new(0.5, y, -0.5),
+            Vec3::new(0.5, y, 0.5),
+            Vec3::new(-0.5, y, 0.5),
+        ]
     }
 }
