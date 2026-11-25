@@ -553,6 +553,9 @@ fn huge_cube_cases() -> Vec<(f32, f32, f32)> {
     cases
 }
 
+/// How far the lowest separation of the prism sweep may be from the height of the lowest corner: 0.1 mm.
+const PRISM_HEIGHT_TOLERANCE: f32 = 1.0e-4;
+
 /// The corners of a prism of `sides` sides (radius 0.5, 1 m long along z) as the points given to
 /// `Hull::new`. The hull keeps them in its principal frame (the centre of mass at the origin, the axes
 /// of the inertia tensor): for a regular prism that frame is turned about z by an arbitrary angle
