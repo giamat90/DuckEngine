@@ -151,8 +151,10 @@ fn the_standing_scenes_stand_still() -> Result<(), Failure> {
     Ok(())
 }
 
-/// Steps a pile needs to settle, and the speed under which it counts as settling (a capsule on a
-/// sphere rocks at about 0.1 m/s for a long time: finding of card 8-12, see the review).
+/// Steps a pile needs to settle, and the speed under which it counts as settling. The bound is loose
+/// on purpose: on Linux the last sphere sleeps between steps 800 and 900 (card 8-33). Card 8-12 saw a
+/// capsule rock at 0.1 m/s for thousands of steps; card 8-21 fixed it, and the stricter check is
+/// that the mixed pile sleeps ([`the_mixed_pile_comes_to_rest_and_sleeps`]).
 const PILE_STEPS: u32 = 800;
 const PILE_SETTLING_SPEED: f32 = 0.25;
 /// Steps within which the whole sphere pile must be asleep (card 8-33). With the cross-platform
@@ -193,6 +195,22 @@ fn the_sphere_pile_comes_to_rest_and_sleeps() -> Result<(), Failure> {
     let found = run_scene3(Scene3::SpherePile, PILE_SLEEP_STEPS, &serial(), true)?;
     assert_eq!(found.asleep, bodies);
     assert!(found.final_speed < REST_SPEED);
+    Ok(())
+}
+
+/// Card 8-21. The mixed pile used to be awake for 3465 steps: a capsule that touched a box with one
+/// point (its other end was 8 mm higher than the 5 mm an end was allowed) rocked at 0.1 m/s, and
+/// the whole pile is one island. With both ends kept (an end within the margin of the nearest point
+/// is a contact) the pile sleeps at step 683, and its fastest body is at rest at step 800 (0.06 m/s
+/// with the old code, which was still awake at step 1500). The bound is that of the sphere pile
+/// (1200 steps): the platform's floating-point library moves the last digits of the rotations
+/// (card 8-33).
+#[test]
+fn the_mixed_pile_comes_to_rest_and_sleeps() -> Result<(), Failure> {
+    let bodies = Scene3::MixedPile.bodies();
+    let found = run_scene3(Scene3::MixedPile, PILE_SLEEP_STEPS, &serial(), true)?;
+    assert_eq!(found.asleep, bodies, "{} of {bodies} asleep", found.asleep);
+    assert!(found.final_speed < REST_SPEED, "{}", found.final_speed);
     Ok(())
 }
 

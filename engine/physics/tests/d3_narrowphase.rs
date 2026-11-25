@@ -295,6 +295,44 @@ fn a_capsule_lying_along_a_box_edge_gets_two_points_and_one_across_it_gets_one()
     );
 }
 
+/// A capsule (half length 1, radius 0.5) lying on the top face (y = 0) of a box, turned from flat
+/// by `lean` radians so that its two ends are `2 sin(lean)` apart in height, the lower end 0.02
+/// into the box.
+fn leaning_capsule(lean: f32, sink: f32) -> Placed3 {
+    let turn = std::f32::consts::FRAC_PI_2 - lean;
+    capsule(
+        1.0,
+        0.5,
+        [0.0, 0.5 - sink + lean.sin(), 0.0],
+        about(Vec3::Z, turn),
+    )
+}
+
+#[test]
+fn a_capsule_leaning_by_a_few_millimetres_keeps_both_ends_while_both_are_within_the_margin() {
+    // Card 8-21: the ends are 8 mm apart in height (lean 0.004), more than the 5 mm an end was
+    // allowed from the nearest point, so the upper end lost its point and the capsule rocked on the
+    // other; the margin (0.1 here) is what makes a point worth keeping.
+    let ground = cuboid([5.0, 0.5, 5.0], [0.0, -0.5, 0.0], Quat::IDENTITY);
+    for lean in [0.0, 0.002, 0.004, 0.02, 0.04] {
+        let m = must(collide(&ground, &leaning_capsule(lean, 0.02)));
+        assert_eq!(m.active().len(), 2, "lean {lean}: {:?}", m.active());
+    }
+    // Further apart than the margin (0.1): the upper end is out of reach, one point.
+    let far = must(collide(&ground, &leaning_capsule(0.08, 0.02)));
+    assert_eq!(far.active().len(), 1, "{:?}", far.active());
+}
+
+#[test]
+fn a_capsule_sunk_through_a_box_face_and_leaning_keeps_both_ends() {
+    // The same lean, with the whole segment inside the box (card 8-21, the deep path).
+    let ground = cuboid([5.0, 0.5, 5.0], [0.0, -0.5, 0.0], Quat::IDENTITY);
+    for lean in [0.0, 0.004, 0.02] {
+        let m = must(collide(&ground, &leaning_capsule(lean, 0.7)));
+        assert_eq!(m.active().len(), 2, "lean {lean}: {:?}", m.active());
+    }
+}
+
 // ---- boxes ----------------------------------------------------------------------------------
 
 #[test]
