@@ -28,8 +28,10 @@ const MIN_LENGTH_SQUARED: f32 = 1.0e-12;
 /// Two segments are parallel when `sin^2` of their angle is at most this.
 const PARALLEL_SINE_SQUARED: f32 = 1.0e-6;
 /// Two capsules lying alongside each other (card 8-89): `sin^2` of the angle between their axes is
-/// at most this (about 18 degrees). Measured: with no bound the mixed pile of card 8-21 no longer
-/// sleeps within 2000 steps, with any bound from 0.0025 to 0.1 it sleeps at step 683 as before.
+/// at most this (about 18 degrees). An empirical bound, measured on the mixed pile of card 8-21 only:
+/// with no bound 9 of its 90 bodies are asleep at step 1200, with any bound from 0.0025 to 0.1 all
+/// are, at step 683. Why a crossing at a wider angle with a far end inside the margin hurts the pile
+/// was not found (card 8-89, Not verified).
 const NEAR_PARALLEL_SINE_SQUARED: f32 = 0.1;
 /// The shortest overlap of two parallel segments that gets two contact points.
 const MIN_OVERLAP: f32 = 1.0e-4;
@@ -175,6 +177,17 @@ fn contact(from: Vec3, to: Vec3, normal: Vec3, radii: (f32, f32)) -> ContactPoin
     }
 }
 
+/// The contact of two axis points that are not the closest pair (card 8-89), with the true distance
+/// of the two surfaces as its separation. Along the normal of the closest pair every point of one
+/// skew line is as far from the other as the closest pair is, so the separation along it would
+/// be the same everywhere; the distance between the points is what grows away from the closest pair.
+fn tube_contact(from: Vec3, to: Vec3, normal: Vec3, radii: (f32, f32)) -> ContactPoint3 {
+    ContactPoint3 {
+        separation: (to - from).length() - radii.0 - radii.1,
+        ..contact(from, to, normal, radii)
+    }
+}
+
 /// The result with the points that are within `margin`, or nothing when none is.
 fn within_margin(normal: Vec3, points: &[ContactPoint3], margin: f32) -> Option<Manifold3> {
     let mut kept = [ContactPoint3::default(); 2];
@@ -239,7 +252,7 @@ fn round_round(first: &Round, second: &Round, margin: f32) -> Option<Manifold3> 
     let normal = pair_normal(first, second, from, to);
     let near = contact(from, to, normal, radii);
     let band = margin.max(MIN_END_BAND);
-    match far_end(first, second, from).map(|(a, b)| contact(a, b, normal, radii)) {
+    match far_end(first, second, from).map(|(a, b)| tube_contact(a, b, normal, radii)) {
         Some(far) if far.separation <= near.separation + band => {
             within_margin(normal, &[near, far], margin)
         }

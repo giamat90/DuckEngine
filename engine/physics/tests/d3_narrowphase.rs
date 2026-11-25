@@ -235,6 +235,23 @@ fn the_far_end_of_a_leaning_capsule_beside_another_is_kept_up_to_the_margin_and_
     assert_eq!(must(collide(&a, &far_end)).active().len(), 1);
 }
 
+/// Card 8-89: two skew capsules (the axes 0.3 rad apart, 0.45 between them at the middle, their
+/// closest points) have a second point at an end of the overlap whose separation is the true distance
+/// of the surfaces there, 0.0312 (the end of the overlap along `a`, y = cos 0.3, against the nearest
+/// point of `b`; not the -0.05 of the closest pair), in either order.
+#[test]
+fn the_far_point_of_two_skew_capsules_has_the_true_distance_of_the_surfaces() {
+    let a = capsule(1.0, 0.25, [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let b = capsule(1.0, 0.25, [0.45, 0.0, 0.0], about(Vec3::X, 0.3));
+    for m in [must(collide(&a, &b)), must(collide(&b, &a))] {
+        let mut seps: Vec<f32> = m.active().iter().map(|p| p.separation).collect();
+        seps.sort_by(f32::total_cmp);
+        assert_eq!(seps.len(), 2, "{seps:?}");
+        assert!(near(seps[0], 0.45 - 0.5), "{seps:?}");
+        assert!(near(seps[1], 0.0312), "{seps:?}");
+    }
+}
+
 /// Card 8-89: a short capsule across a long one at a wide angle (about 34 degrees) has both ends
 /// within the margin of it, but is a crossing and not two capsules alongside: one point (with both,
 /// the mixed pile of card 8-21 no longer sleeps within 2000 steps).
