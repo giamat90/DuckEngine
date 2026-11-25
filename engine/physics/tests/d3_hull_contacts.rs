@@ -385,3 +385,37 @@ fn a_rolling_prism_keeps_both_points_of_the_edge_it_touches_and_rolls_straight()
     }
     Ok(())
 }
+
+/// Card 8-76. A body that rolls over a corner leaves the ground when it is faster than
+/// sqrt(g R): the centre then follows a parabola above the arc of radius R about the corner (here
+/// sqrt(9.81 x 0.5) = 2.2 m/s). A rigid-polygon model of the roll (inelastic corner impacts, no
+/// sliding) hops the same way: nothing for 8, 12 and 16 sides below 2.2 m/s, and for 3.0 m/s 7.2,
+/// 9.0 and 6.3 mm against 8.4, 5.7 and 3.9 mm here. So the hop is the physics of a polygon, not a
+/// contact fault. This pins both sides of the threshold (measured: at most 0.54 mm at 2.0 m/s, at
+/// least 3.9 mm at 3.0 m/s).
+const HOP_FREE_SPEED: f32 = 2.0;
+const HOP_SPEED: f32 = 3.0;
+const HOP_FREE_RISE: f32 = 0.001;
+const HOP_RISE: f32 = 0.002;
+
+#[test]
+fn a_prism_rolls_without_a_hop_below_the_speed_a_corner_holds_it_and_hops_above()
+-> Result<(), PhysicsError> {
+    let critical = (STANDARD_GRAVITY.length() * HALF).sqrt();
+    assert!(HOP_FREE_SPEED < critical && critical < HOP_SPEED);
+    for sides in PRISM_SIDES {
+        let slow = roll(sides, HOP_FREE_SPEED)?;
+        assert!(
+            slow.highest < HALF + HOP_FREE_RISE,
+            "{sides} sides at {HOP_FREE_SPEED} m/s: {} m",
+            slow.highest
+        );
+        let fast = roll(sides, HOP_SPEED)?;
+        assert!(
+            fast.highest > HALF + HOP_RISE,
+            "{sides} sides at {HOP_SPEED} m/s: {} m",
+            fast.highest
+        );
+    }
+    Ok(())
+}
