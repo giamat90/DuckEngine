@@ -2,7 +2,8 @@
 //! gave a hull that touches with an edge both ends of the edge (it had one point, which hopped from
 //! one end to the other from step to step); in the golden scene "mixed pile 3d" the two hull cubes
 //! next to the wall boxes moved differently because of it (card 8-81). These tests pin that the new
-//! manifold is the right one there: a vertical edge against a wall keeps both ends, as the same
+//! manifold is the right one there (the two cubes of the golden scene, without the other thirty
+//! bodies of the pile): a vertical edge against a wall keeps both ends, as the same
 //! cube made of a box does, and a cube dropped into the corner comes to rest inside it.
 
 use base::math::{Quat, Vec3};
@@ -96,6 +97,13 @@ fn points_between(world: &World, wall: BodyHandle, body: BodyHandle) -> Vec<Vec3
         .collect()
 }
 
+/// The distance along `y` between the lowest and the highest of `points`.
+fn spread(points: &[Vec3]) -> f32 {
+    let low = points.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+    let high = points.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    high - low
+}
+
 /// A cube turned by 30 degrees about the vertical, so that one vertical edge faces the wall `x = FACE`
 /// and just touches it (0.5 mm inside), with `shape` as its shape. No gravity: pairs and one `collide`.
 fn edge_points(shape: &Shape3) -> Result<Vec<Vec3>, PhysicsError> {
@@ -119,10 +127,8 @@ fn edge_points(shape: &Shape3) -> Result<Vec<Vec3>, PhysicsError> {
 fn a_vertical_edge_against_a_wall_keeps_both_ends() -> Result<(), PhysicsError> {
     let points = edge_points(&hull_cube()?)?;
     assert!(points.len() >= 2, "points: {points:?}");
-    let low = points.iter().map(|p| p.y).fold(f32::MAX, f32::min);
-    let high = points.iter().map(|p| p.y).fold(f32::MIN, f32::max);
     // The edge is 0.7 m long: its two ends are about 0.7 m apart, not a single end.
-    assert!(high - low > 0.6, "ends {low} to {high}");
+    assert!(spread(&points) > 0.6, "points: {points:?}");
     assert!(
         points.iter().all(|p| (p.x - FACE).abs() < 0.02),
         "points off the wall: {points:?}"
@@ -134,7 +140,11 @@ fn a_vertical_edge_against_a_wall_keeps_both_ends() -> Result<(), PhysicsError> 
 fn a_hull_edge_has_the_points_of_the_same_box_edge() -> Result<(), PhysicsError> {
     let hull = edge_points(&hull_cube()?)?;
     let boxed = edge_points(&cuboid(HALF, HALF, HALF))?;
-    assert_eq!(hull.len(), boxed.len(), "hull {hull:?}, box {boxed:?}");
+    assert_eq!(
+        (hull.len(), boxed.len()),
+        (2, 2),
+        "hull {hull:?}, box {boxed:?}"
+    );
     Ok(())
 }
 
@@ -149,37 +159,57 @@ fn pile_angle(index: u8) -> f32 {
     angle
 }
 
-/// The cube of pile index 15 of the golden scene: dropped at a corner of the grid, turned about
-/// `(1, 1, 0)`, next to two walls.
-fn corner_world() -> Result<(World, BodyHandle, BodyHandle), PhysicsError> {
+/// The corner of the golden scene: a floor, two walls and the two hull cubes of pile indices 15 and
+/// 31 (one above the other, at the grid corner next to the walls), each turned about `(1, 1, 0)` by
+/// the angle of its index. Returns the world, the wall `x = FACE` and the two cubes.
+fn corner_world() -> Result<(World, BodyHandle, [BodyHandle; 2]), PhysicsError> {
     let mut w = world(STANDARD_GRAVITY)?;
     floor(&mut w)?;
     let wall = wall_x(&mut w)?;
     wall_z(&mut w)?;
-    let mut desc = BodyDesc::new(BodyKind::Dynamic, Vec3::new(1.65, 1.0, 1.65), hull_cube()?);
-    desc.rotation = turn(Vec3::new(1.0, 1.0, 0.0), pile_angle(15))?;
-    let cube = w.create_body(&desc)?;
-    Ok((w, wall, cube))
+    let mut cubes = [wall; 2];
+    for (slot, (index, height)) in [(15_u8, 1.0_f32), (31, 2.2)].into_iter().enumerate() {
+        assert!(
+            pile_angle(index) > 0.1,
+            "the golden tilt of index {index} is almost none"
+        );
+        let mut desc = BodyDesc::new(
+            BodyKind::Dynamic,
+            Vec3::new(1.65, height, 1.65),
+            hull_cube()?,
+        );
+        desc.rotation = turn(Vec3::new(1.0, 1.0, 0.0), pile_angle(index))?;
+        cubes[slot] = w.create_body(&desc)?;
+    }
+    Ok((w, wall, cubes))
 }
 
+/// A regression guard, not a pin of what card 8-71 changed (it passes with the old code too): the two
+/// cubes dropped into the corner come to rest inside it, on the floor, without sinking.
 #[test]
-fn a_cube_dropped_into_a_corner_comes_to_rest_inside_it() -> Result<(), PhysicsError> {
-    let (mut w, _, cube) = corner_world()?;
+fn cubes_dropped_into_a_corner_come_to_rest_inside_it() -> Result<(), PhysicsError> {
+    let (mut w, _, cubes) = corner_world()?;
     let mut deepest_after_landing = 0.0_f32;
-    for step in 1..=240_u32 {
+    for step in 1..=300_u32 {
         w.step(DT)?;
-        if step > 90 {
+        if step > 150 {
             deepest_after_landing =
                 deepest_after_landing.max(w.deepest_overlap().map_or(0.0, |o| o.depth));
         }
     }
-    let body = w.body(cube)?;
-    let at = body.position();
-    let speed = body.linear_velocity().length_squared();
-    // Inside the walls (the cube is 0.35 half-side; a turned cube reaches a little further), on the floor.
-    assert!(at.x < FACE && at.z < FACE, "outside the corner: {at:?}");
-    assert!(at.y > 0.3 && at.y < 0.7, "not on the floor: {at:?}");
-    assert!(speed < 0.01, "still moving: speed squared {speed}");
+    // No cube centre can be closer to a wall than the half side of the cube.
+    let limit = FACE - HALF + 0.01;
+    for cube in cubes {
+        let body = w.body(cube)?;
+        let at = body.position();
+        assert!(at.x <= limit && at.z <= limit, "inside a wall: {at:?}");
+        assert!(at.y > 0.3 && at.y < 1.1, "not resting in the pile: {at:?}");
+        let speed_squared = body.linear_velocity().length_squared();
+        assert!(
+            speed_squared < 0.01,
+            "still moving: speed squared {speed_squared}"
+        );
+    }
     assert!(
         deepest_after_landing < 0.02,
         "sunk {deepest_after_landing} m"
@@ -187,18 +217,24 @@ fn a_cube_dropped_into_a_corner_comes_to_rest_inside_it() -> Result<(), PhysicsE
     Ok(())
 }
 
-/// The cube of the golden scene lands on the wall with a tilted vertical edge: before card 8-71 it had
-/// one point there, which was the other end of the edge from step to step; now it keeps both ends.
+/// The cubes of the golden scene land on the wall with a tilted vertical edge: before card 8-71 each
+/// had one point there, the other end of the edge from step to step; now each keeps both ends, on the
+/// wall plane, for the first five steps (the probe of card 8-82 shows four points from step 6 on).
 #[test]
-fn the_corner_cube_keeps_both_ends_of_its_wall_edge_while_it_lands() -> Result<(), PhysicsError> {
-    let (mut w, wall, cube) = corner_world()?;
+fn the_corner_cubes_keep_both_ends_of_their_wall_edge_while_they_land() -> Result<(), PhysicsError>
+{
+    let (mut w, wall, cubes) = corner_world()?;
     for step in 1..=5_u32 {
         w.step(DT)?;
-        let points = points_between(&w, wall, cube);
-        let low = points.iter().map(|p| p.y).fold(f32::MAX, f32::min);
-        let high = points.iter().map(|p| p.y).fold(f32::MIN, f32::max);
-        assert!(points.len() >= 2, "step {step}: points {points:?}");
-        assert!(high - low > 0.5, "step {step}: ends {low} to {high}");
+        for cube in cubes {
+            let points = points_between(&w, wall, cube);
+            assert!(points.len() >= 2, "step {step}: points {points:?}");
+            assert!(spread(&points) > 0.5, "step {step}: points {points:?}");
+            assert!(
+                points.iter().all(|p| (p.x - FACE).abs() < 0.03),
+                "step {step}: off the wall: {points:?}"
+            );
+        }
     }
     Ok(())
 }
