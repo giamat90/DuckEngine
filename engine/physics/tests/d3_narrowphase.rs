@@ -502,6 +502,51 @@ fn a_small_box_sunk_into_a_big_one_is_pushed_out_the_shortest_way() {
 
 // ---- refusal --------------------------------------------------------------------------------
 
+/// How far the depth of a cube hull sunk by `depth` into a box of its size (`half` each way, both
+/// turned `yaw` about the vertical axis) is from `depth`.
+fn sunk_cube_error(half: f32, yaw: f32, depth: f32) -> Result<f32, String> {
+    let corner = |bit: u32, i: u32| if i & bit == 0 { -half } else { half };
+    let cube: Vec<Vec3> = (0..8)
+        .map(|i| Vec3::new(corner(1, i), corner(2, i), corner(4, i)))
+        .collect();
+    let hull = Shape3::Hull(Hull::new(&cube).map_err(|e| format!("{e:?}"))?);
+    let turn = about(Vec3::Y, yaw);
+    let at = Vec3::new(5.0, 7.0, -3.0);
+    let boxed = cuboid([half; 3], [at.x, at.y, at.z], turn);
+    let offset = turn.rotate(Vec3::new(2.0 * half - depth, 0.3, -0.2));
+    let sunk = Placed3::new(hull, at + offset, turn);
+    Ok((min_separation(&must(collide(&boxed, &sunk))) + depth).abs())
+}
+
+/// Card 8-79: a cube hull sunk into a box of the same size, 100 m and 2000 m across (the
+/// difference of the cores is a slab of that size where `f32` has about 6e-5 m of resolution at 1000 m),
+/// turned together about the vertical axis: the depth is the shortest way out along the box's
+/// own axes, to within 0.5 mm. The cases were not tried by card 8-75; no failing pose was found,
+/// this pins it.
+#[test]
+fn a_huge_hull_cube_sunk_into_a_box_of_its_size_gets_its_depth() -> Result<(), String> {
+    let mut worst = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
+    for (half, yaw, depth) in huge_cube_cases() {
+        let error = sunk_cube_error(half, yaw, depth)?;
+        if error > worst.0 {
+            worst = (error, half, yaw, depth);
+        }
+    }
+    assert!(worst.0 < 5.0e-4, "(error, half, yaw, depth) {worst:?}");
+    Ok(())
+}
+
+/// Sizes, turns and depths of the huge cube test.
+fn huge_cube_cases() -> Vec<(f32, f32, f32)> {
+    let mut cases = Vec::new();
+    for half in [50.0_f32, 1000.0] {
+        for yaw in [0.0_f32, 0.37, 1.1] {
+            cases.extend([0.2_f32, 1.0, 10.0].map(|depth| (half, yaw, depth)));
+        }
+    }
+    cases
+}
+
 #[test]
 fn invalid_shapes_positions_orientations_and_margins_give_no_manifold() {
     let good = sphere(1.0, 0.0, 0.0, 0.0);

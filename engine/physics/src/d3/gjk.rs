@@ -991,4 +991,36 @@ mod tests {
             assert!(bad.is_none(), "{sides} sides: {bad:?}");
         }
     }
+
+    /// A floor `half` wide in x and z, its top at y = 0, turned `yaw` about y, off the origin.
+    fn floor_turned(half: f32, yaw: f32) -> Convex<'static> {
+        Convex {
+            core: Core::Box(BoxFrame {
+                centre: Vec3::new(13.7, -1.0, -21.3),
+                rotation: Quat::from_axis_angle(Vec3::Y, yaw).unwrap_or(Quat::IDENTITY),
+                half: Vec3::new(half, 1.0, half),
+            }),
+            radius: 0.0,
+        }
+    }
+
+    /// Card 8-79: the same sweep over floors that are wider (500 m and 2000 m across) and turned
+    /// about the vertical axis (0.3 and 0.785 rad), the cases card 8-75 did not try. No failing
+    /// pose was found: this pins that, it is not a fix. Evidence for these floors, not a proof for
+    /// every shape (EPA and `adds_dimension` are still `f32`).
+    #[test]
+    fn a_prism_touching_a_wider_or_turned_floor_always_gives_a_contact_at_its_height() {
+        let floors = [(250.0_f32, 0.0_f32), (250.0, 0.3), (1000.0, 0.785)];
+        let bad: Vec<_> = floors
+            .iter()
+            .flat_map(|&(half, yaw)| [8_u16, 16].map(|sides| (half, yaw, sides)))
+            .filter_map(|(half, yaw, sides)| {
+                first_bad_pose(sides, &floor_turned(half, yaw)).map(|pose| (half, yaw, sides, pose))
+            })
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "floor, turn, sides, first bad pose: {bad:?}"
+        );
+    }
 }
