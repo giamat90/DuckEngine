@@ -29,8 +29,10 @@ const MIN_LENGTH_SQUARED: f32 = 1.0e-12;
 const PARALLEL_SINE_SQUARED: f32 = 1.0e-6;
 /// The shortest overlap of two parallel segments that gets two contact points.
 const MIN_OVERLAP: f32 = 1.0e-4;
-/// An end of a capsule gets a contact when it is this close to the deepest point.
-const END_TOLERANCE: f32 = 5.0e-3;
+/// The least a capsule end may be from the nearest point and still get a contact, whatever the
+/// margin (it was the whole rule before card 8-21): with a margin of zero or a millimetre the two ends
+/// of a capsule lying flat would otherwise be told apart by rounding.
+const MIN_END_BAND: f32 = 5.0e-3;
 /// Steps of the search for the point of a segment closest to a box.
 const SEARCH_STEPS: u32 = 40;
 
@@ -318,12 +320,16 @@ fn nearest_parameter(frame: &BoxFrame, round: &Round) -> f32 {
     (low + high) * 0.5
 }
 
-/// The parameters that get a contact: the ends as near the box as the nearest point (within
-/// [`END_TOLERANCE`], `distance_at` being the distance of a point of the segment to the box), or the
-/// nearest point itself (`nearest`) when neither end is.
+/// The parameters that get a contact: the ends as near the box as the nearest point (within `band`
+/// of it, `distance_at` being the distance of a point of the segment to the box), or the nearest
+/// point itself (`nearest`) when neither end is. The band is the contact margin, at least
+/// [`MIN_END_BAND`]: an end within the margin of the nearest point is a contact worth keeping, and
+/// [`within_margin`] still drops any point that is beyond the margin from its plane (card 8-21: a
+/// fixed 5 mm dropped the upper end of a capsule leaning by 8 mm, and the capsule rocked on the
+/// other end).
 fn contact_parameters(
     round: &Round,
-    nearest: f32,
+    (nearest, band): (f32, f32),
     distance_at: impl Fn(f32) -> f32,
 ) -> ([f32; 2], usize) {
     let mut chosen = [nearest, 0.0];
@@ -333,7 +339,7 @@ fn contact_parameters(
     let best = distance_at(nearest);
     let mut count = 0;
     for end in [0.0, 1.0] {
-        if distance_at(end) <= best + END_TOLERANCE {
+        if distance_at(end) <= best + band.max(MIN_END_BAND) {
             chosen[count] = end;
             count += 1;
         }
@@ -390,7 +396,7 @@ fn deep_contact(round: &Round, frame: &BoxFrame, margin: f32) -> Option<Manifold
     let mut count = 0;
     for end in ends {
         let separation = gap_of(end);
-        if separation <= deepest + END_TOLERANCE && (count == 0 || !round.is_point()) {
+        if separation <= deepest + margin.max(MIN_END_BAND) && (count == 0 || !round.is_point()) {
             points[count] = ContactPoint3 {
                 point: end - normal * (round.radius + separation * 0.5),
                 separation,
@@ -418,7 +424,8 @@ fn round_box(round: &Round, frame: &BoxFrame, margin: f32) -> Option<Manifold3> 
     }
     let (normal, plane_point) = (probe.normal, probe.closest);
     let gap_at = |t: f32| (round.at(t) - plane_point).dot(normal) - round.radius;
-    let (params, count) = contact_parameters(round, nearest, |t| frame.distance(round.at(t)));
+    let (params, count) =
+        contact_parameters(round, (nearest, margin), |t| frame.distance(round.at(t)));
     let mut points = [ContactPoint3::default(); 2];
     for (slot, t) in points.iter_mut().zip(&params[..count]) {
         let separation = gap_at(*t);

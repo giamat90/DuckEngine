@@ -295,6 +295,70 @@ fn a_capsule_lying_along_a_box_edge_gets_two_points_and_one_across_it_gets_one()
     );
 }
 
+/// A capsule (half length 1, radius 0.5) lying on the top face (y = 0) of a box, turned from flat
+/// by `lean` radians so that its two ends are `2 sin(lean)` apart in height, the lower end 0.02
+/// into the box.
+fn leaning_capsule(lean: f32, sink: f32) -> Placed3 {
+    let turn = std::f32::consts::FRAC_PI_2 - lean;
+    capsule(
+        1.0,
+        0.5,
+        [0.0, 0.5 - sink + base::dmath::sin(lean), 0.0],
+        about(Vec3::Z, turn),
+    )
+}
+
+#[test]
+fn a_capsule_leaning_by_a_few_millimetres_keeps_both_ends_while_both_are_within_the_margin() {
+    // Card 8-21: the ends are 8 mm apart in height (lean 0.004), more than the 5 mm an end was
+    // allowed from the nearest point, so the upper end lost its point and the capsule rocked on the
+    // other; the margin (0.1 here) is what makes a point worth keeping.
+    let ground = cuboid([5.0, 0.5, 5.0], [0.0, -0.5, 0.0], Quat::IDENTITY);
+    for lean in [0.0, 0.002, 0.004, 0.02, 0.04] {
+        let m = must(collide(&ground, &leaning_capsule(lean, 0.02)));
+        assert_eq!(m.active().len(), 2, "lean {lean}: {:?}", m.active());
+    }
+    // Further apart than the margin (0.1): the upper end is out of reach, one point.
+    let far = must(collide(&ground, &leaning_capsule(0.08, 0.02)));
+    assert_eq!(far.active().len(), 1, "{:?}", far.active());
+}
+
+#[test]
+fn the_end_of_a_leaning_capsule_is_kept_up_to_the_margin_and_not_beyond() {
+    // Ends 0.0979 and 0.1020 apart, the margin 0.1: the band is the margin (card 8-21).
+    let ground = cuboid([5.0, 0.5, 5.0], [0.0, -0.5, 0.0], Quat::IDENTITY);
+    let inside = must(collide(&ground, &leaning_capsule(0.049, 0.02)));
+    assert_eq!(inside.active().len(), 2, "{:?}", inside.active());
+    let beyond = must(collide(&ground, &leaning_capsule(0.051, 0.02)));
+    assert_eq!(beyond.active().len(), 1, "{:?}", beyond.active());
+}
+
+#[test]
+fn a_leaning_capsule_keeps_both_ends_at_the_default_margin_and_at_a_margin_of_zero() {
+    // The margin of the pile scenes is 0.02 (ends 8 mm apart lost one before); a margin of zero
+    // must not lose the end of a capsule lying flat to rounding.
+    let ground = cuboid([5.0, 0.5, 5.0], [0.0, -0.5, 0.0], Quat::IDENTITY);
+    for (lean, margin) in [(0.004, 0.02), (0.0, 0.0), (0.002, 0.0), (0.0, 0.001)] {
+        let m = must(D3::collide(&ground, &leaning_capsule(lean, 0.02), margin));
+        assert_eq!(
+            m.active().len(),
+            2,
+            "lean {lean} margin {margin}: {:?}",
+            m.active()
+        );
+    }
+}
+
+#[test]
+fn a_capsule_sunk_through_a_box_face_and_leaning_keeps_both_ends() {
+    // The same lean, with the whole segment inside the box (card 8-21, the deep path).
+    let ground = cuboid([5.0, 0.5, 5.0], [0.0, -0.5, 0.0], Quat::IDENTITY);
+    for lean in [0.0, 0.004, 0.02] {
+        let m = must(collide(&ground, &leaning_capsule(lean, 0.7)));
+        assert_eq!(m.active().len(), 2, "lean {lean}: {:?}", m.active());
+    }
+}
+
 // ---- boxes ----------------------------------------------------------------------------------
 
 #[test]
