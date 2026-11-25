@@ -627,7 +627,7 @@ fn prism_failures(sides: u16, hull: &Hull) -> Vec<Failure> {
     turns
         .flat_map(|turn| poses.map(|pose| (turn, pose)))
         .map(|(turn, pose)| (turn, pose, prism_height_error(hull, turn, pose.0, pose.1)))
-        .filter(|(_, _, error)| !error.is_some_and(|e| e < 1.0e-4))
+        .filter(|(_, _, error)| !error.is_some_and(|e| e < PRISM_HEIGHT_TOLERANCE))
         .map(|(turn, pose, error)| (sides, turn, pose, error))
         .collect()
 }
