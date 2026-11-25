@@ -151,10 +151,10 @@ fn the_standing_scenes_stand_still() -> Result<(), Failure> {
     Ok(())
 }
 
-/// Steps a pile needs to settle, and the speed under which it counts as settling. The bound is loose
-/// on purpose: on Linux the last sphere sleeps between steps 800 and 900 (card 8-33). Card 8-12 saw a
-/// capsule rock at 0.1 m/s for thousands of steps; card 8-21 fixed it, and the stricter check is
-/// that the mixed pile sleeps ([`the_mixed_pile_comes_to_rest_and_sleeps`]).
+/// Steps a pile needs to settle, and the speed under which it counts as settling: loose on purpose,
+/// for every pile (see [`PILE_SLEEP_STEPS`] for why). Card 8-12 saw a capsule rock at 0.1 m/s for
+/// thousands of steps; card 8-21 fixed it, and the stricter check is that the mixed pile sleeps
+/// ([`the_mixed_pile_comes_to_rest_and_sleeps`]).
 const PILE_STEPS: u32 = 800;
 const PILE_SETTLING_SPEED: f32 = 0.25;
 /// Steps within which the whole sphere pile must be asleep (card 8-33). With the cross-platform

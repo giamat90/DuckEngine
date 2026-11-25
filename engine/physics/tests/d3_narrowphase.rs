@@ -303,7 +303,7 @@ fn leaning_capsule(lean: f32, sink: f32) -> Placed3 {
     capsule(
         1.0,
         0.5,
-        [0.0, 0.5 - sink + lean.sin(), 0.0],
+        [0.0, 0.5 - sink + base::dmath::sin(lean), 0.0],
         about(Vec3::Z, turn),
     )
 }
@@ -321,6 +321,32 @@ fn a_capsule_leaning_by_a_few_millimetres_keeps_both_ends_while_both_are_within_
     // Further apart than the margin (0.1): the upper end is out of reach, one point.
     let far = must(collide(&ground, &leaning_capsule(0.08, 0.02)));
     assert_eq!(far.active().len(), 1, "{:?}", far.active());
+}
+
+#[test]
+fn the_end_of_a_leaning_capsule_is_kept_up_to_the_margin_and_not_beyond() {
+    // Ends 0.0979 and 0.1020 apart, the margin 0.1: the band is the margin (card 8-21).
+    let ground = cuboid([5.0, 0.5, 5.0], [0.0, -0.5, 0.0], Quat::IDENTITY);
+    let inside = must(collide(&ground, &leaning_capsule(0.049, 0.02)));
+    assert_eq!(inside.active().len(), 2, "{:?}", inside.active());
+    let beyond = must(collide(&ground, &leaning_capsule(0.051, 0.02)));
+    assert_eq!(beyond.active().len(), 1, "{:?}", beyond.active());
+}
+
+#[test]
+fn a_leaning_capsule_keeps_both_ends_at_the_default_margin_and_at_a_margin_of_zero() {
+    // The margin of the pile scenes is 0.02 (ends 8 mm apart lost one before); a margin of zero
+    // must not lose the end of a capsule lying flat to rounding.
+    let ground = cuboid([5.0, 0.5, 5.0], [0.0, -0.5, 0.0], Quat::IDENTITY);
+    for (lean, margin) in [(0.004, 0.02), (0.0, 0.0), (0.002, 0.0), (0.0, 0.001)] {
+        let m = must(D3::collide(&ground, &leaning_capsule(lean, 0.02), margin));
+        assert_eq!(
+            m.active().len(),
+            2,
+            "lean {lean} margin {margin}: {:?}",
+            m.active()
+        );
+    }
 }
 
 #[test]

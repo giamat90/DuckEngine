@@ -29,6 +29,10 @@ const MIN_LENGTH_SQUARED: f32 = 1.0e-12;
 const PARALLEL_SINE_SQUARED: f32 = 1.0e-6;
 /// The shortest overlap of two parallel segments that gets two contact points.
 const MIN_OVERLAP: f32 = 1.0e-4;
+/// The least a capsule end may be from the nearest point and still get a contact, whatever the
+/// margin (it was the whole rule before card 8-21): with a margin of zero or a millimetre the two ends
+/// of a capsule lying flat would otherwise be told apart by rounding.
+const MIN_END_BAND: f32 = 5.0e-3;
 /// Steps of the search for the point of a segment closest to a box.
 const SEARCH_STEPS: u32 = 40;
 
@@ -318,10 +322,11 @@ fn nearest_parameter(frame: &BoxFrame, round: &Round) -> f32 {
 
 /// The parameters that get a contact: the ends as near the box as the nearest point (within `band`
 /// of it, `distance_at` being the distance of a point of the segment to the box), or the nearest
-/// point itself (`nearest`) when neither end is. The band is the contact margin: an end that is
-/// within it is a contact worth keeping, and one that is not is dropped by [`within_margin`]
-/// anyway (card 8-21: a fixed 5 mm dropped the upper end of a capsule leaning by 8 mm, and the
-/// capsule rocked on the other end).
+/// point itself (`nearest`) when neither end is. The band is the contact margin, at least
+/// [`MIN_END_BAND`]: an end within the margin of the nearest point is a contact worth keeping, and
+/// [`within_margin`] still drops any point that is beyond the margin from its plane (card 8-21: a
+/// fixed 5 mm dropped the upper end of a capsule leaning by 8 mm, and the capsule rocked on the
+/// other end).
 fn contact_parameters(
     round: &Round,
     (nearest, band): (f32, f32),
@@ -334,7 +339,7 @@ fn contact_parameters(
     let best = distance_at(nearest);
     let mut count = 0;
     for end in [0.0, 1.0] {
-        if distance_at(end) <= best + band {
+        if distance_at(end) <= best + band.max(MIN_END_BAND) {
             chosen[count] = end;
             count += 1;
         }
@@ -391,7 +396,7 @@ fn deep_contact(round: &Round, frame: &BoxFrame, margin: f32) -> Option<Manifold
     let mut count = 0;
     for end in ends {
         let separation = gap_of(end);
-        if separation <= deepest + margin && (count == 0 || !round.is_point()) {
+        if separation <= deepest + margin.max(MIN_END_BAND) && (count == 0 || !round.is_point()) {
             points[count] = ContactPoint3 {
                 point: end - normal * (round.radius + separation * 0.5),
                 separation,
