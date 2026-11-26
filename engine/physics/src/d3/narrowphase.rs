@@ -28,10 +28,14 @@ const MIN_LENGTH_SQUARED: f32 = 1.0e-12;
 /// Two segments are parallel when `sin^2` of their angle is at most this.
 const PARALLEL_SINE_SQUARED: f32 = 1.0e-6;
 /// Two capsules lying alongside each other (card 8-89): `sin^2` of the angle between their axes is
-/// at most this (about 18 degrees). An empirical bound, measured on the mixed pile of card 8-21 only:
-/// with no bound 9 of its 90 bodies are asleep at step 1200, with any bound from 0.0025 to 0.1 all
-/// are, at step 683. Why a crossing at a wider angle with a far end inside the margin hurts the pile
-/// was not found (card 8-89, Not verified).
+/// at most this (about 18 degrees), the range in which the end of their overlap is a second contact
+/// and not an arbitrary point of a crossing. It was first chosen on the mixed pile of card 8-21 alone
+/// (seed 12: with no bound 9 of its 90 bodies are asleep at step 1200, with 0.1 all are), but card
+/// 8-90 found that this is one lucky pile and not an effect of the bound: over ten seeds of that pile
+/// the number of piles all asleep at step 1200 is 2, 3, 2, 4, 5 and 4 of 10 for no far end, 0.0025,
+/// 0.1, 0.6, 0.97 and no bound, which is noise at that sample size (the pile is chaotic: with 0.1,
+/// seeds 5 and 7 are asleep by step 2400, seed 1 by 4000, seeds 2 and 3 not by 4000). No effect of the bound is detectable at
+/// this sample size; it is kept as geometry, not as tuning.
 const NEAR_PARALLEL_SINE_SQUARED: f32 = 0.1;
 /// The shortest overlap of two parallel segments that gets two contact points.
 const MIN_OVERLAP: f32 = 1.0e-4;
@@ -41,6 +45,12 @@ const MIN_OVERLAP: f32 = 1.0e-4;
 const MIN_END_BAND: f32 = 5.0e-3;
 /// Steps of the search for the point of a segment closest to a box.
 const SEARCH_STEPS: u32 = 40;
+
+/// When an end of a capsule is at most this much, in metres, farther from a box than the nearest
+/// point of its axis, it is as near as that point: the distance is flat along the segment there, the nearest
+/// point is no better place for a contact than the end, and it moves with the last digits of the
+/// search (card 9-9).
+const NEAREST_REDUNDANT: f32 = 1.0e-3;
 
 /// A segment and a radius: a sphere (both ends the same point) or a capsule.
 #[derive(Clone, Copy)]
@@ -190,7 +200,7 @@ fn tube_contact(from: Vec3, to: Vec3, normal: Vec3, radii: (f32, f32)) -> Contac
 
 /// The result with the points that are within `margin`, or nothing when none is.
 fn within_margin(normal: Vec3, points: &[ContactPoint3], margin: f32) -> Option<Manifold3> {
-    let mut kept = [ContactPoint3::default(); 2];
+    let mut kept = [ContactPoint3::default(); 3];
     let mut count = 0;
     for point in points.iter().filter(|p| p.separation <= margin) {
         kept[count] = *point;
@@ -252,7 +262,8 @@ fn round_round(first: &Round, second: &Round, margin: f32) -> Option<Manifold3> 
     let normal = pair_normal(first, second, from, to);
     let near = contact(from, to, normal, radii);
     let band = margin.max(MIN_END_BAND);
-    match far_end(first, second, from).map(|(a, b)| tube_contact(a, b, normal, radii)) {
+    match far_end(first, second, (from + to) * 0.5).map(|(a, b)| tube_contact(a, b, normal, radii))
+    {
         Some(far) if far.separation <= near.separation + band => {
             within_margin(normal, &[near, far], margin)
         }
@@ -260,10 +271,41 @@ fn round_round(first: &Round, second: &Round, margin: f32) -> Option<Manifold3> 
     }
 }
 
-/// The end of the overlap of two segments that is further from `from` (card 8-89): a capsule that
-/// lies a little off parallel beside another has its second contact there, as one on a box has at
-/// its far end (card 8-21), or it would rock on the one point.
-fn far_end(first: &Round, second: &Round, from: Vec3) -> Option<(Vec3, Vec3)> {
+/// The unit direction halfway between two segments' directions, the second turned round when it
+/// points against the first, with the sign that makes its largest component positive: the same for
+/// either order of the segments, also when the two point against each other.
+fn bisector(first: &Round, second: &Round) -> Option<Vec3> {
+    let (one, two) = (
+        first.direction().normalized()?,
+        second.direction().normalized()?,
+    );
+    let two = if one.dot(two) < 0.0 { -two } else { two };
+    let axis = (one + two).normalized()?;
+    let largest = axis.abs();
+    let biggest = largest.x.max(largest.y).max(largest.z);
+    let along_largest = if largest.x >= biggest {
+        axis.x
+    } else if largest.y >= biggest {
+        axis.y
+    } else {
+        axis.z
+    };
+    Some(if along_largest < 0.0 { -axis } else { axis })
+}
+
+/// The point of `round` at `height` along `axis` (clamped to the segment, which is not a point and not
+/// across `axis`).
+fn at_height(round: &Round, axis: Vec3, height: f32) -> Vec3 {
+    let (start, along) = (round.start.dot(axis), round.direction().dot(axis));
+    round.at(clamp01((height - start) / along))
+}
+
+/// The end of the overlap of two segments that is further from `middle`, the centre of their closest
+/// pair (card 8-89): a capsule that lies a little off parallel beside another has its second contact
+/// there, as one on a box has at its far end (card 8-21), or it would rock on the one point. The
+/// overlap is measured along the bisector of the two axes, so that it is the same whichever capsule is
+/// given first (card 8-90).
+fn far_end(first: &Round, second: &Round, middle: Vec3) -> Option<(Vec3, Vec3)> {
     if first.is_point() || second.is_point() {
         return None;
     }
@@ -273,9 +315,26 @@ fn far_end(first: &Round, second: &Round, from: Vec3) -> Option<(Vec3, Vec3)> {
     {
         return None;
     }
-    let [low, high] = overlap_pairs(first, second)?;
-    let away = |pair: &(Vec3, Vec3)| (pair.0 - from).length_squared();
-    Some(if away(&low) >= away(&high) { low } else { high })
+    let axis = bisector(first, second)?;
+    let span = |round: &Round| {
+        let (a, b) = (round.start.dot(axis), round.end.dot(axis));
+        (a.min(b), a.max(b))
+    };
+    let (shared, other) = (span(first), span(second));
+    let (low, high) = (shared.0.max(other.0), shared.1.min(other.1));
+    if high - low < MIN_OVERLAP {
+        return None;
+    }
+    let centre = middle.dot(axis);
+    let height = if centre - low >= high - centre {
+        low
+    } else {
+        high
+    };
+    Some((
+        at_height(first, axis, height),
+        at_height(second, axis, height),
+    ))
 }
 
 /// A box in the world: where it is, how it is turned, how big.
@@ -369,31 +428,44 @@ fn nearest_parameter(frame: &BoxFrame, round: &Round) -> f32 {
     (low + high) * 0.5
 }
 
-/// The parameters that get a contact: the ends as near the box as the nearest point (within `band`
-/// of it, `distance_at` being the distance of a point of the segment to the box), or the nearest
-/// point itself (`nearest`) when neither end is. The band is the contact margin, at least
-/// [`MIN_END_BAND`]: an end within the margin of the nearest point is a contact worth keeping, and
-/// [`within_margin`] still drops any point that is beyond the margin from its plane (card 8-21: a
-/// fixed 5 mm dropped the upper end of a capsule leaning by 8 mm, and the capsule rocked on the
-/// other end).
+/// The parameters that get a contact: the ends within the band of the nearest distance
+/// (`distance_at` being the distance of a point of the segment to the box), and the nearest point
+/// itself (`nearest`) unless one of those ends is as near as it (within [`NEAREST_REDUNDANT`]), in
+/// which case the nearest point is no more than a place along a flat stretch of the segment. The
+/// band is the contact margin, at least [`MIN_END_BAND`]: an end within the margin of the nearest
+/// point is a contact worth keeping, and [`within_margin`] still drops any point that is beyond
+/// the margin from its plane (card 8-21: a fixed 5 mm dropped the upper end of a capsule leaning
+/// by 8 mm, and the capsule rocked on the other end).
+///
+/// The nearest point is kept next to an end that is farther from the box than it is (card 9-9):
+/// when it was dropped, the contact jumped along the capsule at the band, the warm start found no
+/// point where the contact was and the capsule was kicked.
 fn contact_parameters(
     round: &Round,
     (nearest, band): (f32, f32),
     distance_at: impl Fn(f32) -> f32,
-) -> ([f32; 2], usize) {
-    let mut chosen = [nearest, 0.0];
+) -> ([f32; 3], usize) {
+    let mut chosen = [nearest; 3];
     if round.is_point() {
         return (chosen, 1);
     }
     let best = distance_at(nearest);
     let mut count = 0;
+    let mut as_near = false;
+    let reach = band.max(MIN_END_BAND);
     for end in [0.0, 1.0] {
-        if distance_at(end) <= best + band.max(MIN_END_BAND) {
+        let gap = distance_at(end);
+        if gap <= best + reach {
             chosen[count] = end;
             count += 1;
+            as_near |= gap <= best + NEAREST_REDUNDANT;
         }
     }
-    (chosen, count.max(1))
+    if count == 0 || !as_near {
+        chosen[count] = nearest;
+        count += 1;
+    }
+    (chosen, count)
 }
 
 /// The separating axis of a segment that goes through the box (so it is no use to look for its
@@ -475,7 +547,7 @@ fn round_box(round: &Round, frame: &BoxFrame, margin: f32) -> Option<Manifold3> 
     let gap_at = |t: f32| (round.at(t) - plane_point).dot(normal) - round.radius;
     let (params, count) =
         contact_parameters(round, (nearest, margin), |t| frame.distance(round.at(t)));
-    let mut points = [ContactPoint3::default(); 2];
+    let mut points = [ContactPoint3::default(); 3];
     for (slot, t) in points.iter_mut().zip(&params[..count]) {
         let separation = gap_at(*t);
         *slot = ContactPoint3 {

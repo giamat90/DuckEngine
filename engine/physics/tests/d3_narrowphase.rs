@@ -6,7 +6,7 @@
 use base::math::{Quat, Vec3};
 use base::rng::Pcg32;
 use physics::core::Dim;
-use physics::d3::{D3, Hull, Manifold3, Placed3, Shape3};
+use physics::d3::{D3, DEFAULT_SPECULATIVE_MARGIN, Hull, Manifold3, Placed3, Shape3};
 
 const MARGIN: f32 = 0.1;
 
@@ -42,6 +42,11 @@ fn about(axis: Vec3, angle: f32) -> Quat {
 
 fn collide(a: &Placed3, b: &Placed3) -> Option<Manifold3> {
     D3::collide(a, b, MARGIN)
+}
+
+/// The contact at the margin of a world by default (the engine's 20 mm, not the 0.1 m of the other tests).
+fn collide_by_default(a: &Placed3, b: &Placed3) -> Option<Manifold3> {
+    D3::collide(a, b, DEFAULT_SPECULATIVE_MARGIN)
 }
 
 fn must(m: Option<Manifold3>) -> Manifold3 {
@@ -237,24 +242,150 @@ fn the_far_end_of_a_leaning_capsule_beside_another_is_kept_up_to_the_margin_and_
 
 /// Card 8-89: two skew capsules (the axes 0.3 rad apart, 0.45 between them at the middle, their
 /// closest points) have a second point at an end of the overlap whose separation is the true distance
-/// of the surfaces there, 0.0312 (the end of the overlap along `a`, y = cos 0.3, against the nearest
-/// point of `b`; not the -0.05 of the closest pair), in either order.
+/// of the surfaces there (not the -0.05 of the closest pair), in either order. The overlap is measured
+/// along the bisector of the axes (card 8-90: along `a`, as it was in card 8-89, it depended on which
+/// capsule came first); both axes end at the height cos 0.15 along it, so the end of the overlap is
+/// the lower end of both, the end of `a` (0, -1, 0) against that of `b` (0.45, -cos 0.3, -sin 0.3).
 #[test]
 fn the_far_point_of_two_skew_capsules_has_the_true_distance_of_the_surfaces() {
     let a = capsule(1.0, 0.25, [0.0, 0.0, 0.0], Quat::IDENTITY);
-    let b = capsule(1.0, 0.25, [0.45, 0.0, 0.0], about(Vec3::X, 0.3));
-    for m in [must(collide(&a, &b)), must(collide(&b, &a))] {
+    let tilted = [0.3, 0.3 + std::f32::consts::PI];
+    let pairs = tilted.map(|angle| capsule(1.0, 0.25, [0.45, 0.0, 0.0], about(Vec3::X, angle)));
+    for (b, m) in pairs
+        .iter()
+        .flat_map(|b| [(b, collide(&a, b)), (b, collide(b, &a))])
+    {
+        let m = must(m);
         let mut seps: Vec<f32> = m.active().iter().map(|p| p.separation).collect();
         seps.sort_by(f32::total_cmp);
+        assert!(mirrored(&a, b));
         assert_eq!(seps.len(), 2, "{seps:?}");
         assert!(near(seps[0], 0.45 - 0.5), "{seps:?}");
-        assert!(near(seps[1], 0.0312), "{seps:?}");
+        let (cos, sin) = (base::dmath::cos(0.3), base::dmath::sin(0.3));
+        let end_distance = (0.45_f32 * 0.45 + (1.0 - cos) * (1.0 - cos) + sin * sin).sqrt();
+        assert!(near(seps[1], end_distance - 0.5), "{seps:?}");
     }
 }
 
+/// A random capsule of half length 0.05 to 1.2 and radius 0.25, close to the origin and tilted by up to
+/// `tilt` radians about a horizontal axis.
+fn random_capsule(rng: &mut Pcg32, tilt: f32) -> Placed3 {
+    let mut unit = |span: f32| (rng.next_f32() - 0.5) * span;
+    let half_height = 0.05 + 1.15 * (unit(1.0) + 0.5);
+    let at = [unit(1.2), unit(0.4), unit(1.2)];
+    let axis = about(Vec3::Y, unit(std::f32::consts::TAU)).rotate(Vec3::X);
+    capsule(half_height, 0.25, at, about(axis, unit(2.0 * tilt)))
+}
+
+/// The points of a manifold as (separation, point).
+fn separations_and_points(m: &Manifold3) -> Vec<(f32, Vec3)> {
+    m.active().iter().map(|p| (p.separation, p.point)).collect()
+}
+
+/// Whether every point of `from` has one of `among` with the same separation (to 0.1 mm) and place
+/// (to 1 mm).
+fn all_found_in(from: &[(f32, Vec3)], among: &[(f32, Vec3)]) -> bool {
+    from.iter().all(|f| {
+        among
+            .iter()
+            .any(|g| near(f.0, g.0) && (f.1 - g.1).length() < 1.0e-3)
+    })
+}
+
+/// How far the normals of the two orders may be from opposite: two capsules whose axes nearly cross
+/// (deep in each other) have closest points a hair apart, and their normal rests on rounding.
+const NORMAL_TOLERANCE: f32 = 1.0e-3;
+
+/// Whether the manifold of `a` against `b` and that of `b` against `a` are the same contact seen from
+/// the other side: the same number of points, the same normal reversed (to 0.001), and the same
+/// separations (to 0.1 mm) and places (to 1 mm).
+fn mirrored(a: &Placed3, b: &Placed3) -> bool {
+    let (Some(ab), Some(ba)) = (collide(a, b), collide(b, a)) else {
+        return collide(a, b).is_none() && collide(b, a).is_none();
+    };
+    let (forward, backward) = (separations_and_points(&ab), separations_and_points(&ba));
+    (ab.normal + ba.normal).length() < NORMAL_TOLERANCE
+        && forward.len() == backward.len()
+        && all_found_in(&forward, &backward)
+        && all_found_in(&backward, &forward)
+}
+
+/// Card 8-90: giving two capsules in the other order gives the same contact from the other side, for
+/// capsules lying alongside (tilts up to 0.05 rad, nearly all within the 18 degrees of the far end, and
+/// 0.3, about half of them). Red on the code of 8-89, whose far end was the end of the overlap along the
+/// first capsule: 1 to 16 pairs of 1500 had another number of points, and separations differed by up
+/// to 18 mm. At least a third of the pairs must have two points, or the test would prove nothing.
+#[test]
+fn two_capsules_alongside_in_either_order_give_the_same_contact() {
+    let mut rng = Pcg32::new(0x8_90, 3);
+    let pairs: Vec<(Placed3, Placed3)> = [0.05_f32, 0.3]
+        .iter()
+        .flat_map(|tilt| (0..1500).map(move |_| *tilt))
+        .map(|tilt| {
+            (
+                random_capsule(&mut rng, tilt),
+                random_capsule(&mut rng, tilt),
+            )
+        })
+        .collect();
+    let bad: Vec<usize> = (0..pairs.len())
+        .filter(|i| !mirrored(&pairs[*i].0, &pairs[*i].1))
+        .collect();
+    let two_points = pairs
+        .iter()
+        .filter(|(a, b)| collide(a, b).is_some_and(|m| m.active().len() == 2))
+        .count();
+    assert!(
+        bad.is_empty(),
+        "{} of {} pairs differ, first {:?}",
+        bad.len(),
+        pairs.len(),
+        &bad[..bad.len().min(5)]
+    );
+    assert!(
+        3 * two_points >= pairs.len(),
+        "only {two_points} of {} pairs have two points",
+        pairs.len()
+    );
+}
+
+/// Card 8-90: the same for capsules exactly parallel or exactly opposite (the branch of two points at
+/// the ends of the overlap, which measures it along the first capsule), side by side at random offsets
+/// along their axes.
+#[test]
+fn two_exactly_parallel_capsules_in_either_order_give_the_same_contact() {
+    let mut rng = Pcg32::new(0x8_90, 4);
+    let mut bad = Vec::new();
+    for index in 0..2000_u32 {
+        let mut unit = |span: f32| (rng.next_f32() - 0.5) * span;
+        let (half_a, half_b) = (0.3 + 0.9 * (unit(1.0) + 0.5), 0.3 + 0.9 * (unit(1.0) + 0.5));
+        let turn = about(Vec3::Y, unit(std::f32::consts::TAU));
+        let flip = if index % 2 == 0 {
+            Quat::IDENTITY
+        } else {
+            about(Vec3::X, std::f32::consts::PI)
+        };
+        let first = capsule(half_a, 0.25, [0.0, 0.0, 0.0], turn);
+        let second = capsule(
+            half_b,
+            0.25,
+            [0.45 + unit(0.1), unit(1.5), unit(0.1)],
+            turn * flip,
+        );
+        if !mirrored(&first, &second) {
+            bad.push(index);
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} of 2000 pairs differ, first {:?}",
+        bad.len(),
+        &bad[..bad.len().min(5)]
+    );
+}
+
 /// Card 8-89: a short capsule across a long one at a wide angle (about 34 degrees) has both ends
-/// within the margin of it, but is a crossing and not two capsules alongside: one point (with both,
-/// the mixed pile of card 8-21 no longer sleeps within 2000 steps).
+/// within the margin of it, but is a crossing and not two capsules alongside: one point.
 #[test]
 fn a_short_capsule_across_another_at_a_wide_angle_gets_one_point() {
     let a = capsule(1.0, 0.25, [0.0, 0.0, 0.0], Quat::IDENTITY);
@@ -419,6 +550,95 @@ fn a_capsule_sunk_through_a_box_face_and_leaning_keeps_both_ends() {
     }
 }
 
+/// How far a contact point may move between two steps and still be the same contact for the warm
+/// start (`WARM_MATCH_DISTANCE` of the solver, 2 cm).
+const WARM_REACH: f32 = 0.02;
+
+/// A capsule (half length 1, radius 0.25) over the edge of a box (the edge is along Z at x = 1,
+/// y = 1), its axis across the diagonal normal of the edge, the nearest point of the axis 2 mm
+/// into the edge, and the end of the capsule that is `before_foot` metres from that nearest point
+/// along the axis.
+fn over_the_edge(before_foot: f32) -> (Placed3, Placed3) {
+    let (radius, half) = (0.25_f32, 1.0_f32);
+    let diagonal = std::f32::consts::FRAC_1_SQRT_2;
+    let (normal, along) = (
+        Vec3::new(diagonal, diagonal, 0.0),
+        Vec3::new(diagonal, -diagonal, 0.0),
+    );
+    let foot = Vec3::new(1.0, 1.0, 0.0) + normal * (radius - 0.002);
+    let centre = foot + along * (half - before_foot);
+    let turn = about(Vec3::Z, std::f32::consts::FRAC_PI_4);
+    let b = cuboid([1.0, 1.0, 1.0], [0.0, 0.0, 0.0], Quat::IDENTITY);
+    (
+        b,
+        capsule(half, radius, [centre.x, centre.y, centre.z], turn),
+    )
+}
+
+/// True when a point of `after` is within [`WARM_REACH`] of a point of `before`.
+fn shares_a_point(before: &Manifold3, after: &Manifold3) -> bool {
+    before.active().iter().any(|p| {
+        after
+            .active()
+            .iter()
+            .any(|q| (p.point - q.point).length() < WARM_REACH)
+    })
+}
+
+#[test]
+fn a_capsule_sliding_over_a_box_edge_keeps_a_contact_point_where_it_was_at_every_step() {
+    // Card 9-9. The end of the capsule is 0.15 m and then 0.05 m from the nearest point of its axis
+    // to the box, so its distance to the box goes from 42 mm to 5 mm above that of the nearest
+    // point: across the 20 mm band in which an end is a contact. The point of the contact used to
+    // jump from the nearest point to the end (0.1 m along the axis), where the warm start of the
+    // solver finds nothing, so that the capsule was kicked (mixed pile, seed 3).
+    let mut previous: Option<Manifold3> = None;
+    let mut crossed = [false, false];
+    for step in 0..=200_u16 {
+        let before_foot = 0.15 - 0.0005 * f32::from(step);
+        let (b, c) = over_the_edge(before_foot);
+        let m = must(collide_by_default(&b, &c));
+        crossed[usize::from(m.active().len() > 1)] = true;
+        if let Some(last) = previous {
+            assert!(
+                shares_a_point(&last, &m),
+                "step {step}, end at {before_foot}: {:?} then {:?}",
+                last.active(),
+                m.active()
+            );
+        }
+        previous = Some(m);
+    }
+    assert_eq!(crossed, [true, true], "the slide never crossed the band");
+}
+
+#[test]
+fn a_short_capsule_across_a_box_edge_with_both_ends_inside_the_band_gets_three_points() {
+    // Half length 0.1: each end is 19 mm farther from the edge than the middle, inside the 20 mm
+    // band and beyond the 1 mm within which the middle would be no better place than an end.
+    let b = cuboid([1.0, 1.0, 1.0], [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let diagonal = std::f32::consts::FRAC_1_SQRT_2;
+    let at = 1.0 + (0.25 - 0.002) * diagonal;
+    let c = capsule(
+        0.1,
+        0.25,
+        [at, at, 0.0],
+        about(Vec3::Z, std::f32::consts::FRAC_PI_4),
+    );
+    let m = must(collide_by_default(&b, &c));
+    assert_eq!(m.active().len(), 3, "{:?}", m.active());
+}
+
+#[test]
+fn a_capsule_resting_on_an_edge_with_its_end_inside_the_band_gets_the_nearest_point_and_the_end() {
+    let (b, c) = over_the_edge(0.05);
+    let m = must(collide_by_default(&b, &c));
+    assert_eq!(m.active().len(), 2, "{:?}", m.active());
+    let (b, c) = over_the_edge(0.15);
+    let m = must(collide_by_default(&b, &c));
+    assert_eq!(m.active().len(), 1, "{:?}", m.active());
+}
+
 // ---- boxes ----------------------------------------------------------------------------------
 
 #[test]
@@ -501,6 +721,136 @@ fn a_small_box_sunk_into_a_big_one_is_pushed_out_the_shortest_way() {
 }
 
 // ---- refusal --------------------------------------------------------------------------------
+
+/// How far the depth of a cube hull sunk by `depth` into a box of its size (`half` each way, both
+/// turned `yaw` about the vertical axis) is from `depth`, plus how far its normal is from the box's x
+/// axis (the two shapes have the same orientation: this is the easy case for EPA, no relative tilt).
+fn sunk_cube_error(half: f32, yaw: f32, depth: f32) -> Result<f32, String> {
+    let corner = |bit: u32, i: u32| if i & bit == 0 { -half } else { half };
+    let cube: Vec<Vec3> = (0..8)
+        .map(|i| Vec3::new(corner(1, i), corner(2, i), corner(4, i)))
+        .collect();
+    let hull = Shape3::Hull(Hull::new(&cube).map_err(|e| format!("{e:?}"))?);
+    let turn = about(Vec3::Y, yaw);
+    let at = Vec3::new(5.0, 7.0, -3.0);
+    let boxed = cuboid([half; 3], [at.x, at.y, at.z], turn);
+    let offset = turn.rotate(Vec3::new(2.0 * half - depth, 0.3, -0.2));
+    let sunk = Placed3::new(hull, at + offset, turn);
+    let found = must(collide(&boxed, &sunk));
+    // The normal is the box's own x axis (the shortest way out), not only the right depth.
+    let along = found.normal.dot(turn.rotate(Vec3::X));
+    Ok((min_separation(&found) + depth).abs() + (1.0 - along).abs())
+}
+
+/// Card 8-79: a cube hull sunk into a box of its size, 100 m and 2000 m across (at 1000 m from the
+/// origin `f32` steps by about 1.2e-4 m, and the expected depth is itself computed in `f32`), both
+/// turned together about the vertical axis: the depth is the shortest way out along the box's own
+/// axes, to within 0.5 mm (about four steps at 2000 m: it catches a gross loss of digits, not one or
+/// two units), and the normal is that axis. The cases were not tried by card 8-75; no failing pose
+/// was found, this pins that. Not covered: a relative tilt of the two shapes, a depth that is a
+/// large part of the shape.
+#[test]
+fn a_huge_hull_cube_sunk_into_a_box_of_its_size_gets_its_depth() -> Result<(), String> {
+    let mut worst = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
+    for (half, yaw, depth) in huge_cube_cases() {
+        let error = sunk_cube_error(half, yaw, depth)?;
+        if error > worst.0 {
+            worst = (error, half, yaw, depth);
+        }
+    }
+    assert!(worst.0 < 5.0e-4, "(error, half, yaw, depth) {worst:?}");
+    Ok(())
+}
+
+/// Sizes, turns and depths of the huge cube test.
+fn huge_cube_cases() -> Vec<(f32, f32, f32)> {
+    let mut cases = Vec::new();
+    for half in [50.0_f32, 1000.0] {
+        for yaw in [0.0_f32, 0.37, 1.1] {
+            cases.extend([0.2_f32, 1.0, 10.0].map(|depth| (half, yaw, depth)));
+        }
+    }
+    cases
+}
+
+/// How far the lowest separation of the prism sweep may be from the height of the lowest corner: 0.1 mm.
+const PRISM_HEIGHT_TOLERANCE: f32 = 1.0e-4;
+
+/// The corners of a prism of `sides` sides (radius 0.5, 1 m long along z) as the points given to
+/// `Hull::new`. The hull keeps them in its principal frame (the centre of mass at the origin, the axes
+/// of the inertia tensor): for a regular prism that frame is turned about z by an arbitrary angle
+/// (3.6 degrees for 8 sides), so the heights of the corners are those of `Hull::vertices`, not of
+/// these points (card 9-5: a probe that used these points saw a 1 mm error that was its own).
+fn prism_points(sides: u16) -> Vec<Vec3> {
+    let mut corners = Vec::new();
+    for i in 0..sides {
+        let angle = std::f32::consts::TAU * f32::from(i) / f32::from(sides);
+        let rim = Vec3::new(
+            0.5 * base::dmath::cos(angle),
+            0.5 * base::dmath::sin(angle),
+            0.0,
+        );
+        corners.push(rim - Vec3::Z * 0.5);
+        corners.push(rim + Vec3::Z * 0.5);
+    }
+    corners
+}
+
+/// How far the lowest separation of a prism over a floor is from the height of its lowest corner
+/// above the floor top (`None`: no manifold), for the prism turned `turn` about z and tilted `tilt`
+/// about x. The corners are those of the hull itself.
+fn prism_height_error(hull: &Hull, turn: f32, tilt: f32, height: f32) -> Option<f32> {
+    let rotation = about(Vec3::X, tilt) * about(Vec3::Z, turn);
+    let low = hull
+        .vertices()
+        .iter()
+        .map(|v| rotation.rotate(*v).y)
+        .fold(f32::MAX, f32::min);
+    let floor = cuboid([50.0, 1.0, 50.0], [13.7, -1.0, -21.3], Quat::IDENTITY);
+    let at = Vec3::new(16.7, height - low, -19.3);
+    let prism = Placed3::new(Shape3::Hull(*hull), at, rotation);
+    collide(&floor, &prism).map(|m| (min_separation(&m) - height).abs())
+}
+
+/// Card 9-5: the whole manifold (face clipping, not only GJK) of a prism on a floor gives as its lowest
+/// separation the height of the lowest corner, for prisms of 8, 12 and 16 sides, turns every 3
+/// degrees, two tilts, and heights from 0.5 mm above the floor to 5 cm sunk, to within 0.1 mm. The
+/// card was opened for a 1 mm error that came from the probe (see [`prism_points`]); this pins that
+/// there is none.
+#[test]
+fn the_lowest_point_of_a_prism_manifold_is_at_the_height_of_its_lowest_corner() -> Result<(), String>
+{
+    let mut bad = Vec::new();
+    for sides in [8_u16, 12, 16] {
+        let hull = Hull::new(&prism_points(sides)).map_err(|e| format!("{e:?}"))?;
+        bad.extend(prism_failures(sides, &hull));
+    }
+    assert!(
+        bad.is_empty(),
+        "(sides, turn, (tilt, height), error): {bad:?}"
+    );
+    Ok(())
+}
+
+/// A pose that failed: sides, turn, (tilt, height), and the error (`None`: no manifold).
+type Failure = (u16, f32, (f32, f32), Option<f32>);
+
+/// The poses of the sweep of one prism that are off by 0.1 mm or more, or have no manifold.
+fn prism_failures(sides: u16, hull: &Hull) -> Vec<Failure> {
+    let turns = (0..60_u16).map(|k| (3.0 * f32::from(k) + 0.13) * std::f32::consts::PI / 180.0);
+    let poses = [
+        (0.0_f32, 0.0005_f32),
+        (0.0, 0.0),
+        (0.003, -0.005),
+        (0.003, -0.05),
+    ];
+    turns
+        .flat_map(|turn| poses.map(|pose| (turn, pose)))
+        .map(|(turn, pose)| (turn, pose, prism_height_error(hull, turn, pose.0, pose.1)))
+        .filter(|(_, _, error)| !error.is_some_and(|e| e < PRISM_HEIGHT_TOLERANCE))
+        .map(|(turn, pose, error)| (sides, turn, pose, error))
+        .collect()
+}
 
 #[test]
 fn invalid_shapes_positions_orientations_and_margins_give_no_manifold() {

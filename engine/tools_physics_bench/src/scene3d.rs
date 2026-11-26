@@ -95,8 +95,10 @@ const SCENERY_SLOTS: u32 = 8;
 const NORMAL_DENSITY: f32 = 1.0;
 const HEAVY_DENSITY: f32 = 20.0;
 
-/// Seeds of the piles' generator.
-const RNG_SEED: u64 = 12;
+/// The seed of the piles' generator that the catalogue uses (`Scene3World::new`). Any other seed
+/// gives another pile of the same kind ([`Scene3World::seeded`]); this one is on the fast side of
+/// the times to sleep of the mixed pile (card 9-6), so the catalogue tests also run other seeds (card 9-8).
+pub const RNG_SEED: u64 = 12;
 
 /// Layers of the pyramid, and boxes of the towers.
 const PYRAMID_LAYERS: u8 = 6;
@@ -347,10 +349,10 @@ fn pile_shape(rng: &mut Pcg32, index: u32, mixed: bool) -> Shape3 {
 }
 
 /// `count` bodies dropped from a grid, layer by layer, into a walled box.
-fn pile(count: u8, mixed: bool, sleeping: bool) -> Result<Builder, PhysicsError> {
+fn pile(count: u8, mixed: bool, sleeping: bool, seed: u64) -> Result<Builder, PhysicsError> {
     let mut b = Builder::new(u16::from(count), 0, sleeping)?;
     b.container()?;
-    let mut rng = Pcg32::new(RNG_SEED, RNG_STREAM);
+    let mut rng = Pcg32::new(seed, RNG_STREAM);
     let per_layer = GRID * GRID;
     let grid = |n: u8| (f32::from(n) - f32::from(GRID - 1) / 2.0) * GRID_SPACING;
     for index in 0..count {
@@ -449,12 +451,26 @@ impl Scene3World {
         execution: &SolverExecution,
         sleeping: bool,
     ) -> Result<Self, PhysicsError> {
+        Self::seeded(scene, RNG_SEED, execution, sleeping)
+    }
+
+    /// Builds `scene` with the generator of its random sizes and tilts started from `seed` (only
+    /// the piles use one; the other scenes are the same for every seed).
+    ///
+    /// # Errors
+    /// Any [`PhysicsError`] the world raises while it is built.
+    pub fn seeded(
+        scene: Scene3,
+        seed: u64,
+        execution: &SolverExecution,
+        sleeping: bool,
+    ) -> Result<Self, PhysicsError> {
         let (mut builder, links) = match scene {
             Scene3::Tower => (tower(TALL_TOWER, NORMAL_DENSITY, sleeping)?, Vec::new()),
             Scene3::Pyramid => (pyramid(PYRAMID_LAYERS, sleeping)?, Vec::new()),
             Scene3::HeavyOnLight => (tower(HEAVY_TOWER, HEAVY_DENSITY, sleeping)?, Vec::new()),
-            Scene3::SpherePile => (pile(SPHERE_PILE, false, sleeping)?, Vec::new()),
-            Scene3::MixedPile => (pile(MIXED_PILE, true, sleeping)?, Vec::new()),
+            Scene3::SpherePile => (pile(SPHERE_PILE, false, sleeping, seed)?, Vec::new()),
+            Scene3::MixedPile => (pile(MIXED_PILE, true, sleeping, seed)?, Vec::new()),
             Scene3::Chain => chain(CHAIN_LINKS, sleeping)?,
             Scene3::LargePyramid => (pyramid(LARGE_LAYERS, sleeping)?, Vec::new()),
         };
@@ -594,7 +610,22 @@ pub fn run_scene3(
     execution: &SolverExecution,
     sleeping: bool,
 ) -> Result<Run3, PhysicsError> {
-    let mut world = Scene3World::new(scene, execution, sleeping)?;
+    run_seeded3(scene, RNG_SEED, steps, execution, sleeping)
+}
+
+/// [`run_scene3`] with the generator of the scene started from `seed` (see
+/// [`Scene3World::seeded`]).
+///
+/// # Errors
+/// Any [`PhysicsError`] of the build or of a step.
+pub fn run_seeded3(
+    scene: Scene3,
+    seed: u64,
+    steps: u32,
+    execution: &SolverExecution,
+    sleeping: bool,
+) -> Result<Run3, PhysicsError> {
+    let mut world = Scene3World::seeded(scene, seed, execution, sleeping)?;
     let start = world.positions()?;
     let mut settled = Vec::new();
     let mut peak = 0.0_f32;
