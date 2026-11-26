@@ -7,6 +7,9 @@
 //! lever arm over its small moment of inertia) that reaches the spin bound long before the speed
 //! bound; boxes, capsules and hulls are refused from about a thousand metres per second upward,
 //! spheres hardly ever; and a world that clamps steps every scene that is refused by default.
+//! Card 8-93: the far-offset hull cell flips with the size of the cube's corners (edge 1050 or
+//! 1350), so its pin is asserted over sizes, and no longer says that the hull is refused earlier
+//! than the box.
 
 use base::math::Vec3;
 use physics::core::PhysicsError;
@@ -28,6 +31,11 @@ enum Form {
 }
 
 fn shape(form: Form) -> Result<d3::Shape3, PhysicsError> {
+    shape_scaled(form, 1.0)
+}
+
+/// The shape of `form`; the corners of the hull are multiplied by `scale` (card 8-93).
+fn shape_scaled(form: Form, scale: f32) -> Result<d3::Shape3, PhysicsError> {
     Ok(match form {
         Form::Sphere => d3::Shape3::Sphere { radius: 0.5 },
         Form::Box => d3::Shape3::Box {
@@ -37,18 +45,18 @@ fn shape(form: Form) -> Result<d3::Shape3, PhysicsError> {
             half_height: 0.5,
             radius: 0.5,
         },
-        Form::Hull => {
-            let corners: Vec<Vec3> = [-0.5, 0.5]
-                .into_iter()
-                .flat_map(|x| {
-                    [-0.5, 0.5]
-                        .into_iter()
-                        .flat_map(move |y| [-0.5, 0.5].into_iter().map(move |z| Vec3::new(x, y, z)))
-                })
-                .collect();
-            d3::Shape3::Hull(d3::Hull::new(&corners)?)
-        }
+        Form::Hull => d3::Shape3::Hull(d3::Hull::new(&cube_corners(scale))?),
     })
+}
+
+/// The eight corners of the unit cube, multiplied by `scale`, in the order x, y, z nested (x slowest).
+fn cube_corners(scale: f32) -> Vec<Vec3> {
+    (0..8_u8)
+        .map(|n| {
+            let side = |bit: u8| if n & bit == 0 { -0.5 } else { 0.5 };
+            Vec3::new(side(4), side(2), side(1)) * scale
+        })
+        .collect()
 }
 
 fn world(max_bodies: u32, clamp: bool) -> Result<d3::World, PhysicsError> {
@@ -83,6 +91,8 @@ struct Throw {
     spin: Vec3,
     clamp: bool,
     friction: f32,
+    /// Size of the corners of a hull (1 unless a test asks for a variant; the other forms ignore it).
+    scale: f32,
 }
 
 impl Throw {
@@ -95,6 +105,7 @@ impl Throw {
             spin: Vec3::ZERO,
             clamp: false,
             friction: 0.5,
+            scale: 1.0,
         }
     }
 
@@ -106,7 +117,11 @@ impl Throw {
             density: self.ratio,
             friction: self.friction,
             restitution: 1.0,
-            ..d3::BodyDesc::new(d3::BodyKind::Dynamic, Vec3::ZERO, shape(self.form)?)
+            ..d3::BodyDesc::new(
+                d3::BodyKind::Dynamic,
+                Vec3::ZERO,
+                shape_scaled(self.form, self.scale)?,
+            )
         })?;
         world.create_body(&d3::BodyDesc {
             friction: self.friction,
@@ -114,7 +129,7 @@ impl Throw {
             ..d3::BodyDesc::new(
                 d3::BodyKind::Dynamic,
                 Vec3::new(0.9, self.offset, 0.0),
-                shape(self.form)?,
+                shape_scaled(self.form, self.scale)?,
             )
         })?;
         Ok((0..STEPS).all(|_| world.step(DT).is_ok()))
@@ -211,14 +226,34 @@ fn a_sphere_is_not_refused_by_the_same_hits() -> Result<(), PhysicsError> {
 }
 
 #[test]
-fn at_a_far_offset_and_ratio_1000_the_hull_is_refused_at_1200_and_the_box_is_not()
+fn at_a_far_offset_and_ratio_1000_the_hull_steps_at_900_and_is_refused_at_1500_over_sizes_to_1e_3()
 -> Result<(), PhysicsError> {
-    let hit = |form| Throw {
+    // Edge of the hull in the scan (card 8-93, scales 1 +- 3e-6, 1e-4, 1e-3): 1050 as built and for
+    // most variants, 1350 (the box's edge) for others, so a pin at 1200 flips with the size of the
+    // corners. The box is at 1350 in the scan, so 1200 keeps its step; 1500 is 150 above the
+    // highest edge seen.
+    let hit = |form, scale, speed| Throw {
         offset: 0.6,
-        ..Throw::new(form, 1000.0, 1200.0)
+        scale,
+        ..Throw::new(form, 1000.0, speed)
     };
-    assert!(hit(Form::Box).steps()?, "the box steps at 1200");
-    assert!(!hit(Form::Hull).steps()?, "the hull is refused at 1200");
+    assert!(
+        hit(Form::Box, 1.0, 1200.0).steps()?,
+        "the box steps at 1200"
+    );
+    let scales = (-3..=3_i8)
+        .map(|step| 1.0 + f32::from(step) * 1.0e-6)
+        .chain([1.0 - 1.0e-4, 1.0 + 1.0e-4, 1.0 - 1.0e-3, 1.0 + 1.0e-3]);
+    for scale in scales {
+        assert!(
+            hit(Form::Hull, scale, 900.0).steps()?,
+            "the hull, scale {scale}, steps at 900"
+        );
+        assert!(
+            !hit(Form::Hull, scale, 1500.0).steps()?,
+            "the hull, scale {scale}, is refused at 1500"
+        );
+    }
     Ok(())
 }
 
