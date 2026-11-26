@@ -553,6 +553,85 @@ fn huge_cube_cases() -> Vec<(f32, f32, f32)> {
     cases
 }
 
+/// How far the lowest separation of the prism sweep may be from the height of the lowest corner: 0.1 mm.
+const PRISM_HEIGHT_TOLERANCE: f32 = 1.0e-4;
+
+/// The corners of a prism of `sides` sides (radius 0.5, 1 m long along z) as the points given to
+/// `Hull::new`. The hull keeps them in its principal frame (the centre of mass at the origin, the axes
+/// of the inertia tensor): for a regular prism that frame is turned about z by an arbitrary angle
+/// (3.6 degrees for 8 sides), so the heights of the corners are those of `Hull::vertices`, not of
+/// these points (card 9-5: a probe that used these points saw a 1 mm error that was its own).
+fn prism_points(sides: u16) -> Vec<Vec3> {
+    let mut corners = Vec::new();
+    for i in 0..sides {
+        let angle = std::f32::consts::TAU * f32::from(i) / f32::from(sides);
+        let rim = Vec3::new(
+            0.5 * base::dmath::cos(angle),
+            0.5 * base::dmath::sin(angle),
+            0.0,
+        );
+        corners.push(rim - Vec3::Z * 0.5);
+        corners.push(rim + Vec3::Z * 0.5);
+    }
+    corners
+}
+
+/// How far the lowest separation of a prism over a floor is from the height of its lowest corner
+/// above the floor top (`None`: no manifold), for the prism turned `turn` about z and tilted `tilt`
+/// about x. The corners are those of the hull itself.
+fn prism_height_error(hull: &Hull, turn: f32, tilt: f32, height: f32) -> Option<f32> {
+    let rotation = about(Vec3::X, tilt) * about(Vec3::Z, turn);
+    let low = hull
+        .vertices()
+        .iter()
+        .map(|v| rotation.rotate(*v).y)
+        .fold(f32::MAX, f32::min);
+    let floor = cuboid([50.0, 1.0, 50.0], [13.7, -1.0, -21.3], Quat::IDENTITY);
+    let at = Vec3::new(16.7, height - low, -19.3);
+    let prism = Placed3::new(Shape3::Hull(*hull), at, rotation);
+    collide(&floor, &prism).map(|m| (min_separation(&m) - height).abs())
+}
+
+/// Card 9-5: the whole manifold (face clipping, not only GJK) of a prism on a floor gives as its lowest
+/// separation the height of the lowest corner, for prisms of 8, 12 and 16 sides, turns every 3
+/// degrees, two tilts, and heights from 0.5 mm above the floor to 5 cm sunk, to within 0.1 mm. The
+/// card was opened for a 1 mm error that came from the probe (see [`prism_points`]); this pins that
+/// there is none.
+#[test]
+fn the_lowest_point_of_a_prism_manifold_is_at_the_height_of_its_lowest_corner() -> Result<(), String>
+{
+    let mut bad = Vec::new();
+    for sides in [8_u16, 12, 16] {
+        let hull = Hull::new(&prism_points(sides)).map_err(|e| format!("{e:?}"))?;
+        bad.extend(prism_failures(sides, &hull));
+    }
+    assert!(
+        bad.is_empty(),
+        "(sides, turn, (tilt, height), error): {bad:?}"
+    );
+    Ok(())
+}
+
+/// A pose that failed: sides, turn, (tilt, height), and the error (`None`: no manifold).
+type Failure = (u16, f32, (f32, f32), Option<f32>);
+
+/// The poses of the sweep of one prism that are off by 0.1 mm or more, or have no manifold.
+fn prism_failures(sides: u16, hull: &Hull) -> Vec<Failure> {
+    let turns = (0..60_u16).map(|k| (3.0 * f32::from(k) + 0.13) * std::f32::consts::PI / 180.0);
+    let poses = [
+        (0.0_f32, 0.0005_f32),
+        (0.0, 0.0),
+        (0.003, -0.005),
+        (0.003, -0.05),
+    ];
+    turns
+        .flat_map(|turn| poses.map(|pose| (turn, pose)))
+        .map(|(turn, pose)| (turn, pose, prism_height_error(hull, turn, pose.0, pose.1)))
+        .filter(|(_, _, error)| !error.is_some_and(|e| e < PRISM_HEIGHT_TOLERANCE))
+        .map(|(turn, pose, error)| (sides, turn, pose, error))
+        .collect()
+}
+
 #[test]
 fn invalid_shapes_positions_orientations_and_margins_give_no_manifold() {
     let good = sphere(1.0, 0.0, 0.0, 0.0);
