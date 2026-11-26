@@ -2,11 +2,15 @@
 //! of them at an angle, a hull of 24 corners, friction with spin on capsules and hulls, and a stack
 //! hit by a box, a capsule or a hull. Measured on 2026-11-20 in 3D (release scan, steps of 50 m/s
 //! and 50 rad/s) and pinned at a few points as observations, not promises; every pinned speed keeps
-//! a margin of one or more scan steps from the first refused one.
+//! a margin of one or more scan steps from the first refused one. Card 8-94: the hull of 24
+//! corners was first scanned in a frame that `Hull::new` had chosen by rounding (a prism turned
+//! about its axis); it is now in the frame of its points, with a corner facing the other body, and
+//! the pins of that hull are re-measured there (the edge is lower, see the tests).
 //!
 //! What the numbers say: moving both bodies, or tilting one, moves the edge by a factor of about
 //! two to three in either direction and the edge stays above 900 m/s per body; a hull of 24 corners
-//! is refused like boxes and capsules; friction decides whether a spinning capsule is refused,
+//! with a corner facing the other body is refused from 1250 m/s head-on with no friction and from
+//! 2650 head-on to 1700 at 0.6 off with friction 0.5 (the box is not refused head-on); friction decides whether a spinning capsule is refused,
 //! hulls hardly; and a stack hit by a box or a capsule is never refused, it is only thrown through
 //! the floor (there is no continuous collision detection), which the clamp turns into a bounded fall.
 
@@ -227,18 +231,18 @@ fn tilting_the_thrown_box_by_60_degrees_moves_the_edge_up_from_about_3100_to_abo
 }
 
 #[test]
-fn a_hull_of_24_corners_is_refused_off_the_line_like_the_box_and_not_head_on_at_ratio_1000()
+fn a_hull_of_24_corners_with_a_corner_first_is_refused_from_about_2650_head_on_and_1700_at_0_6_off()
 -> Result<(), PhysicsError> {
-    let far = Hit {
-        offset: 0.6,
-        ..Hit::new(Form::Round, 1000.0, 2500.0)
+    // Scan (card 8-94, friction 0.5, ratio 1000): first refused 2650 head-on, 2350 at 0.2 off, 2050
+    // at 0.4 off, 1700 at 0.6 off.
+    let at = |offset, speed| Hit {
+        offset,
+        ..Hit::new(Form::Round, 1000.0, speed)
     };
-    assert!(!far.steps()?, "0.6 off, 2500");
-    let near = Hit {
-        offset: 0.2,
-        ..Hit::new(Form::Round, 1000.0, TOP_SPEED)
-    };
-    assert!(near.steps()?, "0.2 off, 4900");
+    assert!(at(0.0, 2500.0).steps()?, "head-on, 2500");
+    assert!(!at(0.0, 3000.0).steps()?, "head-on, 3000");
+    assert!(at(0.6, 1500.0).steps()?, "0.6 off, 1500");
+    assert!(!at(0.6, 2000.0).steps()?, "0.6 off, 2000");
     Ok(())
 }
 
@@ -295,20 +299,30 @@ fn friction_decides_whether_a_capsule_spinning_at_500_is_refused_and_all_refuse_
 }
 
 #[test]
-fn a_hull_of_eight_corners_is_never_refused_by_spin_and_one_of_24_is_refused_from_about_600()
+fn a_hull_of_eight_corners_is_never_refused_by_spin_and_one_of_24_is_refused_from_about_500_to_650()
 -> Result<(), PhysicsError> {
     for friction in [0.0, 0.5, 1.0, 3.0] {
         assert!(
             !spinning_is_refused(Form::Hull, 1000.0, friction)?,
             "eight corners, friction {friction}"
         );
+    }
+    // The hit alone refuses the hull of 24 corners at 2500 m/s with no friction (from 1250), so a
+    // spin changes nothing there; with friction the first refused spin in the scan is 500 (0.5),
+    // 600 (1) and 650 (3).
+    assert!(!spinning_is_refused(Form::Round, 0.0, 0.5)?, "no spin, 0.5");
+    assert!(
+        spinning_is_refused(Form::Round, 0.0, 0.0)?,
+        "24 corners, no spin, friction 0"
+    );
+    for friction in [0.5, 1.0, 3.0] {
         assert!(
-            !spinning_is_refused(Form::Round, 500.0, friction)?,
-            "24 corners, spin 500, friction {friction}"
+            !spinning_is_refused(Form::Round, 300.0, friction)?,
+            "24 corners, spin 300, friction {friction}"
         );
         assert!(
-            spinning_is_refused(Form::Round, 700.0, friction)?,
-            "24 corners, spin 700, friction {friction}"
+            spinning_is_refused(Form::Round, 800.0, friction)?,
+            "24 corners, spin 800, friction {friction}"
         );
     }
     Ok(())

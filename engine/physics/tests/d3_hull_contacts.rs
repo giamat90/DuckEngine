@@ -404,18 +404,18 @@ fn a_rolling_prism_keeps_both_points_of_the_edge_it_touches_and_rolls_straight()
 /// corner; 2.1 to 2.2 m/s for R = 0.5 m), so a prism hops above that speed. The rise is measured
 /// from step `START_STEPS` on: the larger rises of the first steps (up to 17 mm at 3.2 m/s, and the
 /// "early hop" of 8-76 at 2.2 to 2.6 m/s) are the prism landing from where its stored polygon puts
-/// it (reviews/8-87.md). Measured after the start: at most 0.25 mm at 2.0 m/s, at least 0.82 mm at
-/// 3.2 m/s (0.22 to 1.11 mm at 3.0 m/s, too close to pin). That the 3.2 m/s rise is a sustained hop
-/// and not the tail of the landing was not shown. These are the values for the frame `Hull::new`
-/// returns for each prism; another frame can change them (card 8-94). Between 2.2 and 2.6 m/s
-/// nothing is pinned.
+/// it (reviews/8-87.md). Measured after the start, in the frame of the points (card 8-94 made it
+/// fixed): at most 0.25 mm at 2.0 m/s, at least 1.89 mm at 3.4 m/s (0.13 to 0.28 mm at 3.0 m/s and
+/// 0.27 to 2.01 mm at 3.2 m/s, too close to pin; the 8-sided prism rises 0.39 mm at 3.6 m/s, so the
+/// rise is not monotone in the speed). That the 3.4 m/s rise is a sustained hop and not the tail of
+/// the landing was not shown. Between 2.2 and 2.6 m/s nothing is pinned.
 const HOP_FREE_SPEED: f32 = 2.0;
-const HOP_SPEED: f32 = 3.2;
+const HOP_SPEED: f32 = 3.4;
 const HOP_FREE_RISE: f32 = 0.0005;
-const HOP_RISE: f32 = 0.0005;
+const HOP_RISE: f32 = 0.001;
 
 #[test]
-fn a_prism_rolls_without_a_hop_below_the_speed_a_corner_holds_it_and_hops_above()
+fn a_prism_rolls_flat_at_2_m_s_and_rises_by_more_than_a_millimetre_after_its_start_at_3_4_m_s()
 -> Result<(), PhysicsError> {
     let critical = (STANDARD_GRAVITY.length() * HALF).sqrt();
     // The exact onset is a little lower (cos(pi/n)); the speeds are well clear of both.

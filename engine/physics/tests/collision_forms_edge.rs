@@ -4,12 +4,14 @@
 //! steps of 50 m/s and 50 rad/s, bodies 0.9 m apart, 30 steps) and pinned at a few points as
 //! observations, not promises; every pinned speed keeps 100 m/s or more from the first refused one
 //! in the scan. The exact edge of a cell may differ on another machine; a pin that moves is a
-//! finding to report, not a bound to loosen.
+//! finding to report, not a bound to loosen. Card 8-94: the prisms were first scanned in a frame
+//! that `Hull::new` had chosen by rounding; they are now in the frame of their points (a corner
+//! faces the other body) and the pins of the 24- and 32-corner prisms are re-measured there.
 //!
 //! What the numbers say: hits between different forms are refused from 900 to 4900 m/s (never in
-//! some cells), the lowest 900 at ratio 1000; a hull of 32 corners is refused head-on with no
-//! friction at 2050 m/s, where the others are not; spin about x or y does not refuse a capsule, a
-//! box or a hull of 24 corners, but refuses the hull of the 8 corners of a box about y from 750
+//! some cells), the lowest 900 at ratio 1000; the prisms of 24 and 32 corners are refused head-on
+//! with no friction from 1250 and 1600 m/s, the box is not; spin about x or y does not refuse a
+//! capsule or a box, but refuses the hull of the 8 corners of a box about y from 750
 //! rad/s (a square prism turned 45 degrees is not refused by spin at all); friction moves the edge
 //! of a hit off the line by 13 to 25%; stacks of 12 and 16 are never refused.
 
@@ -218,11 +220,11 @@ fn every_pair_of_forms_steps_at_700_metres_per_second_head_on_and_off_the_line()
 }
 
 #[test]
-fn the_lowest_edges_between_forms_are_about_900_at_ratio_1000_and_refuse_at_1100()
+fn the_lowest_edges_between_forms_are_about_900_at_ratio_1000_and_refuse_at_1100_to_1400()
 -> Result<(), PhysicsError> {
     // First refused speed in the scan: a capsule at a hull of 32 corners 900, an irregular hull at
-    // a turned square prism 900, a sphere at a hull of 24 corners 0.4 off 950, an irregular hull at
-    // itself 1250.
+    // a turned square prism 1150 (900 before card 8-94, in the frame that rounding had chosen), a
+    // sphere at a hull of 24 corners 0.4 off 950, an irregular hull at itself 1250.
     let refused = |thrown, target, offset, speed| -> Result<bool, PhysicsError> {
         let hit = Hit {
             offset,
@@ -231,7 +233,7 @@ fn the_lowest_edges_between_forms_are_about_900_at_ratio_1000_and_refuse_at_1100
         Ok(!hit.steps()?)
     };
     assert!(refused(Form::Capsule, Form::Prism16, 0.0, 1100.0)?);
-    assert!(refused(Form::Irregular, Form::Diamond, 0.0, 1100.0)?);
+    assert!(refused(Form::Irregular, Form::Diamond, 0.0, 1300.0)?);
     assert!(refused(Form::Sphere, Form::Prism12, OFFSET, 1100.0)?);
     assert!(refused(Form::Irregular, Form::Irregular, 0.0, 1400.0)?);
     Ok(())
@@ -260,10 +262,11 @@ fn spinning_is_refused(form: Form, spin: Vec3, friction: f32) -> Result<bool, Ph
 }
 
 #[test]
-fn spin_of_1000_about_x_or_y_does_not_refuse_a_capsule_a_box_or_a_hull_of_24_corners()
--> Result<(), PhysicsError> {
+fn spin_of_1000_about_x_or_y_does_not_refuse_a_capsule_or_a_box() -> Result<(), PhysicsError> {
+    // The hull of 24 corners was in this list; with a corner facing the other body (card 8-94) the
+    // hit at 2500 m/s alone refuses it with no friction (from 1250), so spin says nothing there.
     let spins = [Vec3::X * 1000.0, Vec3::Y * 1000.0];
-    for form in [Form::Capsule, Form::Box, Form::Prism12] {
+    for form in [Form::Capsule, Form::Box] {
         for (friction, spin) in FRICTIONS.into_iter().flat_map(|f| spins.map(|s| (f, s))) {
             assert!(
                 !spinning_is_refused(form, spin, friction)?,
@@ -287,15 +290,20 @@ fn a_hull_of_eight_corners_is_refused_by_spin_about_y_from_about_750_and_never_a
 }
 
 #[test]
-fn a_hull_of_32_corners_is_refused_head_on_at_2500_with_no_friction_and_not_with_friction_half()
+fn the_prisms_of_24_and_32_corners_are_refused_head_on_at_2500_with_no_friction_and_not_with_friction_half()
 -> Result<(), PhysicsError> {
-    // Edge in the scan, ratio 1000: 2050 with friction 0, 4100 with 0.5; the hull of 24 corners
-    // and the box are not refused head-on at any friction.
-    assert!(spinning_is_refused(Form::Prism16, Vec3::ZERO, 0.0)?);
-    assert!(!spinning_is_refused(Form::Prism16, Vec3::ZERO, FRICTION)?);
-    for form in [Form::Box, Form::Prism12] {
-        assert!(!spinning_is_refused(form, Vec3::ZERO, 0.0)?, "{form:?}");
+    // Edge in the scan, ratio 1000, a corner facing the other body (card 8-94): with friction 0
+    // 1250 (24 corners) and 1600 (32 corners), with friction 0.5 2650 and 3400; the box is not
+    // refused head-on at any friction. Before card 8-94 the prism of 24 corners was not refused
+    // and that of 32 corners was refused from 2050: the frame `Hull::new` chose (reviews/8-67.md).
+    for form in [Form::Prism12, Form::Prism16] {
+        assert!(spinning_is_refused(form, Vec3::ZERO, 0.0)?, "{form:?}");
+        assert!(
+            !spinning_is_refused(form, Vec3::ZERO, FRICTION)?,
+            "{form:?}, friction {FRICTION}"
+        );
     }
+    assert!(!spinning_is_refused(Form::Box, Vec3::ZERO, 0.0)?);
     Ok(())
 }
 
