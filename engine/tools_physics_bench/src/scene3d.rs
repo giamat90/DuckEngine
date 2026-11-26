@@ -97,7 +97,7 @@ const HEAVY_DENSITY: f32 = 20.0;
 
 /// The seed of the piles' generator that the catalogue uses (`Scene3World::new`). Any other seed
 /// gives another pile of the same kind ([`Scene3World::seeded`]); this one is on the fast side of
-/// the times to sleep of the mixed pile (card 9-6), so the catalogue tests also run other seeds.
+/// the times to sleep of the mixed pile (card 9-6), so the catalogue tests also run other seeds (card 9-8).
 pub const RNG_SEED: u64 = 12;
 
 /// Layers of the pyramid, and boxes of the towers.
