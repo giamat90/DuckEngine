@@ -994,3 +994,65 @@ fn a_thin_plate_has_the_same_volume_in_any_order_of_its_points() {
         assert!(refused <= 60, "thickness {thickness}: {refused} refused");
     }
 }
+
+/// The corners of a prism of `sides` sides (radius 0.5, 1 m long along z) moved by `shift`.
+fn prism_corners(sides: u8, shift: Vec3) -> Vec<Vec3> {
+    let mut points = Vec::new();
+    for i in 0..sides {
+        let angle = std::f32::consts::TAU * f32::from(i) / f32::from(sides);
+        let rim = Vec3::new(
+            0.5 * base::dmath::cos(angle),
+            0.5 * base::dmath::sin(angle),
+            0.0,
+        );
+        points.push(rim + shift + Vec3::new(0.0, 0.0, -0.5));
+        points.push(rim + shift + Vec3::new(0.0, 0.0, 0.5));
+    }
+    points
+}
+
+/// Card 8-94. Two moments of a regular prism are equal, so its principal axes in that plane are
+/// not fixed by the shape: they used to come out of the rounding of the inertia tensor, and the
+/// stored frame of the same prism moved by 0 to 45 degrees with a shift of 1e-6 m of its points
+/// (reviews/8-67.md). The frame is now the one of the points when the plane is degenerate.
+#[test]
+fn a_regular_prism_keeps_the_frame_of_its_points_whatever_the_rounding() {
+    for sides in [4_u8, 6, 8, 12, 16] {
+        for step in 0..8_u8 {
+            let e = f32::from(step) * 1.0e-6;
+            let shift = Vec3::new(0.7 * e, -0.3 * e, 0.5 * e);
+            let hull = built(&prism_corners(sides, shift));
+            let q = hull.orientation();
+            assert!(
+                q.x.abs() < 1.0e-3 && q.y.abs() < 1.0e-3 && q.z.abs() < 1.0e-3,
+                "{sides} sides, shift {step}e-6: turned by {q:?}"
+            );
+        }
+    }
+}
+
+/// Card 8-94. A box with three different moments turned by a tilt as small as 1e-5 rad keeps the
+/// mass and the moments of the box and puts its corners back, whether or not the turn is below the
+/// noise that the frame ignores (about 2e-5 rad).
+#[test]
+fn a_slightly_turned_box_keeps_its_moments_and_puts_its_corners_back() {
+    let half = Vec3::new(0.5, 0.3, 0.2);
+    let axis = Vec3::new(1.0, 2.0, 2.0) * (1.0 / 3.0);
+    let reference = Shape3::Box { half_extents: half };
+    for tilt in [1.0e-5_f32, 1.0e-4, 1.0e-3] {
+        let points = box_corners(half, Vec3::ZERO, about(axis, tilt));
+        let hull = built(&points);
+        assert!(put_back_matches(&hull, &points), "tilt {tilt}");
+        let (Ok(a), Ok(b)) = (
+            D3::mass_properties(&Shape3::Hull(hull), 1.0),
+            D3::mass_properties(&reference, 1.0),
+        ) else {
+            panic!("both shapes have a mass");
+        };
+        assert!(near(a.mass, b.mass), "tilt {tilt}: {} {}", a.mass, b.mass);
+        let (ours, theirs) = (sorted(a.inv_inertia), sorted(b.inv_inertia));
+        for (x, y) in ours.iter().zip(theirs) {
+            assert!(near(*x, y), "tilt {tilt}: {ours:?} {theirs:?}");
+        }
+    }
+}
