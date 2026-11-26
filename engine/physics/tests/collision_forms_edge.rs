@@ -9,7 +9,7 @@
 //! faces the other body) and the pins of the 24- and 32-corner prisms are re-measured there.
 //!
 //! What the numbers say: hits between different forms are refused from 900 to 4900 m/s (never in
-//! some cells), the lowest 900 at ratio 1000; the prisms of 24 and 32 corners are refused head-on
+//! some cells), the lowest 900 at ratio 1000 (not pinned: a knife edge, card 8-96); the prisms of 24 and 32 corners are refused head-on
 //! with no friction from 1250 and 1600 m/s, the box is not; spin about x or y does not refuse a
 //! capsule or a box, but refuses the hull of the 8 corners of a box about y from 750
 //! rad/s (a square prism turned 45 degrees is not refused by spin at all); friction moves the edge
@@ -220,9 +220,11 @@ fn every_pair_of_forms_steps_at_700_metres_per_second_head_on_and_off_the_line()
 }
 
 #[test]
-fn the_lowest_edges_between_forms_are_about_900_at_ratio_1000_and_refuse_at_1100_to_1400()
+fn the_edges_between_forms_that_hold_over_variants_are_950_to_1250_at_ratio_1000()
 -> Result<(), PhysicsError> {
-    // First refused speed in the scan: a capsule at a hull of 32 corners 900, an irregular hull at
+    // The capsule at the hull of 32 corners (first refused 900 head-on as built) is not pinned: it
+    // is a knife edge, with the corners of the prism multiplied by 1 +- 1e-6 it is not refused up to
+    // 2000 (card 8-93, 6 of 6 draws; card 8-96). First refused speed in the scan: an irregular hull at
     // a turned square prism 1150 (900 before card 8-94, in the frame that rounding had chosen), a
     // sphere at a hull of 24 corners 0.4 off 950, an irregular hull at itself 1250.
     let refused = |thrown, target, offset, speed| -> Result<bool, PhysicsError> {
@@ -232,7 +234,6 @@ fn the_lowest_edges_between_forms_are_about_900_at_ratio_1000_and_refuse_at_1100
         };
         Ok(!hit.steps()?)
     };
-    assert!(refused(Form::Capsule, Form::Prism16, 0.0, 1100.0)?);
     assert!(refused(Form::Irregular, Form::Diamond, 0.0, 1300.0)?);
     assert!(refused(Form::Sphere, Form::Prism12, OFFSET, 1100.0)?);
     assert!(refused(Form::Irregular, Form::Irregular, 0.0, 1400.0)?);
