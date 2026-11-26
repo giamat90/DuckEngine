@@ -1,10 +1,10 @@
-# D2 golden hashes of the 3D scenes of the physics crate (card 8-13, re-recorded in cards 8-81 and 9-4). Protected path (gates/): a change is a governance change.
+# D2 golden hashes of the 3D scenes of the physics crate (card 8-13, re-recorded in cards 8-81, 9-4 and 9-11). Protected path (gates/): a change is a governance change.
 # State hash (FNV-1a 64 bit, World::state_hash) after the listed steps of each scene, scalar serial reference,
 # feature cross-platform-determinism on. Regenerate only in a governance task: see wiki/architecture/physics.md section 3.
 format = 1
 feature = "cross-platform-determinism"
 toolchain = "1.94.1"
-recorded = "2026-11-25, Windows x86-64 (develop e0a2187); Linux x86-64 not compared yet, to be compared by the ci run on the release PR"
+recorded = "2026-11-26, Windows x86-64 and a local Linux x86-64 run (WSL2) printed the same hashes for every scene and step (develop e13686a; the physics crate is unchanged at c4ab6eb); the hosted comparison is the ci run on the release PR"
 recorder = "cargo test -p physics --features cross-platform-determinism --test golden3d -- print_the_golden_lines --nocapture --test-threads=1"
 
 [[scene]]
@@ -95,19 +95,19 @@ stride = 10
 50 = "64219ce1aaccd7eb"
 60 = "7eb913f46d611a62"
 70 = "be952e9f3ddf058f"
-80 = "4243f6f1b082bf30"
-90 = "86abab8e483bd0e1"
-100 = "325c4df94c6dc13c"
-110 = "0bf0f296a6c00e2d"
-120 = "6c39e438f293776c"
-130 = "21a6aa62701c5c0f"
-140 = "7f16b6c0f6d428a7"
-150 = "cfb33568cabbfbf8"
-160 = "e6f4776807450fef"
-170 = "f62240ade8b6f0b5"
-180 = "59bcc13e7a50b31e"
-190 = "cf95b3ba6a4a2ca0"
-200 = "ecb197e96fd40324"
+80 = "a3d4086ec93d8dcd"
+90 = "e1904895b2fb59be"
+100 = "7c2552e3eaa70c30"
+110 = "5d6dc284e95c5da9"
+120 = "9bede64f918371e9"
+130 = "1362f5d9696129b1"
+140 = "4bc9e85676e37a7f"
+150 = "4632eaade27d2f82"
+160 = "5211da87fc63f20e"
+170 = "22260b18a6ff4e54"
+180 = "ee3e41a6064a2617"
+190 = "8bd7d9bdcca05b91"
+200 = "c76fc2ad315df3b7"
 
 [[scene]]
 name = "joint chain 3d"
