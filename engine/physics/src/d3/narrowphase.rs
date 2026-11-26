@@ -34,8 +34,8 @@ const PARALLEL_SINE_SQUARED: f32 = 1.0e-6;
 /// 8-90 found that this is one lucky pile and not an effect of the bound: over ten seeds of that pile
 /// the number of piles all asleep at step 1200 is 2, 3, 2, 4, 5 and 4 of 10 for no far end, 0.0025,
 /// 0.1, 0.6, 0.97 and no bound, which is noise at that sample size (the pile is chaotic: with 0.1,
-/// seeds 5 and 7 are asleep by step 2400, seed 1 by 4000, seeds 2 and 3 not by 4000). The bound is
-/// geometry, not tuning.
+/// seeds 5 and 7 are asleep by step 2400, seed 1 by 4000, seeds 2 and 3 not by 4000). No effect of the bound is detectable at
+/// this sample size; it is kept as geometry, not as tuning.
 const NEAR_PARALLEL_SINE_SQUARED: f32 = 0.1;
 /// The shortest overlap of two parallel segments that gets two contact points.
 const MIN_OVERLAP: f32 = 1.0e-4;
@@ -266,14 +266,25 @@ fn round_round(first: &Round, second: &Round, margin: f32) -> Option<Manifold3> 
 }
 
 /// The unit direction halfway between two segments' directions, the second turned round when it
-/// points against the first. The same for either order of the segments (up to its sign).
+/// points against the first, with the sign that makes its largest component positive: the same for
+/// either order of the segments, also when the two point against each other.
 fn bisector(first: &Round, second: &Round) -> Option<Vec3> {
     let (one, two) = (
         first.direction().normalized()?,
         second.direction().normalized()?,
     );
     let two = if one.dot(two) < 0.0 { -two } else { two };
-    (one + two).normalized()
+    let axis = (one + two).normalized()?;
+    let largest = axis.abs();
+    let biggest = largest.x.max(largest.y).max(largest.z);
+    let along_largest = if largest.x >= biggest {
+        axis.x
+    } else if largest.y >= biggest {
+        axis.y
+    } else {
+        axis.z
+    };
+    Some(if along_largest < 0.0 { -axis } else { axis })
 }
 
 /// The point of `round` at `height` along `axis` (clamped to the segment, which is not a point and not
