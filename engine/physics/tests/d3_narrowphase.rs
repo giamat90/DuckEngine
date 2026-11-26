@@ -6,7 +6,7 @@
 use base::math::{Quat, Vec3};
 use base::rng::Pcg32;
 use physics::core::Dim;
-use physics::d3::{D3, Hull, Manifold3, Placed3, Shape3};
+use physics::d3::{D3, DEFAULT_SPECULATIVE_MARGIN, Hull, Manifold3, Placed3, Shape3};
 
 const MARGIN: f32 = 0.1;
 
@@ -42,6 +42,11 @@ fn about(axis: Vec3, angle: f32) -> Quat {
 
 fn collide(a: &Placed3, b: &Placed3) -> Option<Manifold3> {
     D3::collide(a, b, MARGIN)
+}
+
+/// The contact at the margin of a world by default (the engine's 20 mm, not the 0.1 m of the other tests).
+fn collide_by_default(a: &Placed3, b: &Placed3) -> Option<Manifold3> {
+    D3::collide(a, b, DEFAULT_SPECULATIVE_MARGIN)
 }
 
 fn must(m: Option<Manifold3>) -> Manifold3 {
@@ -543,6 +548,78 @@ fn a_capsule_sunk_through_a_box_face_and_leaning_keeps_both_ends() {
         let m = must(collide(&ground, &leaning_capsule(lean, 0.7)));
         assert_eq!(m.active().len(), 2, "lean {lean}: {:?}", m.active());
     }
+}
+
+/// How far a contact point may move between two steps and still be the same contact for the warm
+/// start (`WARM_MATCH_DISTANCE` of the solver, 2 cm).
+const WARM_REACH: f32 = 0.02;
+
+/// A capsule (half length 1, radius 0.25) over the edge of a box (the edge is along Z at x = 1,
+/// y = 1), its axis across the diagonal normal of the edge, the nearest point of the axis 2 mm
+/// into the edge, and the end of the capsule that is `before_foot` metres from that nearest point
+/// along the axis.
+fn over_the_edge(before_foot: f32) -> (Placed3, Placed3) {
+    let (radius, half) = (0.25_f32, 1.0_f32);
+    let diagonal = std::f32::consts::FRAC_1_SQRT_2;
+    let (normal, along) = (
+        Vec3::new(diagonal, diagonal, 0.0),
+        Vec3::new(diagonal, -diagonal, 0.0),
+    );
+    let foot = Vec3::new(1.0, 1.0, 0.0) + normal * (radius - 0.002);
+    let centre = foot + along * (half - before_foot);
+    let turn = about(Vec3::Z, std::f32::consts::FRAC_PI_4);
+    let b = cuboid([1.0, 1.0, 1.0], [0.0, 0.0, 0.0], Quat::IDENTITY);
+    (
+        b,
+        capsule(half, radius, [centre.x, centre.y, centre.z], turn),
+    )
+}
+
+/// True when a point of `after` is within [`WARM_REACH`] of a point of `before`.
+fn shares_a_point(before: &Manifold3, after: &Manifold3) -> bool {
+    before.active().iter().any(|p| {
+        after
+            .active()
+            .iter()
+            .any(|q| (p.point - q.point).length() < WARM_REACH)
+    })
+}
+
+#[test]
+fn a_capsule_sliding_over_a_box_edge_keeps_a_contact_point_where_it_was_at_every_step() {
+    // Card 9-9. The end of the capsule is 0.15 m and then 0.05 m from the nearest point of its axis
+    // to the box, so its distance to the box goes from 43 mm to 5 mm above that of the nearest
+    // point: across the 20 mm band in which an end is a contact. The point of the contact used to
+    // jump from the nearest point to the end (0.1 m along the axis), where the warm start of the
+    // solver finds nothing, so that the capsule was kicked (mixed pile, seed 3).
+    let mut previous: Option<Manifold3> = None;
+    let mut crossed = [false, false];
+    for step in 0..=200_u16 {
+        let before_foot = 0.15 - 0.0005 * f32::from(step);
+        let (b, c) = over_the_edge(before_foot);
+        let m = must(collide_by_default(&b, &c));
+        crossed[usize::from(m.active().len() > 1)] = true;
+        if let Some(last) = previous {
+            assert!(
+                shares_a_point(&last, &m),
+                "step {step}, end at {before_foot}: {:?} then {:?}",
+                last.active(),
+                m.active()
+            );
+        }
+        previous = Some(m);
+    }
+    assert_eq!(crossed, [true, true], "the slide never crossed the band");
+}
+
+#[test]
+fn a_capsule_resting_on_an_edge_with_its_end_inside_the_band_gets_the_nearest_point_and_the_end() {
+    let (b, c) = over_the_edge(0.05);
+    let m = must(collide_by_default(&b, &c));
+    assert_eq!(m.active().len(), 2, "{:?}", m.active());
+    let (b, c) = over_the_edge(0.15);
+    let m = must(collide_by_default(&b, &c));
+    assert_eq!(m.active().len(), 1, "{:?}", m.active());
 }
 
 // ---- boxes ----------------------------------------------------------------------------------
