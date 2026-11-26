@@ -46,6 +46,12 @@ const MIN_END_BAND: f32 = 5.0e-3;
 /// Steps of the search for the point of a segment closest to a box.
 const SEARCH_STEPS: u32 = 40;
 
+/// When an end of a capsule is at most this much, in metres, farther from a box than the nearest
+/// point of its axis, it is as near as that point: the distance is flat along the segment there, the nearest
+/// point is no better place for a contact than the end, and it moves with the last digits of the
+/// search (card 9-9).
+const NEAREST_REDUNDANT: f32 = 1.0e-3;
+
 /// A segment and a radius: a sphere (both ends the same point) or a capsule.
 #[derive(Clone, Copy)]
 struct Round {
@@ -194,7 +200,7 @@ fn tube_contact(from: Vec3, to: Vec3, normal: Vec3, radii: (f32, f32)) -> Contac
 
 /// The result with the points that are within `margin`, or nothing when none is.
 fn within_margin(normal: Vec3, points: &[ContactPoint3], margin: f32) -> Option<Manifold3> {
-    let mut kept = [ContactPoint3::default(); 2];
+    let mut kept = [ContactPoint3::default(); 3];
     let mut count = 0;
     for point in points.iter().filter(|p| p.separation <= margin) {
         kept[count] = *point;
@@ -422,31 +428,44 @@ fn nearest_parameter(frame: &BoxFrame, round: &Round) -> f32 {
     (low + high) * 0.5
 }
 
-/// The parameters that get a contact: the ends as near the box as the nearest point (within `band`
-/// of it, `distance_at` being the distance of a point of the segment to the box), or the nearest
-/// point itself (`nearest`) when neither end is. The band is the contact margin, at least
-/// [`MIN_END_BAND`]: an end within the margin of the nearest point is a contact worth keeping, and
-/// [`within_margin`] still drops any point that is beyond the margin from its plane (card 8-21: a
-/// fixed 5 mm dropped the upper end of a capsule leaning by 8 mm, and the capsule rocked on the
-/// other end).
+/// The parameters that get a contact: the ends within the band of the nearest distance
+/// (`distance_at` being the distance of a point of the segment to the box), and the nearest point
+/// itself (`nearest`) unless one of those ends is as near as it (within [`NEAREST_REDUNDANT`]), in
+/// which case the nearest point is no more than a place along a flat stretch of the segment. The
+/// band is the contact margin, at least [`MIN_END_BAND`]: an end within the margin of the nearest
+/// point is a contact worth keeping, and [`within_margin`] still drops any point that is beyond
+/// the margin from its plane (card 8-21: a fixed 5 mm dropped the upper end of a capsule leaning
+/// by 8 mm, and the capsule rocked on the other end).
+///
+/// The nearest point is kept next to an end that is farther from the box than it is (card 9-9):
+/// when it was dropped, the contact jumped along the capsule at the band, the warm start found no
+/// point where the contact was and the capsule was kicked.
 fn contact_parameters(
     round: &Round,
     (nearest, band): (f32, f32),
     distance_at: impl Fn(f32) -> f32,
-) -> ([f32; 2], usize) {
-    let mut chosen = [nearest, 0.0];
+) -> ([f32; 3], usize) {
+    let mut chosen = [nearest; 3];
     if round.is_point() {
         return (chosen, 1);
     }
     let best = distance_at(nearest);
     let mut count = 0;
+    let mut as_near = false;
+    let reach = band.max(MIN_END_BAND);
     for end in [0.0, 1.0] {
-        if distance_at(end) <= best + band.max(MIN_END_BAND) {
+        let gap = distance_at(end);
+        if gap <= best + reach {
             chosen[count] = end;
             count += 1;
+            as_near |= gap <= best + NEAREST_REDUNDANT;
         }
     }
-    (chosen, count.max(1))
+    if count == 0 || !as_near {
+        chosen[count] = nearest;
+        count += 1;
+    }
+    (chosen, count)
 }
 
 /// The separating axis of a segment that goes through the box (so it is no use to look for its
@@ -528,7 +547,7 @@ fn round_box(round: &Round, frame: &BoxFrame, margin: f32) -> Option<Manifold3> 
     let gap_at = |t: f32| (round.at(t) - plane_point).dot(normal) - round.radius;
     let (params, count) =
         contact_parameters(round, (nearest, margin), |t| frame.distance(round.at(t)));
-    let mut points = [ContactPoint3::default(); 2];
+    let mut points = [ContactPoint3::default(); 3];
     for (slot, t) in points.iter_mut().zip(&params[..count]) {
         let separation = gap_at(*t);
         *slot = ContactPoint3 {
