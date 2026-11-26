@@ -237,24 +237,150 @@ fn the_far_end_of_a_leaning_capsule_beside_another_is_kept_up_to_the_margin_and_
 
 /// Card 8-89: two skew capsules (the axes 0.3 rad apart, 0.45 between them at the middle, their
 /// closest points) have a second point at an end of the overlap whose separation is the true distance
-/// of the surfaces there, 0.0312 (the end of the overlap along `a`, y = cos 0.3, against the nearest
-/// point of `b`; not the -0.05 of the closest pair), in either order.
+/// of the surfaces there (not the -0.05 of the closest pair), in either order. The overlap is measured
+/// along the bisector of the axes (card 8-90: along `a`, as it was in card 8-89, it depended on which
+/// capsule came first); both axes end at the height cos 0.15 along it, so the end of the overlap is
+/// the lower end of both, the end of `a` (0, -1, 0) against that of `b` (0.45, -cos 0.3, -sin 0.3).
 #[test]
 fn the_far_point_of_two_skew_capsules_has_the_true_distance_of_the_surfaces() {
     let a = capsule(1.0, 0.25, [0.0, 0.0, 0.0], Quat::IDENTITY);
-    let b = capsule(1.0, 0.25, [0.45, 0.0, 0.0], about(Vec3::X, 0.3));
-    for m in [must(collide(&a, &b)), must(collide(&b, &a))] {
+    let tilted = [0.3, 0.3 + std::f32::consts::PI];
+    let pairs = tilted.map(|angle| capsule(1.0, 0.25, [0.45, 0.0, 0.0], about(Vec3::X, angle)));
+    for (b, m) in pairs
+        .iter()
+        .flat_map(|b| [(b, collide(&a, b)), (b, collide(b, &a))])
+    {
+        let m = must(m);
         let mut seps: Vec<f32> = m.active().iter().map(|p| p.separation).collect();
         seps.sort_by(f32::total_cmp);
+        assert!(mirrored(&a, b));
         assert_eq!(seps.len(), 2, "{seps:?}");
         assert!(near(seps[0], 0.45 - 0.5), "{seps:?}");
-        assert!(near(seps[1], 0.0312), "{seps:?}");
+        let (cos, sin) = (base::dmath::cos(0.3), base::dmath::sin(0.3));
+        let end_distance = (0.45_f32 * 0.45 + (1.0 - cos) * (1.0 - cos) + sin * sin).sqrt();
+        assert!(near(seps[1], end_distance - 0.5), "{seps:?}");
     }
 }
 
+/// A random capsule of half length 0.05 to 1.2 and radius 0.25, close to the origin and tilted by up to
+/// `tilt` radians about a horizontal axis.
+fn random_capsule(rng: &mut Pcg32, tilt: f32) -> Placed3 {
+    let mut unit = |span: f32| (rng.next_f32() - 0.5) * span;
+    let half_height = 0.05 + 1.15 * (unit(1.0) + 0.5);
+    let at = [unit(1.2), unit(0.4), unit(1.2)];
+    let axis = about(Vec3::Y, unit(std::f32::consts::TAU)).rotate(Vec3::X);
+    capsule(half_height, 0.25, at, about(axis, unit(2.0 * tilt)))
+}
+
+/// The points of a manifold as (separation, point).
+fn separations_and_points(m: &Manifold3) -> Vec<(f32, Vec3)> {
+    m.active().iter().map(|p| (p.separation, p.point)).collect()
+}
+
+/// Whether every point of `from` has one of `among` with the same separation (to 0.1 mm) and place
+/// (to 1 mm).
+fn all_found_in(from: &[(f32, Vec3)], among: &[(f32, Vec3)]) -> bool {
+    from.iter().all(|f| {
+        among
+            .iter()
+            .any(|g| near(f.0, g.0) && (f.1 - g.1).length() < 1.0e-3)
+    })
+}
+
+/// How far the normals of the two orders may be from opposite: two capsules whose axes nearly cross
+/// (deep in each other) have closest points a hair apart, and their normal rests on rounding.
+const NORMAL_TOLERANCE: f32 = 1.0e-3;
+
+/// Whether the manifold of `a` against `b` and that of `b` against `a` are the same contact seen from
+/// the other side: the same number of points, the same normal reversed (to 0.001), and the same
+/// separations (to 0.1 mm) and places (to 1 mm).
+fn mirrored(a: &Placed3, b: &Placed3) -> bool {
+    let (Some(ab), Some(ba)) = (collide(a, b), collide(b, a)) else {
+        return collide(a, b).is_none() && collide(b, a).is_none();
+    };
+    let (forward, backward) = (separations_and_points(&ab), separations_and_points(&ba));
+    (ab.normal + ba.normal).length() < NORMAL_TOLERANCE
+        && forward.len() == backward.len()
+        && all_found_in(&forward, &backward)
+        && all_found_in(&backward, &forward)
+}
+
+/// Card 8-90: giving two capsules in the other order gives the same contact from the other side, for
+/// capsules lying alongside (tilts up to 0.05 rad, nearly all within the 18 degrees of the far end, and
+/// 0.3, about half of them). Red on the code of 8-89, whose far end was the end of the overlap along the
+/// first capsule: 1 to 16 pairs of 1500 had another number of points, and separations differed by up
+/// to 18 mm. At least a third of the pairs must have two points, or the test would prove nothing.
+#[test]
+fn two_capsules_alongside_in_either_order_give_the_same_contact() {
+    let mut rng = Pcg32::new(0x8_90, 3);
+    let pairs: Vec<(Placed3, Placed3)> = [0.05_f32, 0.3]
+        .iter()
+        .flat_map(|tilt| (0..1500).map(move |_| *tilt))
+        .map(|tilt| {
+            (
+                random_capsule(&mut rng, tilt),
+                random_capsule(&mut rng, tilt),
+            )
+        })
+        .collect();
+    let bad: Vec<usize> = (0..pairs.len())
+        .filter(|i| !mirrored(&pairs[*i].0, &pairs[*i].1))
+        .collect();
+    let two_points = pairs
+        .iter()
+        .filter(|(a, b)| collide(a, b).is_some_and(|m| m.active().len() == 2))
+        .count();
+    assert!(
+        bad.is_empty(),
+        "{} of {} pairs differ, first {:?}",
+        bad.len(),
+        pairs.len(),
+        &bad[..bad.len().min(5)]
+    );
+    assert!(
+        3 * two_points >= pairs.len(),
+        "only {two_points} of {} pairs have two points",
+        pairs.len()
+    );
+}
+
+/// Card 8-90: the same for capsules exactly parallel or exactly opposite (the branch of two points at
+/// the ends of the overlap, which measures it along the first capsule), side by side at random offsets
+/// along their axes.
+#[test]
+fn two_exactly_parallel_capsules_in_either_order_give_the_same_contact() {
+    let mut rng = Pcg32::new(0x8_90, 4);
+    let mut bad = Vec::new();
+    for index in 0..2000_u32 {
+        let mut unit = |span: f32| (rng.next_f32() - 0.5) * span;
+        let (half_a, half_b) = (0.3 + 0.9 * (unit(1.0) + 0.5), 0.3 + 0.9 * (unit(1.0) + 0.5));
+        let turn = about(Vec3::Y, unit(std::f32::consts::TAU));
+        let flip = if index % 2 == 0 {
+            Quat::IDENTITY
+        } else {
+            about(Vec3::X, std::f32::consts::PI)
+        };
+        let first = capsule(half_a, 0.25, [0.0, 0.0, 0.0], turn);
+        let second = capsule(
+            half_b,
+            0.25,
+            [0.45 + unit(0.1), unit(1.5), unit(0.1)],
+            turn * flip,
+        );
+        if !mirrored(&first, &second) {
+            bad.push(index);
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "{} of 2000 pairs differ, first {:?}",
+        bad.len(),
+        &bad[..bad.len().min(5)]
+    );
+}
+
 /// Card 8-89: a short capsule across a long one at a wide angle (about 34 degrees) has both ends
-/// within the margin of it, but is a crossing and not two capsules alongside: one point (with both,
-/// the mixed pile of card 8-21 no longer sleeps within 2000 steps).
+/// within the margin of it, but is a crossing and not two capsules alongside: one point.
 #[test]
 fn a_short_capsule_across_another_at_a_wide_angle_gets_one_point() {
     let a = capsule(1.0, 0.25, [0.0, 0.0, 0.0], Quat::IDENTITY);
