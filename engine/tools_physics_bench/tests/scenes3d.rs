@@ -5,8 +5,8 @@
 use physics::d3::{PhysicsError, SolverExecution};
 use tools_physics_bench::make_pool;
 use tools_physics_bench::scene3d::{
-    CHAIN_LINK, Judgement, REST_SPEED, Run3, SPEED_LIMIT, STANDING_DRIFT, Scene3, Scene3World,
-    run_scene3,
+    CHAIN_LINK, Judgement, REST_SPEED, RNG_SEED, Run3, SPEED_LIMIT, STANDING_DRIFT, Scene3,
+    Scene3World, run_scene3, run_seeded3,
 };
 
 type Failure = Box<dyn std::error::Error>;
@@ -211,6 +211,84 @@ fn the_mixed_pile_comes_to_rest_and_sleeps() -> Result<(), Failure> {
     let found = run_scene3(Scene3::MixedPile, PILE_SLEEP_STEPS, &serial(), true)?;
     assert_eq!(found.asleep, bodies, "{} of {bodies} asleep", found.asleep);
     assert!(found.final_speed < REST_SPEED, "{}", found.final_speed);
+    Ok(())
+}
+
+/// Cards 9-6 and 9-8. The tests above run the pile of one seed (12), which is on the fast side of
+/// the times to sleep. Measured on Windows over seeds 1 to 20, the mixed pile was fully asleep at
+/// 2000 steps for 12 and, since card 9-9, is for 18 (seeds 3 and 13 stay awake, card 9-10). These
+/// runs take seeds 1 to 10. What must hold for every seed is checked for every seed (nothing
+/// leaves the box, nothing blows up, the pile settles under [`PILE_SETTLING_SPEED`]); that a pile
+/// sleeps is statistical (the pile is chaotic and the last digits depend on the platform, card
+/// 8-33), so a share of the seeds must sleep, with a margin under the measured one.
+const SEEDS: std::ops::RangeInclusive<u64> = 1..=10;
+
+/// The share of the seeds whose pile must be fully asleep: 8 of 10. Measured on Windows: 9 of 10
+/// for the sphere pile at 1200 steps and 9 of 10 for the mixed pile at 2000 steps (seed 3 is the
+/// one awake); 4 of 10 for the mixed pile before card 9-9.
+const SEEDS_ASLEEP: usize = 8;
+
+/// Steps of the mixed pile by which most seeds sleep (Windows: of seeds 1 to 20, the 18 that sleep
+/// do so by step 1492 at the latest).
+const MIXED_SLEEP_STEPS: u32 = 2000;
+
+/// Runs the pile of every seed for `steps`; checks what holds for all, returns how many are fully
+/// asleep.
+fn piles_asleep(scene: Scene3, steps: u32) -> Result<usize, Failure> {
+    let mut asleep = 0;
+    for seed in SEEDS {
+        let found = run_seeded3(scene, seed, steps, &serial(), true)?;
+        let name = scene.name();
+        assert_eq!(found.escaped, 0, "{name}, seed {seed}");
+        assert!(found.peak_speed < SPEED_LIMIT, "{name}, seed {seed}");
+        assert!(
+            found.final_speed < PILE_SETTLING_SPEED,
+            "{name}, seed {seed}: {}",
+            found.final_speed
+        );
+        asleep += usize::from(found.asleep == scene.bodies());
+    }
+    Ok(asleep)
+}
+
+#[test]
+fn a_seed_makes_another_pile_and_the_seed_of_the_catalogue_makes_the_catalogue_pile()
+-> Result<(), Failure> {
+    for scene in [Scene3::SpherePile, Scene3::MixedPile, Scene3::Tower] {
+        let catalogue = Scene3World::new(scene, &serial(), true)?.hash();
+        let same = Scene3World::seeded(scene, RNG_SEED, &serial(), true)?.hash();
+        let other = Scene3World::seeded(scene, RNG_SEED + 1, &serial(), true)?.hash();
+        assert_eq!(catalogue, same, "{}", scene.name());
+        // Only the piles are random: the tower is the same for every seed.
+        assert_eq!(
+            catalogue != other,
+            scene != Scene3::Tower,
+            "{}",
+            scene.name()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn the_sphere_piles_of_ten_seeds_stay_in_the_box_and_most_sleep() -> Result<(), Failure> {
+    let asleep = piles_asleep(Scene3::SpherePile, PILE_SLEEP_STEPS)?;
+    assert!(
+        asleep >= SEEDS_ASLEEP,
+        "{asleep} of {} asleep",
+        SEEDS.count()
+    );
+    Ok(())
+}
+
+#[test]
+fn the_mixed_piles_of_ten_seeds_stay_in_the_box_and_most_sleep() -> Result<(), Failure> {
+    let asleep = piles_asleep(Scene3::MixedPile, MIXED_SLEEP_STEPS)?;
+    assert!(
+        asleep >= SEEDS_ASLEEP,
+        "{asleep} of {} asleep",
+        SEEDS.count()
+    );
     Ok(())
 }
 
