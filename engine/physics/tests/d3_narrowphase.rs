@@ -588,7 +588,7 @@ fn shares_a_point(before: &Manifold3, after: &Manifold3) -> bool {
 #[test]
 fn a_capsule_sliding_over_a_box_edge_keeps_a_contact_point_where_it_was_at_every_step() {
     // Card 9-9. The end of the capsule is 0.15 m and then 0.05 m from the nearest point of its axis
-    // to the box, so its distance to the box goes from 43 mm to 5 mm above that of the nearest
+    // to the box, so its distance to the box goes from 42 mm to 5 mm above that of the nearest
     // point: across the 20 mm band in which an end is a contact. The point of the contact used to
     // jump from the nearest point to the end (0.1 m along the axis), where the warm start of the
     // solver finds nothing, so that the capsule was kicked (mixed pile, seed 3).
@@ -610,6 +610,23 @@ fn a_capsule_sliding_over_a_box_edge_keeps_a_contact_point_where_it_was_at_every
         previous = Some(m);
     }
     assert_eq!(crossed, [true, true], "the slide never crossed the band");
+}
+
+#[test]
+fn a_short_capsule_across_a_box_edge_with_both_ends_inside_the_band_gets_three_points() {
+    // Half length 0.1: each end is 19 mm farther from the edge than the middle, inside the 20 mm
+    // band and beyond the 1 mm within which the middle would be no better place than an end.
+    let b = cuboid([1.0, 1.0, 1.0], [0.0, 0.0, 0.0], Quat::IDENTITY);
+    let diagonal = std::f32::consts::FRAC_1_SQRT_2;
+    let at = 1.0 + (0.25 - 0.002) * diagonal;
+    let c = capsule(
+        0.1,
+        0.25,
+        [at, at, 0.0],
+        about(Vec3::Z, std::f32::consts::FRAC_PI_4),
+    );
+    let m = must(collide_by_default(&b, &c));
+    assert_eq!(m.active().len(), 3, "{:?}", m.active());
 }
 
 #[test]

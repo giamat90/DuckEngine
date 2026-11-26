@@ -46,8 +46,8 @@ const MIN_END_BAND: f32 = 5.0e-3;
 /// Steps of the search for the point of a segment closest to a box.
 const SEARCH_STEPS: u32 = 40;
 
-/// An end of a capsule at most this much, in metres, farther from a box than the nearest point of
-/// its axis is as near as that point: the distance is flat along the segment there, the nearest
+/// When an end of a capsule is at most this much, in metres, farther from a box than the nearest
+/// point of its axis, it is as near as that point: the distance is flat along the segment there, the nearest
 /// point is no better place for a contact than the end, and it moves with the last digits of the
 /// search (card 9-9).
 const NEAREST_REDUNDANT: f32 = 1.0e-3;
@@ -452,9 +452,10 @@ fn contact_parameters(
     let best = distance_at(nearest);
     let mut count = 0;
     let mut as_near = false;
+    let reach = band.max(MIN_END_BAND);
     for end in [0.0, 1.0] {
         let gap = distance_at(end);
-        if gap <= best + band.max(MIN_END_BAND) {
+        if gap <= best + reach {
             chosen[count] = end;
             count += 1;
             as_near |= gap <= best + NEAREST_REDUNDANT;
