@@ -2,9 +2,10 @@
 //! frame of the solid's centre of mass and principal axes.
 //!
 //! That frame is what keeps the inertia a plain vector of three moments (card 8-3): the points given
-//! are moved to the centre of mass and turned to the axes the inertia tensor is diagonal in, and the
-//! hull remembers how, so a caller can put the body where the points were
-//! (`input = origin + orientation * vertex`).
+//! are moved to the centre of mass and turned to the axes the inertia tensor is diagonal in (to
+//! within [`JACOBI_NOISE`] of its trace: when two moments are equal, as for a regular prism, the
+//! frame of the points is kept, card 8-94), and the hull remembers how, so a caller can put the
+//! body where the points were (`input = origin + orientation * vertex`).
 //!
 //! The hull is found by brute force, which is fine for at most [`MAX_INPUT_POINTS`] points and runs
 //! once, when the shape is made: every plane through three points that has all the points on one
@@ -44,8 +45,16 @@ const MIN_THICKNESS: f32 = 5.0e-5;
 /// than this share; the points are then refused. The check against the total area alone cannot see
 /// it, because a plate has a large area and a small volume.
 const CLOSED_VOLUME_SHARE: f32 = 0.01;
-/// An off-diagonal term below this (relative to the matrix) is zero.
-const JACOBI_EPSILON: f32 = 1.0e-12;
+/// An off-diagonal term of the inertia tensor of a hull below this share of its trace is zero (card
+/// 8-94). The rounding of the tensor of a hull with its points near the origin is of the order of
+/// 1e-7 of its trace (not measured; points far from the origin carry the rounding of their own
+/// coordinates and can exceed this), so the share is about a hundred times that: it drops terms
+/// that rounding made up, leaves the frame within about 2e-5 rad and costs at most that share of
+/// the moments.
+const JACOBI_NOISE: f32 = 1.0e-5;
+/// The same for the spread of the points that measures the thinnest width (card 8-24): as tight as
+/// before card 8-94, a tilt of a plate must not be dropped there.
+const JACOBI_TIGHT: f32 = 1.0e-12;
 
 type Matrix = [[f32; 3]; 3];
 
@@ -231,7 +240,7 @@ fn thinnest_width(points: &[Vec3]) -> f32 {
     for p in points {
         add_spread(&mut covariance, *p - mean);
     }
-    let (_, axes) = principal(covariance);
+    let (_, axes) = principal(covariance, JACOBI_TIGHT);
     (0..3)
         .map(|index| {
             let along = column(axes, index);
@@ -529,7 +538,7 @@ impl Solid {
         let to_centre = sums.first_moment * (1.0 / sums.volume);
         let centre = reference + to_centre;
         let covariance = sums.covariance_about(to_centre);
-        let (moments, axes) = principal(inertia_of(covariance));
+        let (moments, axes) = principal(inertia_of(covariance), JACOBI_NOISE);
         let mut hull = Hull {
             count: self.count,
             vertices: [Vec3::ZERO; MAX_HULL_VERTICES],
@@ -714,12 +723,14 @@ fn turn_columns(matrix: &mut Matrix, pair: (usize, usize), turn: (f32, f32)) {
 }
 
 /// One Jacobi rotation that zeroes `a[first][second]`, applied to the matrix and to the axes.
-fn rotate_pair(a: &mut Matrix, axes: &mut Matrix, pair: (usize, usize)) {
+fn rotate_pair(a: &mut Matrix, axes: &mut Matrix, pair: (usize, usize), noise: f32) {
     let (first, second) = pair;
     let off = a[first][second];
-    if off.abs()
-        <= JACOBI_EPSILON * (a[first][first].abs() + a[second][second].abs()).max(f32::MIN_POSITIVE)
-    {
+    // An off-diagonal term at the noise of the tensor (card 8-94) is zero: two equal moments make
+    // the axes in their plane arbitrary, and turning them by what the rounding says (up to 45
+    // degrees) would give the same shape a different frame with every shift of its points.
+    let trace = a[0][0].abs() + a[1][1].abs() + a[2][2].abs();
+    if off.abs() <= noise * trace.max(f32::MIN_POSITIVE) {
         return;
     }
     let theta = (a[second][second] - a[first][first]) / (2.0 * off);
@@ -740,11 +751,11 @@ fn transposed(m: Matrix) -> Matrix {
 }
 
 /// The eigenvalues of a symmetric matrix and its eigenvectors as the columns of a rotation.
-fn principal(mut tensor: Matrix) -> ([f32; 3], Matrix) {
+fn principal(mut tensor: Matrix, noise: f32) -> ([f32; 3], Matrix) {
     let mut axes: Matrix = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
     for _ in 0..JACOBI_SWEEPS {
         for pair in [(0, 1), (0, 2), (1, 2)] {
-            rotate_pair(&mut tensor, &mut axes, pair);
+            rotate_pair(&mut tensor, &mut axes, pair, noise);
         }
     }
     let third = column(axes, 0).cross(column(axes, 1));
