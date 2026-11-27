@@ -57,12 +57,17 @@ pub(super) struct Convex<'a> {
     pub(super) radius: f32,
 }
 
+/// The corner farthest along `direction`; the last of equal ones (as `Iterator::max_by` with the
+/// total order of `f32`). Each corner's dot product is computed once (card 8-80).
 fn farthest(vertices: &[Vec3], direction: Vec3) -> Vec3 {
-    vertices
-        .iter()
-        .copied()
-        .max_by(|x, y| x.dot(direction).total_cmp(&y.dot(direction)))
-        .unwrap_or(Vec3::ZERO)
+    let mut best: Option<(f32, Vec3)> = None;
+    for &corner in vertices {
+        let height = corner.dot(direction);
+        if best.is_none_or(|(top, _)| top.total_cmp(&height).is_le()) {
+            best = Some((height, corner));
+        }
+    }
+    best.map_or(Vec3::ZERO, |(_, corner)| corner)
 }
 
 fn box_support(frame: &BoxFrame, direction: Vec3) -> Vec3 {
@@ -1023,5 +1028,75 @@ mod tests {
             bad.is_empty(),
             "floor, turn, sides, first bad pose: {bad:?}"
         );
+    }
+
+    /// `farthest` as it was before card 8-80: the dot product of both corners is computed again at
+    /// every comparison; the later of equal corners wins.
+    fn farthest_by_comparison(vertices: &[Vec3], direction: Vec3) -> Vec3 {
+        vertices
+            .iter()
+            .copied()
+            .max_by(|x, y| x.dot(direction).total_cmp(&y.dot(direction)))
+            .unwrap_or(Vec3::ZERO)
+    }
+
+    /// The generator of the tests below: the same numbers on every run, in -1 to 1.
+    fn lcg(state: &mut u64) -> f32 {
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let high = u16::try_from(*state >> 48).unwrap_or(0);
+        f32::from(high) / 32_768.0 - 1.0
+    }
+
+    fn random_point(state: &mut u64, scale: f32) -> Vec3 {
+        Vec3::new(lcg(state), lcg(state), lcg(state)) * scale
+    }
+
+    fn same_bits(a: Vec3, b: Vec3) -> bool {
+        a.to_array().map(f32::to_bits) == b.to_array().map(f32::to_bits)
+    }
+
+    /// Corners and a direction for round `round`: random ones, a corner twice, corners whose heights
+    /// are 0.0 and -0.0, and two different corners at one height.
+    fn corners_and_direction(state: &mut u64, count: usize, round: usize) -> (Vec<Vec3>, Vec3) {
+        let mut corners: Vec<Vec3> = (0..count).map(|_| random_point(state, 3.0)).collect();
+        if round % 4 == 1 && count > 2 {
+            corners[count - 1] = corners[0];
+        }
+        let direction = match round % 4 {
+            2 => {
+                // Heights of -0.0 and 0.0, which differ for the total order.
+                corners[0] = Vec3::ZERO;
+                corners[count - 1] = Vec3::new(-0.0, -0.0, -0.0);
+                Vec3::new(1.0, 1.0, 1.0)
+            }
+            3 => {
+                // Two different corners at one height along z.
+                let level = corners[0].z;
+                corners[count - 1] = Vec3::new(1.5, -0.5, level);
+                Vec3::new(0.0, 0.0, 1.0)
+            }
+            _ => random_point(state, 1.0),
+        };
+        (corners, direction)
+    }
+
+    #[test]
+    fn the_farthest_corner_is_the_one_the_comparing_search_finds_bit_for_bit() {
+        let mut state = 7_u64;
+        let cases = [1_usize, 2, 3, 8, 16, 32]
+            .into_iter()
+            .flat_map(|count| (0..40).map(move |round| (count, round)));
+        let mut compared = 0;
+        for (count, round) in cases {
+            let (corners, direction) = corners_and_direction(&mut state, count, round);
+            let now = farthest(&corners, direction);
+            let before = farthest_by_comparison(&corners, direction);
+            assert!(same_bits(now, before), "{count} corners, round {round}");
+            compared += 1;
+        }
+        assert_eq!(compared, 240);
+        assert!(same_bits(farthest(&[], Vec3::X), Vec3::ZERO));
     }
 }
