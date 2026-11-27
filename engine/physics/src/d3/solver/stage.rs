@@ -22,10 +22,12 @@
 //!
 //! The cut into chunks depends on the size of the colour and the chunk size only. How a scheduler
 //! orders, groups or places the chunks cannot matter, because no chunk reads what another writes.
-//! There is no lane (SIMD) path in 3D: a chunk runs the scalar solve one constraint at a time.
+//! There is no lane (SIMD) path in 3D: a chunk runs the scalar solve, two constraints side by side
+//! for the soft solve (card 8-97) and one at a time for the other passes.
 
 use super::body::SolverBody;
-use super::constraint::{Constraint, Pass, Staged};
+use super::constraint::{Constraint, Pass, Staged, solve_pair};
+use crate::core::soft::Sweep;
 use base::fpenv::FpGuard;
 use jobs::scheduler::IScheduler;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -133,8 +135,50 @@ impl ColourJob<'_> {
     /// the lists of a [`ChunkOut`] and as long as each other.
     #[inline(never)]
     fn compute(&self, out: &mut ChunkOut) {
-        for (&member, one) in out.members.iter().zip(&mut out.staged) {
+        let ChunkOut { members, staged } = out;
+        match self.pass.pair_sweep() {
+            Some(sweep) => self.compute_pairs(members, staged, sweep),
+            None => self.compute_each(members, staged),
+        }
+    }
+
+    /// Runs the pass on the loaded constraints one after the other.
+    fn compute_each(&self, members: &[u32], staged: &mut [Staged]) {
+        for (&member, one) in members.iter().zip(staged) {
             self.run_one(member, one);
+        }
+    }
+
+    /// Runs the soft solve on the loaded constraints two at a time, side by side (a constraint
+    /// left over runs alone). The members of a colour share no moving body, so a pair is the same
+    /// as its two members one after the other.
+    fn compute_pairs(&self, members: &[u32], staged: &mut [Staged], sweep: &Sweep) {
+        for (ids, two) in members.chunks(2).zip(staged.chunks_mut(2)) {
+            self.run_two(ids, two, sweep);
+        }
+    }
+
+    /// Runs the soft solve on one or two loaded constraints.
+    fn run_two(&self, ids: &[u32], two: &mut [Staged], sweep: &Sweep) {
+        match (ids, two) {
+            ([first, second], [one, other]) => {
+                self.run_pair([*first, *second], [one, other], sweep);
+            }
+            ([first], [one]) => self.run_one(*first, one),
+            _ => {}
+        }
+    }
+
+    /// Runs the soft solve on the copies of two constraints side by side.
+    fn run_pair(&self, members: [u32; 2], staged: [&mut Staged; 2], sweep: &Sweep) {
+        let [one, other] = staged;
+        let shapes = members.map(|member| self.constraints.get(member as usize));
+        if let [Some(first), Some(second)] = shapes {
+            solve_pair(
+                &mut one.side(&first.shape),
+                &mut other.side(&second.shape),
+                sweep,
+            );
         }
     }
 

@@ -21,7 +21,8 @@
 //!
 //! The constraints are swept colour by colour: no two constraints of a colour share a moving body,
 //! so inside a colour the order does not matter (the tests shuffle it and compare state hashes) and
-//! a colour can be solved in parallel (`stage`, the same as the 2D solver, without lanes). The
+//! a colour can be solved in parallel (`stage`, the same as the 2D solver, without lanes) and the
+//! soft solve takes two constraints of a colour at a time, side by side (card 8-97). The
 //! colours are visited in order, the constraints of a colour in manifold-list order, the overflow
 //! set (constraints that found no colour) last, serially. The serial colour order is the
 //! reference: every execution gives the same bits.
@@ -36,7 +37,7 @@ mod warm;
 mod colouring_tests;
 
 use self::body::{SolverBody, StepTerms};
-use self::constraint::{Constraint, Ends, Link, Pass, Setup, Surface};
+use self::constraint::{Constraint, Ends, Link, Pass, Setup, Side, Surface, solve_pair};
 use self::joint::{JointConstraint, JointPass, JointSet, JointSetup};
 use self::stage::{ChunkOut, ColourJob, make_outputs, scatter};
 use self::warm::WarmCache;
@@ -146,6 +147,76 @@ fn visit_members(
     for &index in members {
         visit_member(constraints, bodies, index, pass);
     }
+}
+
+/// Runs the soft solve on the constraints `members` of one colour, two at a time side by side (a
+/// constraint left over runs alone). The members share no moving body, so a pair gives the bits of
+/// its two members one after the other.
+fn visit_pairs(
+    constraints: &mut [Constraint],
+    bodies: &mut [SolverBody],
+    members: &[u32],
+    sweep: &Sweep,
+) {
+    for two in members.chunks(2) {
+        match *two {
+            [first, second] => visit_pair(constraints, bodies, [first, second], sweep),
+            _ => visit_members(constraints, bodies, two, Pass::Solve(sweep)),
+        }
+    }
+}
+
+/// Runs the soft solve on two constraints side by side, with copies of their four bodies, which
+/// are stored back afterwards (a pair that is not two constraints of the step is skipped).
+///
+/// PERF: the two constraints are taken apart with `split_at_mut`, not `get_disjoint_mut`: with the
+/// second a step of the large pyramid (`Scene3::LargePyramid` of `tools_physics_bench`) took about
+/// 15% longer (card 8-97, one machine).
+fn visit_pair(
+    constraints: &mut [Constraint],
+    bodies: &mut [SolverBody],
+    members: [u32; 2],
+    sweep: &Sweep,
+) {
+    let [lower, higher] = [members[0].min(members[1]), members[0].max(members[1])];
+    let (left, right) = constraints.split_at_mut(higher as usize);
+    let (Some(first), Some(second)) = (left.get_mut(lower as usize), right.first_mut()) else {
+        return;
+    };
+    let ends = (
+        bodies.get(first.shape.a),
+        bodies.get(first.shape.b),
+        bodies.get(second.shape.a),
+        bodies.get(second.shape.b),
+    );
+    let (Some(&a1), Some(&b1), Some(&a2), Some(&b2)) = ends else {
+        return;
+    };
+    let (mut a1, mut b1, mut a2, mut b2) = (a1, b1, a2, b2);
+    let (one, other) = (first.shape, second.shape);
+    solve_pair(
+        &mut Side {
+            shape: &one,
+            impulses: &mut first.impulses,
+            ends: Ends {
+                a: &mut a1,
+                b: &mut b1,
+            },
+        },
+        &mut Side {
+            shape: &other,
+            impulses: &mut second.impulses,
+            ends: Ends {
+                a: &mut a2,
+                b: &mut b2,
+            },
+        },
+        sweep,
+    );
+    store(bodies, one.a, a1);
+    store(bodies, one.b, b1);
+    store(bodies, other.a, a2);
+    store(bodies, other.b, b2);
 }
 
 /// Runs `pass` on `constraint` with copies of its two bodies, which are stored back afterwards.
@@ -481,12 +552,27 @@ impl Solver3 {
     fn sweep_constraints(&mut self, pass: Pass) {
         let total = self.colouring.order().len();
         if !self.execution.is_staged() {
-            return self.visit_order(0..total, pass);
+            return match pass.pair_sweep() {
+                Some(sweep) => self.visit_colour_pairs(sweep),
+                None => self.visit_order(0..total, pass),
+            };
         }
         for colour in 0..self.colouring.colour_count() {
             self.stage_colour(colour, pass);
         }
         self.visit_order(total - self.colouring.overflow().len()..total, pass);
+    }
+
+    /// The soft solve of every colour, two constraints at a time, and then the overflow set one by
+    /// one: the bits of the reference loop, which visits the same constraints in the same order.
+    fn visit_colour_pairs(&mut self, sweep: &Sweep) {
+        for colour in 0..self.colouring.colour_count() {
+            let members = self.colouring.members(colour);
+            visit_pairs(&mut self.constraints, &mut self.bodies, members, sweep);
+        }
+        let total = self.colouring.order().len();
+        let from = total - self.colouring.overflow().len();
+        self.visit_order(from..total, Pass::Solve(sweep));
     }
 
     /// The reference loop over the positions `range` of the solve order: one constraint after the

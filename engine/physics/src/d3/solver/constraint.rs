@@ -202,6 +202,16 @@ pub(super) enum Pass<'a> {
     Restitute(&'a Sweep),
 }
 
+impl<'a> Pass<'a> {
+    /// The sweep of a pass that can be run on two constraints side by side: the soft solve.
+    pub(super) fn pair_sweep(self) -> Option<&'a Sweep> {
+        match self {
+            Self::Solve(sweep) => Some(sweep),
+            Self::WarmStart | Self::Restitute(_) => None,
+        }
+    }
+}
+
 impl Pass<'_> {
     /// Runs the pass on one constraint and its two bodies.
     pub(super) fn apply(self, constraint: &mut Constraint, ends: &mut Ends) {
@@ -237,6 +247,76 @@ impl Staged {
             b: &mut self.b,
         };
         pass.apply_to(shape, &mut self.impulses, &mut ends);
+    }
+}
+
+/// One constraint of a pair that is solved side by side: its shape, its impulses and the copies of
+/// its two bodies.
+pub(super) struct Side<'a> {
+    pub shape: &'a Shape,
+    pub impulses: &'a mut Impulses,
+    pub ends: Ends<'a>,
+}
+
+impl Staged {
+    /// This staged constraint as one side of a pair, on `shape`.
+    pub(super) fn side<'a>(&'a mut self, shape: &'a Shape) -> Side<'a> {
+        Side {
+            shape,
+            impulses: &mut self.impulses,
+            ends: Ends {
+                a: &mut self.a,
+                b: &mut self.b,
+            },
+        }
+    }
+}
+
+/// The soft solve of two constraints that share no moving body, point by point side by side: the
+/// first point of one, the first point of the other, the second of one and so on, friction for
+/// all the points and then the normal for all. Every operation of one constraint is the same, in
+/// the same order, as when it is solved alone (`Shape::solve`), so the results are bit for bit
+/// those of solving the two one after the other; the two chains of dependent operations are what
+/// the processor can run at the same time (card 8-97: about a fifth less of a step of a large
+/// pyramid).
+pub(super) fn solve_pair(first: &mut Side, second: &mut Side, sweep: &Sweep) {
+    let most = first.shape.count.max(second.shape.count);
+    for index in 0..most {
+        first.friction_at(index);
+        second.friction_at(index);
+    }
+    for index in 0..most {
+        first.normal_at(index, sweep);
+        second.normal_at(index, sweep);
+    }
+}
+
+impl Side<'_> {
+    /// The friction solve of point `index`, if the constraint has one.
+    #[inline]
+    fn friction_at(&mut self, index: usize) {
+        let live = index < self.shape.count;
+        if let (Some(point), Some(accumulated), true) = (
+            self.shape.points.get(index),
+            self.impulses.get_mut(index),
+            live,
+        ) {
+            self.shape.friction_at(point, accumulated, &mut self.ends);
+        }
+    }
+
+    /// The normal solve of point `index`, if the constraint has one.
+    #[inline]
+    fn normal_at(&mut self, index: usize, sweep: &Sweep) {
+        let live = index < self.shape.count;
+        if let (Some(point), Some(accumulated), true) = (
+            self.shape.points.get(index),
+            self.impulses.get_mut(index),
+            live,
+        ) {
+            self.shape
+                .normal_at(point, accumulated, &mut self.ends, sweep);
+        }
     }
 }
 
@@ -375,30 +455,42 @@ impl Shape {
 
     fn solve_friction(&self, impulses: &mut Impulses, ends: &mut Ends) {
         for (point, accumulated) in self.points.iter().zip(impulses).take(self.count) {
-            let relative = ends.relative_velocity(point);
-            let before = accumulated.tangent;
-            let wanted =
-                [0, 1].map(|i| before[i] - point.tangent_mass[i] * relative.dot(self.tangents[i]));
-            let after = within_cone(wanted, self.friction * accumulated.normal);
-            accumulated.tangent = after;
-            let applied = [0, 1].map(|i| after[i] - before[i]);
-            let impulse = self.tangents[0] * applied[0] + self.tangents[1] * applied[1];
-            ends.push_apart(point, impulse);
+            self.friction_at(point, accumulated, ends);
         }
+    }
+
+    /// The friction solve of one point.
+    #[inline]
+    fn friction_at(&self, point: &Point, accumulated: &mut Impulse, ends: &mut Ends) {
+        let relative = ends.relative_velocity(point);
+        let before = accumulated.tangent;
+        let wanted =
+            [0, 1].map(|i| before[i] - point.tangent_mass[i] * relative.dot(self.tangents[i]));
+        let after = within_cone(wanted, self.friction * accumulated.normal);
+        accumulated.tangent = after;
+        let applied = [0, 1].map(|i| after[i] - before[i]);
+        let impulse = self.tangents[0] * applied[0] + self.tangents[1] * applied[1];
+        ends.push_apart(point, impulse);
     }
 
     fn solve_normal(&self, impulses: &mut Impulses, ends: &mut Ends, sweep: &Sweep) {
         for (point, accumulated) in self.points.iter().zip(impulses).take(self.count) {
-            let moved = (ends.b.shift - ends.a.shift)
-                + (ends.b.turn.rotate(point.anchor_b) - ends.a.turn.rotate(point.anchor_a));
-            let separation = moved.dot(self.normal) + point.base_separation;
-            let (bias, mass_scale, impulse_scale) = sweep.terms(separation, &self.softness);
-            let approach = self.normal.dot(ends.relative_velocity(point));
-            let delta = -point.normal_mass * mass_scale * (approach + bias)
-                - impulse_scale * accumulated.normal;
-            let applied = accumulated.accumulate(delta);
-            ends.push_apart(point, self.normal * applied);
+            self.normal_at(point, accumulated, ends, sweep);
         }
+    }
+
+    /// The normal solve of one point.
+    #[inline]
+    fn normal_at(&self, point: &Point, accumulated: &mut Impulse, ends: &mut Ends, sweep: &Sweep) {
+        let moved = (ends.b.shift - ends.a.shift)
+            + (ends.b.turn.rotate(point.anchor_b) - ends.a.turn.rotate(point.anchor_a));
+        let separation = moved.dot(self.normal) + point.base_separation;
+        let (bias, mass_scale, impulse_scale) = sweep.terms(separation, &self.softness);
+        let approach = self.normal.dot(ends.relative_velocity(point));
+        let delta = -point.normal_mass * mass_scale * (approach + bias)
+            - impulse_scale * accumulated.normal;
+        let applied = accumulated.accumulate(delta);
+        ends.push_apart(point, self.normal * applied);
     }
 
     /// Bounce: after the last sub-step, a point that approached faster than the threshold and
@@ -504,6 +596,159 @@ mod tests {
     ) {
         let mut ends = Ends { a: fixed, b: ball };
         constraint.solve(&mut ends, &sweep(use_bias));
+    }
+
+    fn lcg(state: &mut u64) -> f32 {
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        f32::from(u16::try_from(*state >> 48).unwrap_or(0)) / 32_768.0 - 1.0
+    }
+
+    fn random_vec(state: &mut u64) -> Vec3 {
+        Vec3::new(lcg(state), lcg(state), lcg(state))
+    }
+
+    /// A body that moves, with a velocity and a spin of its own (or one that cannot move).
+    fn random_body(state: &mut u64, moves: bool) -> SolverBody {
+        let mut body = SolverBody::at_rest();
+        if moves {
+            body.inv_mass = 1.0 + lcg(state).abs();
+            body.inv_inertia = base::math::Mat3::from_scale(Vec3::new(8.0, 9.0, 11.0));
+            body.velocity = random_vec(state);
+            body.spin = random_vec(state);
+        }
+        body
+    }
+
+    /// A manifold of `points` points between body slots `a` and `b`, random in every number.
+    fn random_constraint(
+        state: &mut u64,
+        points: usize,
+        ends: (&SolverBody, &SolverBody),
+        slots: (usize, usize),
+    ) -> Constraint {
+        let normal = random_vec(state).normalized().unwrap_or(Vec3::Y);
+        let sources: Vec<ContactPoint3> = (0..points)
+            .map(|_| ContactPoint3 {
+                point: random_vec(state) * 0.5,
+                separation: lcg(state) * 0.01,
+            })
+            .collect();
+        let setup = Setup {
+            bodies: [ends.0, ends.1],
+            centres: [random_vec(state) * 0.5, random_vec(state) * 0.5],
+            surface: Surface {
+                friction: lcg(state).abs(),
+                restitution: 0.0,
+            },
+            softness: Softness::new(30.0, 10.0, H),
+        };
+        let link = Link {
+            first: handle(0),
+            second: handle(1),
+            a: slots.0,
+            b: slots.1,
+        };
+        let mut made = Constraint::new(link, &Manifold3::new(normal, &sources), &setup);
+        for slot in made.impulses.iter_mut().take(points) {
+            slot.normal = lcg(state).abs();
+            slot.tangent = [lcg(state) * 0.2, lcg(state) * 0.2];
+        }
+        made
+    }
+
+    fn same_body(x: &SolverBody, y: &SolverBody) -> bool {
+        let bits = |v: Vec3| [v.x, v.y, v.z].map(f32::to_bits);
+        bits(x.velocity) == bits(y.velocity) && bits(x.spin) == bits(y.spin)
+    }
+
+    fn same_impulses(x: &Impulses, y: &Impulses) -> bool {
+        x.iter().zip(y).all(|(p, q)| {
+            p.normal.to_bits() == q.normal.to_bits()
+                && same(p.tangent, q.tangent)
+                && p.max_normal.to_bits() == q.max_normal.to_bits()
+        })
+    }
+
+    /// Two constraints on four bodies, solved one after the other or side by side.
+    fn solved(
+        constraints: [&Constraint; 2],
+        bodies: &[SolverBody; 4],
+        sweep: &Sweep,
+        together: bool,
+    ) -> (Constraint, Constraint, [SolverBody; 4]) {
+        let (mut one, mut two) = (*constraints[0], *constraints[1]);
+        let [mut a1, mut b1, mut a2, mut b2] = *bodies;
+        if together {
+            let (first, second) = (one.shape, two.shape);
+            let mut left = Side {
+                shape: &first,
+                impulses: &mut one.impulses,
+                ends: Ends {
+                    a: &mut a1,
+                    b: &mut b1,
+                },
+            };
+            let mut right = Side {
+                shape: &second,
+                impulses: &mut two.impulses,
+                ends: Ends {
+                    a: &mut a2,
+                    b: &mut b2,
+                },
+            };
+            solve_pair(&mut left, &mut right, sweep);
+        } else {
+            one.solve(
+                &mut Ends {
+                    a: &mut a1,
+                    b: &mut b1,
+                },
+                sweep,
+            );
+            two.solve(
+                &mut Ends {
+                    a: &mut a2,
+                    b: &mut b2,
+                },
+                sweep,
+            );
+        }
+        (one, two, [a1, b1, a2, b2])
+    }
+
+    #[test]
+    fn two_constraints_solved_side_by_side_equal_the_two_solved_one_after_the_other_bit_for_bit() {
+        let mut state = 0x5eed_u64;
+        for trial in 0..400_usize {
+            let (points_one, points_two) = (1 + trial % 4, 1 + (trial / 4) % 4);
+            // Every fifth trial has bodies that cannot move on one end (a floor).
+            let moves = trial % 5 != 0;
+            let mut body = |n: usize| random_body(&mut state, moves || n.is_multiple_of(2));
+            let bodies = [body(0), body(1), body(2), body(3)];
+            let one = random_constraint(&mut state, points_one, (&bodies[0], &bodies[1]), (0, 1));
+            let two = random_constraint(&mut state, points_two, (&bodies[2], &bodies[3]), (2, 3));
+            let sweep = sweep(trial % 2 == 0);
+
+            let alone = solved([&one, &two], &bodies, &sweep, false);
+            let together = solved([&one, &two], &bodies, &sweep, true);
+
+            assert!(
+                same_impulses(&alone.0.impulses, &together.0.impulses),
+                "{trial}"
+            );
+            assert!(
+                same_impulses(&alone.1.impulses, &together.1.impulses),
+                "{trial}"
+            );
+            let bodies_same = alone
+                .2
+                .iter()
+                .zip(&together.2)
+                .all(|(x, y)| same_body(x, y));
+            assert!(bodies_same, "{trial}");
+        }
     }
 
     #[test]
