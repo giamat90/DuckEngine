@@ -10,8 +10,9 @@
 //! off the integrator is semi-implicit Euler on the angular velocity: a torque-free body keeps its
 //! angular velocity, which is not physical for a body whose principal moments differ (angular
 //! momentum should be what is kept). With it on, each step (each sub-step of a body a constraint
-//! touches) takes one implicit Newton step of Euler's equation in the body frame, so a box spun
-//! about its middle axis tumbles. 2D has no such term.
+//! touches) takes one implicit midpoint step of Euler's equation in the body frame (card 8-73),
+//! so a box spun about its middle axis tumbles and keeps its energy and the length of its angular
+//! momentum. 2D has no such term.
 
 mod aabb;
 mod box_box;
