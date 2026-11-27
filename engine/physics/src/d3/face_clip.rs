@@ -228,15 +228,15 @@ fn window_of(solid: &Solid, n: Vec3, window: f32) -> ([Vec3; MAX_WINDOW], usize)
     (found, len)
 }
 
-/// The outward unit normal of the plane through `a`, `b`, `c` when it is a face plane of the solid:
-/// within [`MIN_FACE_COSINE`] of `n` (a cheap test that comes first, since most triples of a round
-/// hull fail it) and with every corner of the solid on one side of it (within the tolerance).
-fn face_plane(solid: &Solid, (a, b, c): (Vec3, Vec3, Vec3), n: Vec3, fit: Fit) -> Option<Vec3> {
-    let Fit {
-        tolerance,
-        reach,
-        min_cosine,
-    } = fit;
+/// The unit normal of the plane through `a`, `b`, `c`, turned to face `n`, when the triangle is not
+/// a sliver and the normal is within `min_cosine` of `n`. This is the cheap half of
+/// [`face_plane`]: it looks at no other corner of the solid.
+fn plane_facing(
+    reach: f32,
+    (a, b, c): (Vec3, Vec3, Vec3),
+    n: Vec3,
+    min_cosine: f32,
+) -> Option<Vec3> {
     let across = (b - a).cross(c - a);
     if across.length_squared() <= MIN_TRIANGLE * (reach * reach) * (reach * reach) {
         return None;
@@ -245,14 +245,24 @@ fn face_plane(solid: &Solid, (a, b, c): (Vec3, Vec3, Vec3), n: Vec3, fit: Fit) -
     if normal.dot(n) < 0.0 {
         normal = -normal;
     }
-    if normal.dot(n) <= min_cosine {
-        return None;
-    }
+    (normal.dot(n) > min_cosine).then_some(normal)
+}
+
+/// Whether every corner of the solid is on one side of the plane through `on` with outward
+/// `normal`, within the tolerance: the costly half of [`face_plane`], a scan of every corner.
+fn bounds(solid: &Solid, on: Vec3, normal: Vec3, tolerance: f32) -> bool {
     solid
         .corners
         .iter()
-        .all(|v| (*v - a).dot(normal) <= tolerance)
-        .then_some(normal)
+        .all(|v| (*v - on).dot(normal) <= tolerance)
+}
+
+/// The outward unit normal of the plane through `a`, `b`, `c` when it is a face plane of the solid:
+/// within the cosine of `n` (a cheap test that comes first, since most triples of a round hull
+/// fail it) and with every corner of the solid on one side of it (within the tolerance).
+fn face_plane(solid: &Solid, triple: (Vec3, Vec3, Vec3), n: Vec3, fit: Fit) -> Option<Vec3> {
+    let normal = plane_facing(fit.reach, triple, n, fit.min_cosine)?;
+    bounds(solid, triple.0, normal, fit.tolerance).then_some(normal)
 }
 
 /// The face of a box or hull that `n` (in the world) points at: three corners near the farthest
@@ -313,31 +323,70 @@ fn nearest_corners(solid: &Solid, n: Vec3) -> ([Vec3; WIDE_CANDIDATES], usize) {
     (found.map(|(_, c)| c), len)
 }
 
+/// A plane through three of the nearest corners that faces the search direction within
+/// [`WIDE_FACE_COSINE`]: how much it faces it, its normal, and which corner it passes through.
+#[derive(Clone, Copy)]
+struct Leaning {
+    cosine: f32,
+    normal: Vec3,
+    on: usize,
+}
+
+/// The triples of [`WIDE_CANDIDATES`] corners.
+const WIDE_TRIPLES: usize = WIDE_CANDIDATES * (WIDE_CANDIDATES - 1) * (WIDE_CANDIDATES - 2) / 6;
+
+/// The place in `list` of the plane that faces most, the first of equal ones.
+fn most_leaning(list: &[Leaning]) -> usize {
+    let mut best = 0;
+    for (at, plane) in list.iter().enumerate() {
+        if plane.cosine > list[best].cosine {
+            best = at;
+        }
+    }
+    best
+}
+
 /// The face of a box or hull nearest to `n` within [`WIDE_FACE_COSINE`] (card 8-71): the second try
 /// when [`fitted_face`] found none, because the normal of EPA at a corner of a round hull leans
 /// further than 1.8 degrees from the face that touches. Of the planes spanned by the corners nearest
-/// `n` that bound the whole solid, the one that faces `n` most; `None` when there is none.
+/// `n` that bound the whole solid, the one that faces `n` most (the first of equal ones); `None`
+/// when there is none.
+///
+/// The planes are put in the order of how much they face `n` and the first that bounds the solid is
+/// taken, so the costly scan of every corner stops at the first plane that passes (card 8-78): the
+/// answer is the one the scan of every plane gives, bit for bit.
 fn widest_face(solid: &Solid, n: Vec3) -> Option<Face> {
     let local = solid.rotation.conjugate().rotate(n);
     let reach = solid.reach();
     let (near, len) = nearest_corners(solid, local);
-    let fit = Fit {
-        tolerance: reach * PLANE_TOLERANCE,
-        reach,
-        min_cosine: WIDE_FACE_COSINE,
-    };
-    let mut best: Option<(f32, Vec3, Vec3)> = None;
+    let tolerance = reach * PLANE_TOLERANCE;
+    let mut leaning = [Leaning {
+        cosine: f32::NEG_INFINITY,
+        normal: Vec3::ZERO,
+        on: 0,
+    }; WIDE_TRIPLES];
+    let mut count = 0;
     for (i, j, k) in triples(len) {
-        let Some(normal) = face_plane(solid, (near[i], near[j], near[k]), local, fit) else {
-            continue;
-        };
-        let cosine = normal.dot(local);
-        if best.is_none_or(|(c, _, _)| cosine > c) {
-            best = Some((cosine, normal, near[i]));
+        let triple = (near[i], near[j], near[k]);
+        if let Some(normal) = plane_facing(reach, triple, local, WIDE_FACE_COSINE) {
+            leaning[count] = Leaning {
+                cosine: normal.dot(local),
+                normal,
+                on: i,
+            };
+            count += 1;
         }
     }
-    let (_, normal, on_plane) = best?;
-    Some(face_on(solid, normal, on_plane, fit.tolerance))
+    for _ in 0..count {
+        let at = most_leaning(&leaning[..count]);
+        let plane = leaning[at];
+        if bounds(solid, near[plane.on], plane.normal, tolerance) {
+            return Some(face_on(solid, plane.normal, near[plane.on], tolerance));
+        }
+        // A plane that has been tried faces nothing, so it is not picked again.
+        leaning[at].cosine = f32::NEG_INFINITY;
+    }
+    None
 }
 
 /// Corner `k` (its three low bits are the signs of x, y, z) of a box of half sizes `half`.
@@ -1443,6 +1492,137 @@ mod tests {
         assert!(fitted_face(&solid, n).is_none());
         let found = widest_face(&solid, n);
         assert!(found.is_some_and(|f| f.corners.len == 4));
+    }
+
+    /// `widest_face` as card 8-71 wrote it: every triple is tested against every corner, and the
+    /// triple that faces the direction most wins (the first of equal ones). The reference of card
+    /// 8-78, which makes the search cheaper without changing a bit of its answer.
+    fn widest_face_by_every_triple(solid: &Solid, n: Vec3) -> Option<Face> {
+        let local = solid.rotation.conjugate().rotate(n);
+        let reach = solid.reach();
+        let (near, len) = nearest_corners(solid, local);
+        let fit = Fit {
+            tolerance: reach * PLANE_TOLERANCE,
+            reach,
+            min_cosine: WIDE_FACE_COSINE,
+        };
+        let planes = triples(len).filter_map(|(i, j, k)| {
+            face_plane(solid, (near[i], near[j], near[k]), local, fit)
+                .map(|normal| (normal.dot(local), normal, near[i]))
+        });
+        // The first of equal cosines stays: a later one replaces it only when it is larger.
+        let best = planes.fold(None, |best: Option<(f32, Vec3, Vec3)>, plane| {
+            best.filter(|(cosine, _, _)| plane.0 <= *cosine)
+                .or(Some(plane))
+        });
+        let (_, normal, on_plane) = best?;
+        Some(face_on(solid, normal, on_plane, fit.tolerance))
+    }
+
+    fn same_face(a: Option<&Face>, b: Option<&Face>) -> bool {
+        let bits = |v: Vec3| v.to_array().map(f32::to_bits);
+        match (a, b) {
+            (None, None) => true,
+            (Some(a), Some(b)) => {
+                let (ours, theirs) = (&a.corners, &b.corners);
+                ours.len == theirs.len
+                    && ours.corners[..ours.len]
+                        .iter()
+                        .zip(&theirs.corners[..theirs.len])
+                        .all(|(x, y)| bits(*x) == bits(*y))
+                    && a.normal.map(bits) == b.normal.map(bits)
+            }
+            _ => false,
+        }
+    }
+
+    /// The corners of a prism with `sides` sides, radius 1, half length 1, along z.
+    fn prism_corners(sides: u8) -> Vec<Vec3> {
+        let mut corners = Vec::new();
+        for i in 0..sides {
+            let angle = std::f32::consts::TAU * f32::from(i) / f32::from(sides);
+            let rim = Vec3::new(base::dmath::cos(angle), base::dmath::sin(angle), 0.0);
+            corners.push(rim - Vec3::Z);
+            corners.push(rim + Vec3::Z);
+        }
+        corners
+    }
+
+    /// Directions all round, in 5 degree steps in three planes, plus the ties: a diagonal of a box,
+    /// and an edge.
+    fn search_directions() -> Vec<Vec3> {
+        let mut directions = vec![
+            Vec3::new(1.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 1.0),
+            Vec3::new(0.0, 1.0, 1.0),
+            Vec3::new(1.0, 0.0, 1.0),
+        ];
+        for step in 0..72_u8 {
+            let angle = f32::from(step) * 5.0_f32.to_radians();
+            let (c, s) = (base::dmath::cos(angle), base::dmath::sin(angle));
+            directions.push(Vec3::new(c, s, 0.0));
+            directions.push(Vec3::new(0.0, c, s));
+            directions.push(Vec3::new(c, 0.2, s));
+        }
+        directions
+            .into_iter()
+            .map(|d| d.normalized().unwrap_or(Vec3::Y))
+            .collect()
+    }
+
+    /// How many directions were compared and how many found a face; panics (asserts) at the first
+    /// direction where the two searches differ.
+    fn compare_searches(corners: &[Vec3], rotation: Quat) -> (u32, u32) {
+        let solid = Solid {
+            corners,
+            centre: Vec3::new(0.2, -0.1, 0.4),
+            rotation,
+        };
+        let (mut compared, mut found) = (0, 0);
+        for n in search_directions() {
+            let now = widest_face(&solid, n);
+            let before = widest_face_by_every_triple(&solid, n);
+            assert!(same_face(now.as_ref(), before.as_ref()), "direction {n:?}");
+            compared += 1;
+            found += u32::from(now.is_some());
+        }
+        (compared, found)
+    }
+
+    #[test]
+    fn the_widest_face_is_the_one_the_search_of_every_triple_finds_bit_for_bit() {
+        let turns = [
+            Quat::IDENTITY,
+            Quat::from_axis_angle(Vec3::new(1.0, 2.0, 3.0), 0.7).unwrap_or(Quat::IDENTITY),
+            Quat::from_axis_angle(Vec3::Y, 0.3).unwrap_or(Quat::IDENTITY),
+        ];
+        let mut shapes: Vec<Vec<Vec3>> = vec![unit_box_corners().to_vec()];
+        shapes.extend([8_u8, 12, 16].map(prism_corners));
+        // Fewer than eight corners: a square pyramid and a tetrahedron.
+        shapes.push(vec![
+            Vec3::new(1.0, -0.5, 1.0),
+            Vec3::new(1.0, -0.5, -1.0),
+            Vec3::new(-1.0, -0.5, -1.0),
+            Vec3::new(-1.0, -0.5, 1.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ]);
+        shapes.push(vec![
+            Vec3::new(1.0, 1.0, 1.0),
+            Vec3::new(1.0, -1.0, -1.0),
+            Vec3::new(-1.0, 1.0, -1.0),
+            Vec3::new(-1.0, -1.0, 1.0),
+        ]);
+        let (mut compared, mut found) = (0, 0);
+        for (corners, rotation) in shapes
+            .iter()
+            .flat_map(|corners| turns.iter().map(move |turn| (corners, *turn)))
+        {
+            let (more, hits) = compare_searches(corners, rotation);
+            compared += more;
+            found += hits;
+        }
+        // The comparison is not empty: most directions find a face and some find none.
+        assert!(compared > 3000 && found > compared / 2 && found < compared);
     }
 
     #[test]

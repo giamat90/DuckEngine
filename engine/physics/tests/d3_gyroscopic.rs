@@ -89,8 +89,8 @@ fn with_the_term_a_torque_free_body_keeps_its_angular_momentum() -> Result<(), P
     // The angular velocity itself has changed a lot (measured 3.96 rad/s): that is the tumbling.
     let moved = (w.body(handle)?.angular_velocity() - Vec3::new(1.0, 4.0, 0.5)).length();
     assert!(moved > 1.0, "the spin barely changed: {moved}");
-    // Measured 2.6 % over 2 s: the implicit step is first order and loses about 0.9 % of the
-    // momentum a second at 240 Hz (see the module doc of `gyroscopic.rs`).
+    // Measured 0.8 % over 2 s (2.6 % with the backward Euler step of card 8-26); the rest is the
+    // first-order turn of the orientation (see the module doc of `gyroscopic.rs`).
     assert!(drift < 0.05, "angular momentum drifted by {drift}");
     Ok(())
 }
@@ -204,5 +204,72 @@ fn a_body_the_solver_sets_up_keeps_its_angular_velocity_without_the_term()
     run(&mut w, TWO_SECONDS)?;
     let moved = (w.body(handle)?.angular_velocity() - spin).length();
     assert!(moved < 1e-4, "the spin changed by {moved}");
+    Ok(())
+}
+
+fn energy(w: &World, h: physics::d3::BodyHandle) -> Result<f32, PhysicsError> {
+    let b = w.body(h)?;
+    let local = b.rotation().conjugate().rotate(b.angular_velocity());
+    let inv = b.inverse_inertia();
+    Ok(0.5 * (local.x * local.x / inv.x + local.y * local.y / inv.y + local.z * local.z / inv.z))
+}
+
+/// Card 8-73: how far the momentum vector and the energy of the tumbling box move over `seconds`
+/// at `hz`, for a body nothing touches or one a joint touches (set up by the solver, sub-stepped).
+fn tumble_errors(hz: u16, seconds: u16, pinned: bool) -> Result<(f32, f32), PhysicsError> {
+    let spin = Vec3::new(1.0, 4.0, 0.5);
+    let (mut w, handle) = if pinned {
+        pinned_box(true, spin)?
+    } else {
+        let mut w = world(true)?;
+        let handle = tumbling_box(&mut w, spin)?;
+        (w, handle)
+    };
+    let (before, energy_before) = (angular_momentum(&w, handle)?, energy(&w, handle)?);
+    let mut energy_error = 0.0_f32;
+    for _ in 0..u32::from(hz) * u32::from(seconds) {
+        w.step(1.0 / f32::from(hz))?;
+        energy_error =
+            energy_error.max((energy(&w, handle)? - energy_before).abs() / energy_before);
+    }
+    let drift = (angular_momentum(&w, handle)? - before).length() / before.length();
+    Ok((drift, energy_error))
+}
+
+/// Measured: the momentum vector moves 0.8 % at 240 Hz and 3.3 % at 60 Hz for a free body (backward
+/// Euler: 2.6 % and 10 %) and the energy to 1.4e-4 (1.3e-3 for a body a joint holds); 10 s at 240 Hz gives 0.8 %, the loss does
+/// not grow with time (backward Euler: 7.8 %). What is left is the first-order turn of the
+/// orientation, not the gyroscopic term.
+#[test]
+fn the_midpoint_step_keeps_the_energy_and_loses_little_momentum_at_240_and_60_hz()
+-> Result<(), PhysicsError> {
+    for (hz, seconds, bound) in [(240, 2, 0.02), (60, 2, 0.07), (240, 10, 0.02)] {
+        let (drift, energy_error) = tumble_errors(hz, seconds, false)?;
+        assert!(
+            drift < bound,
+            "{hz} Hz, {seconds} s: momentum moved by {drift}"
+        );
+        assert!(
+            energy_error < 5.0e-4,
+            "{hz} Hz, {seconds} s: energy moved by {energy_error}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_body_the_solver_sets_up_keeps_the_energy_and_loses_little_momentum() -> Result<(), PhysicsError>
+{
+    for (hz, seconds, bound) in [(240, 2, 0.006), (60, 2, 0.02), (240, 10, 0.006)] {
+        let (drift, energy_error) = tumble_errors(hz, seconds, true)?;
+        assert!(
+            drift < bound,
+            "{hz} Hz, {seconds} s: momentum moved by {drift}"
+        );
+        assert!(
+            energy_error < 3.0e-3,
+            "{hz} Hz, {seconds} s: energy moved by {energy_error}"
+        );
+    }
     Ok(())
 }
