@@ -131,8 +131,9 @@ impl ColourJob<'_> {
         }
     }
 
-    /// Runs the pass on the loaded constraints, one after the other. `members` and `staged` are
-    /// the lists of a [`ChunkOut`] and as long as each other.
+    /// Runs the pass on the loaded constraints: the soft solve two at a time, the other passes one
+    /// after the other. `members` and `staged` are the lists of a [`ChunkOut`] and as long as
+    /// each other.
     #[inline(never)]
     fn compute(&self, out: &mut ChunkOut) {
         let ChunkOut { members, staged } = out;

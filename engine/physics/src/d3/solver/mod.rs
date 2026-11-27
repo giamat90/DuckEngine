@@ -167,7 +167,10 @@ fn visit_pairs(
 }
 
 /// Runs the soft solve on two constraints side by side, with copies of their four bodies, which
-/// are stored back afterwards (a pair that is not two constraints of the step is skipped).
+/// are stored back afterwards (a pair that is not two constraints of the step is skipped). Like
+/// the staged path it relies on what `World::step` guarantees: an end that the colouring does not
+/// protect (a body that is not awake and dynamic) is static, so no two constraints of a colour
+/// share a body that either of them changes.
 ///
 /// PERF: the two constraints are taken apart with `split_at_mut`, not `get_disjoint_mut`: with the
 /// second a step of the large pyramid (`Scene3::LargePyramid` of `tools_physics_bench`) took about
@@ -179,7 +182,10 @@ fn visit_pair(
     sweep: &Sweep,
 ) {
     let [lower, higher] = [members[0].min(members[1]), members[0].max(members[1])];
-    let (left, right) = constraints.split_at_mut(higher as usize);
+    // A member that is not a constraint of the step is skipped, as the reference skips it.
+    let Some((left, right)) = constraints.split_at_mut_checked(higher as usize) else {
+        return;
+    };
     let (Some(first), Some(second)) = (left.get_mut(lower as usize), right.first_mut()) else {
         return;
     };

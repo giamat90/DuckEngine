@@ -210,9 +210,7 @@ impl<'a> Pass<'a> {
             Self::WarmStart | Self::Restitute(_) => None,
         }
     }
-}
 
-impl Pass<'_> {
     /// Runs the pass on one constraint and its two bodies.
     pub(super) fn apply(self, constraint: &mut Constraint, ends: &mut Ends) {
         self.apply_to(&constraint.shape, &mut constraint.impulses, ends);
