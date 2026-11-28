@@ -31,11 +31,14 @@ pub(super) struct Broadphase<D: Dim> {
 impl<D: Dim> Broadphase<D> {
     /// Builds both trees for `max_bodies` bodies and a pair list for `max_pairs` pairs.
     pub(super) fn new(max_bodies: u32, margin: f32, max_pairs: u32) -> Result<Self, PhysicsError> {
+        let mut pairs = PairList::new(max_pairs)?;
+        // The counting sort of the list needs a count for every slot index (card 8-114).
+        pairs.reserve_slots(max_bodies);
         Ok(Self {
             // Static bodies never move, so their boxes are stored as they are, without a margin.
             static_tree: Tree::new(max_bodies, 0.0)?,
             dynamic_tree: Tree::new(max_bodies, margin)?,
-            pairs: PairList::new(max_pairs)?,
+            pairs,
             run: None,
         })
     }
