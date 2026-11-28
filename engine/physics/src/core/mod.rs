@@ -6,6 +6,7 @@ pub mod bounds;
 mod broadphase;
 pub(crate) mod cells;
 pub mod colouring;
+mod contact_run;
 pub mod debug;
 pub mod dim;
 pub mod error;
