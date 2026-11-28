@@ -873,4 +873,36 @@ mod tests {
             );
         }
     }
+
+    /// The pair list of `scene` after `steps` steps under `execution`: the pairs and the missing count.
+    fn pairs_after(
+        scene: fn() -> World,
+        execution: SolverExecution,
+        steps: u32,
+    ) -> (Vec<crate::core::Pair<crate::d2::D2>>, usize) {
+        let mut world = scene();
+        world.set_execution(execution);
+        for _ in 0..steps {
+            world.step(DT).must("a step");
+        }
+        let list = world.pairs();
+        (list.as_slice().to_vec(), list.missing())
+    }
+
+    #[test]
+    fn the_pair_search_of_a_scheduled_2d_world_gives_the_serial_list() {
+        let scenes: [fn() -> World; 2] =
+            [|| pyramid(8), || random_scene(4, 30, SleepConfig::DEFAULT)];
+        let cases = scenes.into_iter().flat_map(|scene| {
+            [1, 5, 1000]
+                .into_iter()
+                .flat_map(move |chunk| scheduled_executions(chunk).map(|run| (scene, run)))
+        });
+        for (scene, execution) in cases {
+            let expected = pairs_after(scene, SolverExecution::SERIAL, 40);
+            assert!(!expected.0.is_empty(), "the scene has pairs");
+            let got = pairs_after(scene, execution.clone(), 40);
+            assert_eq!(got, expected, "{execution:?}");
+        }
+    }
 }

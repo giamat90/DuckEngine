@@ -551,6 +551,8 @@ impl<D: Dim> World<D> {
     /// the state hash of any step; the default is [`SolverExecution::SERIAL`], the reference.
     pub fn set_execution(&mut self, execution: SolverExecution) {
         self.contact_run = ContactRun::new(&execution, self.broadphase.pairs().capacity());
+        self.broadphase
+            .set_execution(&execution, self.capacity as usize);
         self.solver.set_execution(execution);
     }
 
