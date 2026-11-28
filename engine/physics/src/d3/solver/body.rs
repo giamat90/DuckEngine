@@ -107,6 +107,14 @@ impl SolverBody {
         self.spin += self.inv_inertia * anchor.cross(impulse);
     }
 
+    /// Takes the velocity and the spin of `other` and nothing else. They are the only two things a
+    /// pass over a colour changes (card 8-105), so the staged colour solve stores these 24 bytes of
+    /// a body back instead of the whole of it.
+    pub(super) fn take_velocities(&mut self, other: &SolverBody) {
+        self.velocity = other.velocity;
+        self.spin = other.spin;
+    }
+
     pub(super) fn is_static(&self) -> bool {
         self.inv_mass == 0.0
     }
@@ -130,6 +138,26 @@ mod tests {
         body.linear_factor = 0.5;
         body.angular_factor = 0.25;
         body
+    }
+
+    #[test]
+    fn taking_the_velocities_copies_the_velocity_and_the_spin_and_nothing_else() {
+        let before = moving();
+        let mut target = moving();
+        target.shift = Vec3::new(9.0, 9.0, 9.0);
+        let shifted = format!("{target:?}");
+        let mut source = SolverBody::at_rest();
+        source.velocity = Vec3::new(-1.0, -2.0, -3.0);
+        source.spin = Vec3::new(7.0, 8.0, 9.0);
+        source.shift = Vec3::new(1.0, 1.0, 1.0);
+        source.inv_mass = 5.0;
+        target.take_velocities(&source);
+        assert_eq!(target.velocity, source.velocity);
+        assert_eq!(target.spin, source.spin);
+        // With the old velocities put back, the body is as it was: no other field moved.
+        target.velocity = before.velocity;
+        target.spin = before.spin;
+        assert_eq!(format!("{target:?}"), shifted);
     }
 
     #[test]
