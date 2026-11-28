@@ -1834,6 +1834,27 @@ mod tests {
     }
 
     #[test]
+    fn the_pair_list_of_a_world_has_room_for_the_counting_sort_of_every_slot() {
+        let world = broadphase_world(37, 16, 0.1);
+        assert_eq!(world.pairs().reserved_slots(), 37);
+    }
+
+    #[test]
+    fn a_world_with_the_ground_in_a_low_slot_and_bodies_above_it_finds_the_sorted_list() {
+        let mut world = broadphase_world(8, 64, 0.1);
+        let ground = body_at(&mut world, BodyKind::Static, 0.0, 50.0);
+        let boxes: Vec<_> = [0.0, 1.0, 2.0, 3.0, 4.0]
+            .into_iter()
+            .map(|x| body_at(&mut world, BodyKind::Dynamic, x, 0.6))
+            .collect();
+        let (low, high) = (ground.index(), boxes.last().map_or(0, |b| b.index()));
+        let list = found(&mut world);
+        assert!(list.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(list.contains(&(low, high)));
+        assert!(world.pairs().is_complete());
+    }
+
+    #[test]
     fn a_manifold_capacity_above_the_maximum_or_a_bad_speculative_margin_refuses_the_world() {
         let config = |max_manifolds, speculative_margin| WorldConfig::<D2> {
             max_bodies: 4,
