@@ -48,6 +48,13 @@ const MIN_FACE_COSINE: f32 = 0.9995;
 /// The cosine of the largest angle for the second try (card 8-71), when no face is within
 /// [`MIN_FACE_COSINE`] of either shape: about 45 degrees.
 const WIDE_FACE_COSINE: f32 = 0.7;
+/// A triple whose squared cosine with the search direction is below this share of the squared
+/// minimum cosine is refused without the square root (card 8-99): 1% of the square is 0.5% of the
+/// cosine, thousands of times the rounding error of the exact test.
+const CLEARLY_BELOW: f32 = 0.99;
+/// The smallest minimum cosine for which the refusal by the square is used: below it the margin is
+/// a share of a number as small as the rounding error of the dot product.
+const MIN_REFUSED_COSINE: f32 = 0.5;
 /// The corners nearest the search direction that the second try spans planes from.
 const WIDE_CANDIDATES: usize = 8;
 /// How far the deepest point and the gap along the normal of a face of the second try may fall short
@@ -238,7 +245,21 @@ fn plane_facing(
     min_cosine: f32,
 ) -> Option<Vec3> {
     let across = (b - a).cross(c - a);
-    if across.length_squared() <= MIN_TRIANGLE * (reach * reach) * (reach * reach) {
+    let square = across.length_squared();
+    if square <= MIN_TRIANGLE * (reach * reach) * (reach * reach) {
+        return None;
+    }
+    // PERF: most triples of a round hull lean far from `n`; they are refused here by the squared
+    // cosine, before the square root and the division of the unit normal (benchmark: the
+    // `d3_hull_contacts` rolling prisms, card 8-99). The margin is far above the rounding error of
+    // the exact test below, so a triple refused here is one the exact test refuses too, and a
+    // triple that is not leaves the exact test alone (also a NaN, for which `<` is false): the
+    // answer is the same bit for bit. Only for a minimum cosine of one half or more, where 1% of the
+    // square is far above the rounding error of `along` (a relative margin does not hold near 0).
+    let along = across.dot(n);
+    if min_cosine >= MIN_REFUSED_COSINE
+        && along * along < CLEARLY_BELOW * (min_cosine * min_cosine) * square
+    {
         return None;
     }
     let mut normal = across * (1.0 / across.length());
@@ -1517,6 +1538,106 @@ mod tests {
         });
         let (_, normal, on_plane) = best?;
         Some(face_on(solid, normal, on_plane, fit.tolerance))
+    }
+
+    /// `plane_facing` as it was before card 8-99: the unit normal is made first, the cosine tested
+    /// after. The reference of the squared-cosine refusal, which changes no bit of the answer.
+    fn plane_facing_by_the_square_root(
+        reach: f32,
+        (a, b, c): (Vec3, Vec3, Vec3),
+        n: Vec3,
+        min_cosine: f32,
+    ) -> Option<Vec3> {
+        let across = (b - a).cross(c - a);
+        if across.length_squared() <= MIN_TRIANGLE * (reach * reach) * (reach * reach) {
+            return None;
+        }
+        let mut normal = across * (1.0 / across.length());
+        if normal.dot(n) < 0.0 {
+            normal = -normal;
+        }
+        (normal.dot(n) > min_cosine).then_some(normal)
+    }
+
+    fn same_normal(a: Option<Vec3>, b: Option<Vec3>) -> bool {
+        a.map(|v| v.to_array().map(f32::to_bits)) == b.map(|v| v.to_array().map(f32::to_bits))
+    }
+
+    fn lcg(seed: &mut u64) -> f32 {
+        *seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        f32::from(u16::try_from(*seed >> 48).unwrap_or(0)) / 32_768.0 - 1.0
+    }
+
+    /// Whether the two versions agree to the bit on a triple; the normal when they take it.
+    fn compared(triple: (Vec3, Vec3, Vec3), n: Vec3, min: f32) -> Option<Vec3> {
+        let now = plane_facing(1.0, triple, n, min);
+        let before = plane_facing_by_the_square_root(1.0, triple, n, min);
+        assert!(same_normal(now, before), "{triple:?} {n:?} {min}");
+        now
+    }
+
+    /// Triples whose plane leans from `Vec3::Y` by a cosine just below and just above `min`, in
+    /// both senses of the winding.
+    fn near_the_edge(min: f32) -> Vec<(Vec3, Vec3, Vec3)> {
+        (-40_i16..=40)
+            .flat_map(|step| {
+                let cosine = (min * (1.0 + f32::from(step) * 5.0e-4)).min(1.0);
+                let normal = Vec3::new((1.0 - cosine * cosine).sqrt(), cosine, 0.0);
+                let (u, v) = plane_frame(normal);
+                [
+                    (Vec3::ZERO, u * 0.8, v * 0.8),
+                    (Vec3::ZERO, v * 0.8, u * 0.8),
+                ]
+            })
+            .collect()
+    }
+
+    /// A triple, a direction and a minimum cosine.
+    type Case = ((Vec3, Vec3, Vec3), Vec3, f32);
+
+    fn point(seed: &mut u64) -> Vec3 {
+        Vec3::new(lcg(seed), lcg(seed), lcg(seed))
+    }
+
+    /// Random triples and directions for the two minimum cosines of the two tries and for two
+    /// below one half (a negative and a small one), which the square does not refuse.
+    fn random_cases(seed: &mut u64) -> Vec<Case> {
+        let mut cases = Vec::new();
+        for _ in 0..20_000 {
+            let triple = (point(seed), point(seed), point(seed));
+            let n = point(seed).normalized().unwrap_or(Vec3::Y);
+            cases
+                .extend([-0.5, 0.1, WIDE_FACE_COSINE, MIN_FACE_COSINE].map(|min| (triple, n, min)));
+        }
+        cases
+    }
+
+    #[test]
+    fn a_triple_is_refused_by_its_squared_cosine_only_when_the_exact_test_refuses_it_too() {
+        let mut seed = 99_u64;
+        let random = random_cases(&mut seed);
+        let edge: Vec<Case> = [WIDE_FACE_COSINE, MIN_FACE_COSINE]
+            .into_iter()
+            .flat_map(|min| {
+                near_the_edge(min)
+                    .into_iter()
+                    .map(move |t| (t, Vec3::Y, min))
+            })
+            .collect();
+        let taken = |cases: &[Case]| {
+            let found = cases
+                .iter()
+                .filter(|(triple, n, min)| compared(*triple, *n, *min).is_some());
+            found.count()
+        };
+        // The refusal is used (most random triples of the two tries are refused) and the exact test
+        // is used at the edge (some of the near-edge triples are taken).
+        let refused_random = random.len() - taken(&random);
+        assert!(refused_random > 25_000, "{refused_random}");
+        let taken_at_the_edge = taken(&edge);
+        assert!(taken_at_the_edge > 100, "{taken_at_the_edge}");
     }
 
     fn same_face(a: Option<&Face>, b: Option<&Face>) -> bool {
