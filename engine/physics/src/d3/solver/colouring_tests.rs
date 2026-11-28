@@ -13,12 +13,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn big_world(sleep: SleepConfig) -> Result<World, PhysicsError> {
+    world_with_manifolds(sleep, 4096)
+}
+
+fn world_with_manifolds(sleep: SleepConfig, max_manifolds: u32) -> Result<World, PhysicsError> {
     World::new(WorldConfig {
         max_bodies: 256,
         gravity: Vec3::new(0.0, -9.8, 0.0),
         max_pairs: 4096,
         broadphase_margin: crate::d3::DEFAULT_BROADPHASE_MARGIN,
-        max_manifolds: 4096,
+        max_manifolds,
         max_joints: 0,
         speculative_margin: crate::d3::DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
@@ -75,7 +79,11 @@ fn add_row(w: &mut World, row: u8, rows: u8, shape: &Shape3) -> Result<(), Physi
 
 /// A pyramid of unit boxes, `rows` high, one box deep.
 fn pyramid(rows: u8) -> Result<World, PhysicsError> {
-    let mut w = big_world(SleepConfig::DEFAULT)?;
+    pyramid_of(rows, 4096)
+}
+
+fn pyramid_of(rows: u8, max_manifolds: u32) -> Result<World, PhysicsError> {
+    let mut w = world_with_manifolds(SleepConfig::DEFAULT, max_manifolds)?;
     static_box(
         &mut w,
         Vec3::new(0.0, -1.0, 0.0),
@@ -361,5 +369,88 @@ fn the_buffers_of_the_staged_path_follow_the_execution() -> Result<(), PhysicsEr
     w.set_execution(SolverExecution::SERIAL);
     assert!(w.solver_mut().outputs.is_empty());
     assert_eq!(w.solver_mut().outputs_chunk, 0);
+    Ok(())
+}
+
+// ---- the contact tests through a scheduler (card 8-104) -----------------------------------------
+
+/// The manifolds the contact tests make for `scene` after `steps` steps, as a hash and a count.
+fn contact_run(
+    scene: fn() -> Result<World, PhysicsError>,
+    execution: SolverExecution,
+    steps: u32,
+) -> Result<(u64, usize, usize), PhysicsError> {
+    let mut w = scene()?;
+    w.set_execution(execution);
+    for _ in 0..steps {
+        w.step(1.0 / 60.0)?;
+    }
+    let list = w.manifolds();
+    Ok((list.hash(), list.len(), list.missing()))
+}
+
+/// The three schedulers of the staged tests: in order, reversed, and one that refuses every call.
+fn schedulers() -> [Arc<dyn IScheduler>; 3] {
+    [
+        Arc::new(InlineScheduler),
+        Arc::new(ReversedScheduler),
+        Arc::new(Refusing),
+    ]
+}
+
+#[test]
+fn the_contact_tests_give_the_serial_manifolds_through_any_scheduler() -> Result<(), PhysicsError> {
+    let scenes: [fn() -> Result<World, PhysicsError>; 3] = [
+        || pyramid(5),
+        || random_scene(5, 40, SleepConfig::DEFAULT),
+        // A list too small for the manifolds: the stored ones are a prefix and the rest is counted.
+        || pyramid_of(5, 10),
+    ];
+    let cases = scenes
+        .into_iter()
+        .flat_map(|scene| [1, 3, 1000].map(|chunk| (scene, chunk)));
+    for (scene, chunk) in cases {
+        let expected = contact_run(scene, SolverExecution::SERIAL, 30)?;
+        assert!(expected.1 > 0, "the scene makes contacts");
+        for scheduler in schedulers() {
+            let got = contact_run(scene, scheduled(scheduler, chunk), 30)?;
+            assert_eq!(got, expected, "chunk {chunk}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn the_contact_tests_reach_the_scheduler_when_there_are_several_chunks_of_pairs()
+-> Result<(), PhysicsError> {
+    let counting = Arc::new(Counting::default());
+    let mut w = pyramid(6)?;
+    w.set_execution(scheduled(Arc::clone(&counting) as Arc<dyn IScheduler>, 1));
+    w.find_pairs();
+    let before = counting.calls.load(Ordering::Relaxed);
+    w.collide();
+    assert!(
+        counting.calls.load(Ordering::Relaxed) > before,
+        "collide did not use the scheduler"
+    );
+    // One chunk of pairs is not worth a hand-over: the scheduler is not called.
+    let single = Arc::new(Counting::default());
+    let mut one = pyramid(6)?;
+    one.set_execution(scheduled(
+        Arc::clone(&single) as Arc<dyn IScheduler>,
+        100_000,
+    ));
+    one.find_pairs();
+    one.collide();
+    assert_eq!(
+        single.calls.load(Ordering::Relaxed),
+        0,
+        "one chunk of pairs"
+    );
+    // Without a scheduler the contact tests stay on the calling thread.
+    let mut serial = pyramid(6)?;
+    serial.find_pairs();
+    serial.collide();
+    assert_eq!(serial.manifolds().hash(), w.manifolds().hash());
     Ok(())
 }
