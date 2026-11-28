@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn a_pair_above_the_reserved_slots_falls_back_to_the_heap_sort() {
-        // The bucket is the lower index: (3, 8) fits five slots, (7, 9) does not.
+        // The bucket is the lower index: (3, 4) fits five slots, (7, 9) does not.
         let input = [(7, 9), (1, 2), (3, 4), (0, 9)];
         let mut l = filled(Some(5), &input);
         assert!(!l.sort_by_counting());
