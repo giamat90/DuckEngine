@@ -15,6 +15,7 @@ pub mod hash;
 mod islands;
 pub mod joint;
 pub mod manifolds;
+mod pair_run;
 pub mod pairs;
 pub mod sleep;
 pub(crate) mod soft;

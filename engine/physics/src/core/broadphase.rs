@@ -7,45 +7,25 @@
 //! so that a pair is found once) and the static tree (for all of them). Two static bodies are never
 //! asked about each other. The finished list is sorted into the canonical order of [`PairList`].
 
-use super::body::{BodyHandle, BodyKind};
+use super::body::BodyKind;
 use super::bounds::Bounds;
 use super::dim::Dim;
 use super::error::PhysicsError;
+use super::execution::SolverExecution;
 use super::hash::StateHasher;
+use super::pair_run::{PairRun, Search};
 use super::pairs::PairList;
 use super::tree::{ProxyId, Tree};
 use super::world::Slot;
+use base::fpenv::FpGuard;
 
 /// The two trees and the pair list of a world.
 pub(super) struct Broadphase<D: Dim> {
     static_tree: Tree<D::Bounds>,
     dynamic_tree: Tree<D::Bounds>,
     pairs: PairList<D>,
-}
-
-/// Adds the pair of `own` and the body in slot `other` to `pairs`.
-fn add_pair<D: Dim>(
-    slots: &[Option<Slot<D>>],
-    pairs: &mut PairList<D>,
-    own: BodyHandle<D>,
-    other: u32,
-) {
-    if let Some(Some(slot)) = slots.get(other as usize) {
-        pairs.push(own, slot.handle);
-    }
-}
-
-/// Like [`add_pair`], but only when the other body has a higher slot than `own`: two dynamic bodies
-/// find each other, and the lower one reports the pair.
-fn add_later_pair<D: Dim>(
-    slots: &[Option<Slot<D>>],
-    pairs: &mut PairList<D>,
-    own: BodyHandle<D>,
-    other: u32,
-) {
-    if other > own.index() {
-        add_pair(slots, pairs, own, other);
-    }
+    /// The pair search through a scheduler, when the execution has one (card 8-111).
+    run: Option<PairRun<D>>,
 }
 
 impl<D: Dim> Broadphase<D> {
@@ -56,6 +36,7 @@ impl<D: Dim> Broadphase<D> {
             static_tree: Tree::new(max_bodies, 0.0)?,
             dynamic_tree: Tree::new(max_bodies, margin)?,
             pairs: PairList::new(max_pairs)?,
+            run: None,
         })
     }
 
@@ -128,28 +109,30 @@ impl<D: Dim> Broadphase<D> {
             })
     }
 
-    /// Builds the pair list from the boxes the trees hold now.
-    pub(super) fn find_pairs(&mut self, slots: &[Option<Slot<D>>]) {
-        self.pairs.clear();
-        for slot in slots
-            .iter()
-            .flatten()
-            .filter(|slot| slot.body.kind() == BodyKind::Dynamic)
-        {
-            self.find_pairs_of(slot, slots);
-        }
-        self.pairs.sort();
+    /// Chooses whether the pair search runs through a scheduler (see [`SolverExecution`]) for a
+    /// world of `max_bodies` slots. The pairs found are the same either way.
+    pub(super) fn set_execution(&mut self, execution: &SolverExecution, max_bodies: usize) {
+        self.run = PairRun::new(execution, max_bodies, self.pairs.capacity());
     }
 
-    /// Adds the pairs the dynamic body in `slot` has with the bodies whose boxes overlap its own.
-    fn find_pairs_of(&mut self, slot: &Slot<D>, slots: &[Option<Slot<D>>]) {
-        let Ok(region) = self.dynamic_tree.fat_bounds(slot.proxy) else {
-            return;
+    /// Builds the pair list from the boxes the trees hold now.
+    pub(super) fn find_pairs(&mut self, slots: &[Option<Slot<D>>]) {
+        // The same floating-point state on every path: a scheduled chunk takes it, so the serial
+        // search must too, whatever the caller left in the control registers.
+        let _guard = FpGuard::deterministic();
+        self.pairs.clear();
+        let search = Search {
+            dynamic_tree: &self.dynamic_tree,
+            static_tree: &self.static_tree,
+            slots,
         };
-        let (own, pairs) = (slot.handle, &mut self.pairs);
-        self.dynamic_tree
-            .query(&region, |other| add_later_pair(slots, pairs, own, other));
-        self.static_tree
-            .query(&region, |other| add_pair(slots, pairs, own, other));
+        let parallel = self
+            .run
+            .as_ref()
+            .is_some_and(|run| run.run(&search, &mut self.pairs));
+        if !parallel {
+            search.serial(&mut self.pairs);
+        }
+        self.pairs.sort();
     }
 }
