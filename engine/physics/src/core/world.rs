@@ -8,6 +8,7 @@
 use super::MAX_BODIES;
 use super::body::{Body, BodyDesc, BodyHandle, BodyKind, BodyTag};
 use super::broadphase::Broadphase;
+use super::contact_run::ContactRun;
 use super::dim::{Dim, Quantity};
 use super::error::PhysicsError;
 use super::execution::SolverExecution;
@@ -20,6 +21,7 @@ use super::sleep::SleepConfig;
 use super::solver::{ContactSolver, SolverConfig, SolverStats, StepFrame};
 use super::speed::SpeedPolicy;
 use super::tree::ProxyId;
+use base::fpenv::FpGuard;
 use base::pool::Pool;
 
 /// The margin, in metres, a fat box is grown by when the configuration does not say otherwise: a
@@ -111,6 +113,8 @@ pub struct World<D: Dim> {
     scratch: Vec<Option<Body<D>>>,
     /// True when bodies were created or destroyed since the pairs and manifolds were made.
     contacts_stale: bool,
+    /// The contact tests through a scheduler, when the execution has one (card 8-104).
+    contact_run: Option<ContactRun<D>>,
 }
 
 /// The live body `handle` names in `slots`, or `StaleHandle`.
@@ -268,6 +272,7 @@ impl<D: Dim> World<D> {
             islands: Islands::new(config.max_bodies as usize),
             scratch,
             contacts_stale: false,
+            contact_run: None,
         })
     }
 
@@ -545,6 +550,9 @@ impl<D: Dim> World<D> {
     /// with the scalar reference or the lane path (see [`SolverExecution`]). No choice changes
     /// the state hash of any step; the default is [`SolverExecution::SERIAL`], the reference.
     pub fn set_execution(&mut self, execution: SolverExecution) {
+        self.contact_run = ContactRun::new(&execution, self.broadphase.pairs().capacity());
+        self.broadphase
+            .set_execution(&execution, self.capacity as usize);
         self.solver.set_execution(execution);
     }
 
@@ -558,14 +566,23 @@ impl<D: Dim> World<D> {
     /// now. [`World::step`] does this after finding the pairs; call it after [`World::find_pairs`]
     /// to see the contacts of a scene without a step. Applies no force. Allocates nothing.
     pub fn collide(&mut self) {
+        // The same floating-point state on every path: a scheduled chunk takes it, so the serial
+        // loop must too, whatever the caller left in the control registers.
+        let _guard = FpGuard::deterministic();
         self.manifolds.clear();
         let (slots, joints, margin) = (&self.slots, &self.joints, self.speculative_margin);
         let pairs = self.broadphase.pairs().as_slice();
-        for entry in pairs
-            .iter()
-            .filter_map(|pair| contact_of(slots, joints, pair, margin))
-        {
-            self.manifolds.push(entry);
+        let contact = |pair: &Pair<D>| contact_of(slots, joints, pair, margin);
+        let parallel = self
+            .contact_run
+            .as_ref()
+            .is_some_and(|run| run.run(pairs, &contact, &mut self.manifolds));
+        if !parallel {
+            let manifolds = &mut self.manifolds;
+            pairs
+                .iter()
+                .filter_map(contact)
+                .for_each(|entry| manifolds.push(entry));
         }
         self.islands
             .build(&self.slots, self.manifolds.as_slice(), self.joints.live());
@@ -1814,6 +1831,27 @@ mod tests {
     fn found(world: &mut World2) -> Vec<(u32, u32)> {
         world.find_pairs();
         pair_indices(world)
+    }
+
+    #[test]
+    fn the_pair_list_of_a_world_has_room_for_the_counting_sort_of_every_slot() {
+        let world = broadphase_world(37, 16, 0.1);
+        assert_eq!(world.pairs().reserved_slots(), 37);
+    }
+
+    #[test]
+    fn a_world_with_the_ground_in_a_low_slot_and_bodies_above_it_finds_the_sorted_list() {
+        let mut world = broadphase_world(8, 64, 0.1);
+        let ground = body_at(&mut world, BodyKind::Static, 0.0, 50.0);
+        let boxes: Vec<_> = [0.0, 1.0, 2.0, 3.0, 4.0]
+            .into_iter()
+            .map(|x| body_at(&mut world, BodyKind::Dynamic, x, 0.6))
+            .collect();
+        let (low, high) = (ground.index(), boxes.last().map_or(0, |b| b.index()));
+        let list = found(&mut world);
+        assert!(list.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(list.contains(&(low, high)));
+        assert!(world.pairs().is_complete());
     }
 
     #[test]

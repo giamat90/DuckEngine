@@ -4,7 +4,7 @@
 use super::hash::HashBits;
 
 /// An axis-aligned bounding box of some dimension.
-pub trait Bounds: Copy + Default + PartialEq + HashBits {
+pub trait Bounds: Copy + Default + PartialEq + HashBits + Send + Sync {
     /// True when the two boxes share at least one point. Boxes that only touch (an edge or a face
     /// of one lies exactly on the other) do overlap.
     fn overlaps(&self, other: &Self) -> bool;

@@ -36,7 +36,7 @@ impl<D> JointTag<D> {
 pub type JointHandle<D> = Handle<JointTag<D>>;
 
 /// What a dimension says about a kind of joint: it can be copied, compared and checked.
-pub trait JointShape: Copy + Debug + PartialEq {
+pub trait JointShape: Copy + Debug + PartialEq + Send + Sync {
     /// Checks the numbers of the description.
     ///
     /// # Errors

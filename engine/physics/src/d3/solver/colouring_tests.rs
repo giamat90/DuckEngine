@@ -1,8 +1,8 @@
 //! Tests of the colouring of the 3D solver and of the order inside a colour (card 8-19).
 
 use super::{Reorder, Solver3};
-use crate::core::{Colour, MAX_COLOURS, PhysicsError, SolverExecution};
-use crate::d3::{BodyDesc, BodyKind, Shape3, SleepConfig, SolverConfig, World, WorldConfig};
+use crate::core::{Colour, ContactSolver, MAX_COLOURS, Pair, PhysicsError, SolverExecution};
+use crate::d3::{BodyDesc, BodyKind, D3, Shape3, SleepConfig, SolverConfig, World, WorldConfig};
 use base::math::Vec3;
 use base::rng::Pcg32;
 use jobs::error::JobError;
@@ -13,12 +13,24 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn big_world(sleep: SleepConfig) -> Result<World, PhysicsError> {
+    world_with_manifolds(sleep, 4096)
+}
+
+fn world_with_manifolds(sleep: SleepConfig, max_manifolds: u32) -> Result<World, PhysicsError> {
+    world_with(sleep, max_manifolds, 4096)
+}
+
+fn world_with(
+    sleep: SleepConfig,
+    max_manifolds: u32,
+    max_pairs: u32,
+) -> Result<World, PhysicsError> {
     World::new(WorldConfig {
         max_bodies: 256,
         gravity: Vec3::new(0.0, -9.8, 0.0),
-        max_pairs: 4096,
+        max_pairs,
         broadphase_margin: crate::d3::DEFAULT_BROADPHASE_MARGIN,
-        max_manifolds: 4096,
+        max_manifolds,
         max_joints: 0,
         speculative_margin: crate::d3::DEFAULT_SPECULATIVE_MARGIN,
         solver: SolverConfig::DEFAULT,
@@ -75,7 +87,15 @@ fn add_row(w: &mut World, row: u8, rows: u8, shape: &Shape3) -> Result<(), Physi
 
 /// A pyramid of unit boxes, `rows` high, one box deep.
 fn pyramid(rows: u8) -> Result<World, PhysicsError> {
-    let mut w = big_world(SleepConfig::DEFAULT)?;
+    pyramid_of(rows, 4096)
+}
+
+fn pyramid_of(rows: u8, max_manifolds: u32) -> Result<World, PhysicsError> {
+    pyramid_capped(rows, max_manifolds, 4096)
+}
+
+fn pyramid_capped(rows: u8, max_manifolds: u32, max_pairs: u32) -> Result<World, PhysicsError> {
+    let mut w = world_with(SleepConfig::DEFAULT, max_manifolds, max_pairs)?;
     static_box(
         &mut w,
         Vec3::new(0.0, -1.0, 0.0),
@@ -361,5 +381,266 @@ fn the_buffers_of_the_staged_path_follow_the_execution() -> Result<(), PhysicsEr
     w.set_execution(SolverExecution::SERIAL);
     assert!(w.solver_mut().outputs.is_empty());
     assert_eq!(w.solver_mut().outputs_chunk, 0);
+    Ok(())
+}
+
+// ---- the contact tests through a scheduler (card 8-104) -----------------------------------------
+
+/// The manifolds the contact tests make for `scene` after `steps` steps, as a hash and a count.
+fn contact_run(
+    scene: fn() -> Result<World, PhysicsError>,
+    execution: SolverExecution,
+    steps: u32,
+) -> Result<(u64, usize, usize), PhysicsError> {
+    let mut w = scene()?;
+    w.set_execution(execution);
+    for _ in 0..steps {
+        w.step(1.0 / 60.0)?;
+    }
+    let list = w.manifolds();
+    Ok((list.hash(), list.len(), list.missing()))
+}
+
+/// The three schedulers of the staged tests: in order, reversed, and one that refuses every call.
+fn schedulers() -> [Arc<dyn IScheduler>; 3] {
+    [
+        Arc::new(InlineScheduler),
+        Arc::new(ReversedScheduler),
+        Arc::new(Refusing),
+    ]
+}
+
+#[test]
+fn the_contact_tests_give_the_serial_manifolds_through_any_scheduler() -> Result<(), PhysicsError> {
+    let scenes: [fn() -> Result<World, PhysicsError>; 3] = [
+        || pyramid(5),
+        || random_scene(5, 40, SleepConfig::DEFAULT),
+        // A list too small for the manifolds: the stored ones are a prefix and the rest is counted.
+        || pyramid_of(5, 10),
+    ];
+    let cases = scenes
+        .into_iter()
+        .flat_map(|scene| [1, 3, 1000].map(|chunk| (scene, chunk)));
+    for (scene, chunk) in cases {
+        let expected = contact_run(scene, SolverExecution::SERIAL, 30)?;
+        assert!(expected.1 > 0, "the scene makes contacts");
+        for scheduler in schedulers() {
+            let got = contact_run(scene, scheduled(scheduler, chunk), 30)?;
+            assert_eq!(got, expected, "chunk {chunk}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn the_contact_tests_reach_the_scheduler_when_there_are_several_chunks_of_pairs()
+-> Result<(), PhysicsError> {
+    let counting = Arc::new(Counting::default());
+    let mut w = pyramid(6)?;
+    w.set_execution(scheduled(Arc::clone(&counting) as Arc<dyn IScheduler>, 1));
+    w.find_pairs();
+    let before = counting.calls.load(Ordering::Relaxed);
+    w.collide();
+    assert!(
+        counting.calls.load(Ordering::Relaxed) > before,
+        "collide did not use the scheduler"
+    );
+    // One chunk of pairs is not worth a hand-over: the scheduler is not called.
+    let single = Arc::new(Counting::default());
+    let mut one = pyramid(6)?;
+    one.set_execution(scheduled(
+        Arc::clone(&single) as Arc<dyn IScheduler>,
+        100_000,
+    ));
+    one.find_pairs();
+    one.collide();
+    assert_eq!(
+        single.calls.load(Ordering::Relaxed),
+        0,
+        "one chunk of pairs"
+    );
+    // Without a scheduler the contact tests stay on the calling thread.
+    let mut serial = pyramid(6)?;
+    serial.find_pairs();
+    serial.collide();
+    assert_eq!(serial.manifolds().hash(), w.manifolds().hash());
+    Ok(())
+}
+
+// ---- the pair search through a scheduler (card 8-111) -------------------------------------------
+
+/// The pair list of `scene` after `steps` steps: the pairs in order and the count that did not fit.
+fn pairs_run(
+    scene: fn() -> Result<World, PhysicsError>,
+    execution: SolverExecution,
+    steps: u32,
+) -> Result<(Vec<Pair<D3>>, usize), PhysicsError> {
+    let mut w = scene()?;
+    w.set_execution(execution);
+    for _ in 0..steps {
+        w.step(1.0 / 60.0)?;
+    }
+    let list = w.pairs();
+    Ok((list.as_slice().to_vec(), list.missing()))
+}
+
+#[test]
+fn the_pair_search_gives_the_serial_list_through_any_scheduler() -> Result<(), PhysicsError> {
+    let scenes: [fn() -> Result<World, PhysicsError>; 3] = [
+        || pyramid(5),
+        || random_scene(7, 40, SleepConfig::DEFAULT),
+        // A list too small for the pairs: the stored ones are the first found, the rest is counted.
+        || pyramid_capped(5, 4096, 20),
+    ];
+    let cases = scenes
+        .into_iter()
+        .flat_map(|scene| [1, 3, 1000].map(|chunk| (scene, chunk)));
+    for (scene, chunk) in cases {
+        let expected = pairs_run(scene, SolverExecution::SERIAL, 30)?;
+        assert!(!expected.0.is_empty(), "the scene has pairs");
+        for scheduler in schedulers() {
+            let got = pairs_run(scene, scheduled(scheduler, chunk), 30)?;
+            assert_eq!(got, expected, "chunk {chunk}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn the_pair_search_reaches_the_scheduler_when_there_are_several_chunks_of_bodies()
+-> Result<(), PhysicsError> {
+    let counting = Arc::new(Counting::default());
+    let mut w = pyramid(6)?;
+    w.set_execution(scheduled(Arc::clone(&counting) as Arc<dyn IScheduler>, 1));
+    let before = counting.calls.load(Ordering::Relaxed);
+    w.find_pairs();
+    assert!(
+        counting.calls.load(Ordering::Relaxed) > before,
+        "find_pairs did not use the scheduler"
+    );
+    // One chunk of bodies is not worth a hand-over.
+    let single = Arc::new(Counting::default());
+    let mut one = pyramid(6)?;
+    one.set_execution(scheduled(
+        Arc::clone(&single) as Arc<dyn IScheduler>,
+        100_000,
+    ));
+    one.find_pairs();
+    assert_eq!(single.calls.load(Ordering::Relaxed), 0, "one chunk");
+    let mut serial = pyramid(6)?;
+    serial.find_pairs();
+    assert_eq!(serial.pairs().as_slice(), w.pairs().as_slice());
+    Ok(())
+}
+
+/// Thirty boxes on top of one another: every body overlaps all the others, so a chunk finds more
+/// pairs than its buffer holds and the search must fall back to the serial one.
+fn dense_pairs(execution: SolverExecution) -> Result<(Vec<Pair<D3>>, usize), PhysicsError> {
+    let mut w = big_world(SleepConfig::DEFAULT)?;
+    let shape = Shape3::Box {
+        half_extents: Vec3::new(0.5, 0.5, 0.5),
+    };
+    for index in 0..30_u8 {
+        let at = Vec3::new(f32::from(index) * 0.01, 1.0, 0.0);
+        w.create_body(&BodyDesc::new(BodyKind::Dynamic, at, shape))?;
+    }
+    w.set_execution(execution);
+    w.find_pairs();
+    Ok((w.pairs().as_slice().to_vec(), w.pairs().missing()))
+}
+
+#[test]
+fn a_pile_that_overflows_the_chunk_buffers_gives_the_serial_list() -> Result<(), PhysicsError> {
+    let expected = dense_pairs(SolverExecution::SERIAL)?;
+    assert_eq!(
+        expected.0.len(),
+        30 * 29 / 2,
+        "every body overlaps every other"
+    );
+    for scheduler in schedulers() {
+        // One body a chunk: 29 pairs a body is more than a buffer of 16 holds.
+        assert_eq!(dense_pairs(scheduled(scheduler, 1))?, expected);
+    }
+    Ok(())
+}
+
+#[test]
+fn the_pair_search_follows_the_execution_and_the_bodies_that_go_away() -> Result<(), PhysicsError> {
+    let mut serial = random_scene(9, 30, SleepConfig::DEFAULT)?;
+    let mut w = random_scene(9, 30, SleepConfig::DEFAULT)?;
+    // A scheduler, another chunk, a body destroyed (an empty slot), then back to serial: the list
+    // is the serial one after each change.
+    serial.find_pairs();
+    let doomed = serial
+        .pairs()
+        .as_slice()
+        .first()
+        .map(|pair| pair.second)
+        .ok_or(PhysicsError::StaleHandle)?;
+    for (execution, destroy) in [
+        (scheduled(Arc::new(InlineScheduler), 3), false),
+        (scheduled(Arc::new(ReversedScheduler), 5), true),
+        (SolverExecution::SERIAL, false),
+        (scheduled(Arc::new(InlineScheduler), 1), false),
+    ] {
+        if destroy {
+            serial.destroy_body(doomed)?;
+            w.destroy_body(doomed)?;
+        }
+        w.set_execution(execution);
+        serial.find_pairs();
+        w.find_pairs();
+        assert_eq!(w.pairs().as_slice(), serial.pairs().as_slice());
+        assert_eq!(w.pairs().missing(), serial.pairs().missing());
+    }
+    Ok(())
+}
+
+// ---- the making of the constraints through a scheduler (card 8-112) -----------------------------
+
+/// The most constraints one colour of the last solve holds.
+fn widest_colour(w: &mut World) -> usize {
+    let colouring = &w.solver_mut().colouring;
+    (0..colouring.colour_count())
+        .map(|colour| colouring.members(colour).len())
+        .max()
+        .unwrap_or(0)
+}
+
+#[test]
+fn the_constraints_are_made_through_the_scheduler_when_there_are_several_chunks_of_manifolds()
+-> Result<(), PhysicsError> {
+    let mut w = pyramid(6)?;
+    for _ in 0..5 {
+        w.step(1.0 / 60.0)?;
+    }
+    // A chunk as wide as the widest colour: no colour is cut in two, so the sweeps never call the
+    // scheduler and every call is the making of the constraints. Only the solver gets the
+    // scheduler (not the pair search or the contact tests).
+    let chunk = u32::try_from(widest_colour(&mut w)).unwrap_or(u32::MAX);
+    let manifolds = w.manifolds().len();
+    assert!(
+        manifolds > chunk as usize && chunk > 0,
+        "{manifolds} manifolds, chunk {chunk}"
+    );
+    let counting = Arc::new(Counting::default());
+    w.solver_mut().set_execution(scheduled(
+        Arc::clone(&counting) as Arc<dyn IScheduler>,
+        chunk,
+    ));
+    w.step(1.0 / 60.0)?;
+    assert!(
+        counting.calls.load(Ordering::Relaxed) > 0,
+        "the constraints were not made through the scheduler"
+    );
+    // One chunk of manifolds is not worth a hand-over.
+    let single = Arc::new(Counting::default());
+    let mut one = pyramid(6)?;
+    one.solver_mut().set_execution(scheduled(
+        Arc::clone(&single) as Arc<dyn IScheduler>,
+        100_000,
+    ));
+    one.step(1.0 / 60.0)?;
+    assert_eq!(single.calls.load(Ordering::Relaxed), 0, "one chunk");
     Ok(())
 }

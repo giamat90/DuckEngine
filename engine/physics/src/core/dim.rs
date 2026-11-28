@@ -17,7 +17,7 @@ use std::ops::{Add, Mul};
 
 /// A number-like value the world stores: it can be zero (`Default`), checked for finiteness and
 /// hashed.
-pub trait Quantity: Copy + Default + HashBits {
+pub trait Quantity: Copy + Default + HashBits + Send + Sync {
     /// True when every component is finite (neither NaN nor infinite).
     fn is_finite(&self) -> bool;
 }
@@ -144,11 +144,11 @@ pub trait Dim: Sized {
     /// Inverse moment of inertia.
     type InvInertia: Quantity;
     /// The shape descriptor, plain data.
-    type Shape: Copy + HashBits;
+    type Shape: Copy + HashBits + Send + Sync;
     /// The axis-aligned box the broadphase stores.
     type Bounds: Bounds;
     /// What the narrowphase makes of two touching shapes: the contact normal and points.
-    type Manifold: Copy + Debug + PartialEq + HashBits;
+    type Manifold: Copy + Debug + PartialEq + HashBits + Send + Sync;
     /// The contact solver of this dimension ([`FreeSolver`](super::FreeSolver) answers no contact).
     type Solver: ContactSolver<Self>;
     /// The kinds of joint of this dimension ([`NoJoint`](super::joint::NoJoint) for none).

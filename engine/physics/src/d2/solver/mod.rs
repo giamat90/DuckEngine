@@ -823,4 +823,86 @@ mod tests {
         };
         assert_eq!(lane_groups_in(staged_scalar, 3), 0);
     }
+
+    /// The manifold list of `scene` after `steps` steps under `execution`: hash, count, missing.
+    fn contacts_after(
+        scene: fn() -> World,
+        execution: SolverExecution,
+        steps: u32,
+    ) -> (u64, usize, usize) {
+        let mut world = scene();
+        world.set_execution(execution);
+        for _ in 0..steps {
+            world.step(DT).must("a step");
+        }
+        let list = world.manifolds();
+        (list.hash(), list.len(), list.missing())
+    }
+
+    /// Executions through the in-order and the reversed scheduler, with chunks of `chunk`.
+    fn scheduled_executions(chunk: u32) -> [SolverExecution; 2] {
+        use jobs::inline::InlineScheduler;
+        use jobs::reversed::ReversedScheduler;
+        use jobs::scheduler::IScheduler;
+        use std::sync::Arc;
+        let schedulers: [Arc<dyn IScheduler>; 2] =
+            [Arc::new(InlineScheduler), Arc::new(ReversedScheduler)];
+        schedulers.map(|scheduler| SolverExecution {
+            scheduler: Some(scheduler),
+            chunk,
+            ..SolverExecution::SERIAL
+        })
+    }
+
+    #[test]
+    fn the_contact_tests_of_a_scheduled_2d_world_give_the_serial_manifolds() {
+        let scenes: [fn() -> World; 2] =
+            [|| pyramid(8), || random_scene(3, 30, SleepConfig::DEFAULT)];
+        let cases = scenes.into_iter().flat_map(|scene| {
+            [1, 5, 1000]
+                .into_iter()
+                .flat_map(move |chunk| scheduled_executions(chunk).map(|run| (scene, run)))
+        });
+        for (scene, execution) in cases {
+            let expected = contacts_after(scene, SolverExecution::SERIAL, 40);
+            assert!(expected.1 > 0, "the scene makes contacts");
+            assert_eq!(
+                contacts_after(scene, execution.clone(), 40),
+                expected,
+                "{execution:?}"
+            );
+        }
+    }
+
+    /// The pair list of `scene` after `steps` steps under `execution`: the pairs and the missing count.
+    fn pairs_after(
+        scene: fn() -> World,
+        execution: SolverExecution,
+        steps: u32,
+    ) -> (Vec<crate::core::Pair<crate::d2::D2>>, usize) {
+        let mut world = scene();
+        world.set_execution(execution);
+        for _ in 0..steps {
+            world.step(DT).must("a step");
+        }
+        let list = world.pairs();
+        (list.as_slice().to_vec(), list.missing())
+    }
+
+    #[test]
+    fn the_pair_search_of_a_scheduled_2d_world_gives_the_serial_list() {
+        let scenes: [fn() -> World; 2] =
+            [|| pyramid(8), || random_scene(4, 30, SleepConfig::DEFAULT)];
+        let cases = scenes.into_iter().flat_map(|scene| {
+            [1, 5, 1000]
+                .into_iter()
+                .flat_map(move |chunk| scheduled_executions(chunk).map(|run| (scene, run)))
+        });
+        for (scene, execution) in cases {
+            let expected = pairs_after(scene, SolverExecution::SERIAL, 40);
+            assert!(!expected.0.is_empty(), "the scene has pairs");
+            let got = pairs_after(scene, execution.clone(), 40);
+            assert_eq!(got, expected, "{execution:?}");
+        }
+    }
 }
