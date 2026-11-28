@@ -30,6 +30,7 @@
 mod body;
 mod constraint;
 mod joint;
+mod prepare_run;
 mod stage;
 mod warm;
 
@@ -39,6 +40,7 @@ mod colouring_tests;
 use self::body::{SolverBody, StepTerms};
 use self::constraint::{Constraint, Ends, Link, Pass, Setup, Side, Surface, solve_pair};
 use self::joint::{JointConstraint, JointPass, JointSet, JointSetup};
+use self::prepare_run::{Made, PrepareRun};
 use self::stage::{ChunkOut, ColourJob, make_outputs, scatter};
 use self::warm::WarmCache;
 use crate::core::cells::index_u32;
@@ -64,6 +66,10 @@ pub struct Solver3 {
     /// Slot indices of the touched dynamic bodies.
     active: Vec<usize>,
     constraints: Vec<Constraint>,
+    /// The manifolds of the step that make a constraint, by index in the list (scratch).
+    members: Vec<u32>,
+    /// The making of the constraints through a scheduler, when the execution has one.
+    prepare_run: Option<PrepareRun>,
     /// The buffers of the staged path, one per chunk of the largest possible colour; empty while
     /// the execution is the plain serial reference.
     outputs: Vec<Mutex<ChunkOut>>,
@@ -121,6 +127,77 @@ struct Prepare<'a> {
     soft: Softness,
     /// Softness of a contact with a static body.
     stiff: Softness,
+}
+
+/// What the making of a constraint reads. Nothing in it is written while the constraints are made,
+/// so the constraints of different manifolds can be made at the same time.
+struct Maker<'a> {
+    /// The solver's view of the bodies, touched by every manifold of the step already.
+    bodies: &'a [SolverBody],
+    world: &'a [Option<Body<D3>>],
+    contacts: &'a [ContactManifold<D3>],
+    soft: Softness,
+    stiff: Softness,
+}
+
+impl Maker<'_> {
+    /// The constraint of manifold `index` of the list, without its warm start; `None` when an end is
+    /// missing (the step has left such a manifold out already).
+    fn make(&self, index: u32) -> Option<Constraint> {
+        let entry = self.contacts.get(index as usize)?;
+        let (a, b, first, second) = ends_of(self.world, entry)?;
+        let (body_a, body_b) = (self.bodies.get(a)?, self.bodies.get(b)?);
+        let ends = [(a, first, body_a), (b, second, body_b)];
+        Some(build_constraint(entry, ends, (self.soft, self.stiff)))
+    }
+}
+
+/// The constraint of `entry` from its two ends (slot, world body, solver body), without a warm
+/// start: the softness of a contact with a static end is the second of `softness`. Both ways of
+/// making constraints (one after the other, or in chunks) use this.
+fn build_constraint(
+    entry: &ContactManifold<D3>,
+    [(a, first, body_a), (b, second, body_b)]: [(usize, &Body<D3>, &SolverBody); 2],
+    (soft, stiff): (Softness, Softness),
+) -> Constraint {
+    let setup = Setup {
+        bodies: [body_a, body_b],
+        centres: [first.position(), second.position()],
+        surface: Surface {
+            friction: (first.friction() * second.friction()).sqrt(),
+            restitution: first.restitution().max(second.restitution()),
+        },
+        softness: if body_a.is_static() || body_b.is_static() {
+            stiff
+        } else {
+            soft
+        },
+    };
+    let link = Link {
+        first: entry.first,
+        second: entry.second,
+        a,
+        b,
+    };
+    Constraint::new(link, &entry.manifold, &setup)
+}
+
+/// Stores a made constraint with the impulses of the same pair from the last step. The list is in
+/// pair order, so `cursor` only moves forward.
+fn store_made(
+    constraints: &mut Vec<Constraint>,
+    warm: &WarmCache,
+    contacts: &[ContactManifold<D3>],
+    cursor: &mut usize,
+    (index, mut constraint): Made,
+) {
+    let kept = contacts
+        .get(index as usize)
+        .and_then(|entry| warm.find(cursor, entry.first, entry.second));
+    if let Some(cached) = kept {
+        constraint.warm_from(cached);
+    }
+    constraints.push(constraint);
 }
 
 /// Applies `step` to the solver body at `index`, if there is one.
@@ -274,6 +351,8 @@ impl ContactSolver<D3> for Solver3 {
             touched: vec![false; bodies],
             active: Vec::with_capacity(bodies),
             constraints: Vec::with_capacity(manifolds),
+            members: Vec::with_capacity(manifolds),
+            prepare_run: None,
             outputs: Vec::new(),
             outputs_chunk: 0,
             execution: SolverExecution::SERIAL,
@@ -311,6 +390,7 @@ impl ContactSolver<D3> for Solver3 {
     }
 
     fn set_execution(&mut self, execution: SolverExecution) {
+        self.prepare_run = PrepareRun::new(&execution, self.max_constraints);
         self.execution = execution;
         self.size_outputs();
     }
@@ -405,10 +485,15 @@ impl Solver3 {
             soft,
             stiff,
         };
-        let mut cursor = 0;
-        for entry in contacts {
-            self.add_constraint(&context, entry, &mut cursor);
+        let mut members = std::mem::take(&mut self.members);
+        members.clear();
+        if self.prepare_run.is_some() {
+            self.touch_manifolds(&context, contacts, &mut members);
+            self.make_constraints(&context, contacts, &members);
+        } else {
+            self.add_constraints(&context, contacts);
         }
+        self.members = members;
         for entry in joints {
             self.add_joint(&context, entry);
         }
@@ -439,8 +524,17 @@ impl Solver3 {
         self.joints.add(joint);
     }
 
-    /// Adds the constraint of one manifold; a manifold of a missing body, or one that does not fit
-    /// (it always does: the capacity is the manifold capacity), is left out.
+    /// Adds the constraints of the manifolds one after the other, in list order.
+    fn add_constraints(&mut self, context: &Prepare, contacts: &[ContactManifold<D3>]) {
+        let mut cursor = 0;
+        for entry in contacts {
+            self.add_constraint(context, entry, &mut cursor);
+        }
+    }
+
+    /// Adds the constraint of one manifold, one after the other with the touching and the warm start:
+    /// the loop of a solver with no scheduler. A manifold of a missing body, or one that does not
+    /// fit (it always does: the capacity is the manifold capacity), is left out.
     fn add_constraint(
         &mut self,
         context: &Prepare,
@@ -450,42 +544,105 @@ impl Solver3 {
         if self.constraints.len() >= self.max_constraints {
             return;
         }
-        let Some((a, b, first, second)) = ends_of(context.bodies, entry) else {
+        let Some((a, b, first, second)) = self.touch_ends(context, entry) else {
             return;
         };
-        self.touch(a, first, context.terms);
-        self.touch(b, second, context.terms);
         let (Some(body_a), Some(body_b)) = (self.bodies.get(a), self.bodies.get(b)) else {
             return;
         };
-        let setup = Setup {
-            bodies: [body_a, body_b],
-            centres: [first.position(), second.position()],
-            surface: Surface {
-                friction: (first.friction() * second.friction()).sqrt(),
-                restitution: first.restitution().max(second.restitution()),
-            },
-            softness: if body_a.is_static() || body_b.is_static() {
-                context.stiff
-            } else {
-                context.soft
-            },
-        };
-        let link = Link {
-            first: entry.first,
-            second: entry.second,
-            a,
-            b,
-        };
-        self.colouring.push(ConstraintEnds {
-            a: is_awake(first).then(|| index_u32(a)),
-            b: is_awake(second).then(|| index_u32(b)),
-        });
-        let mut constraint = Constraint::new(link, &entry.manifold, &setup);
+        let ends = [(a, first, body_a), (b, second, body_b)];
+        let mut constraint = build_constraint(entry, ends, (context.soft, context.stiff));
         if let Some(cached) = self.warm.find(cursor, entry.first, entry.second) {
             constraint.warm_from(cached);
         }
         self.constraints.push(constraint);
+    }
+
+    /// Touches the two bodies of `entry` and gives the colouring its ends, as the first thing done
+    /// for every manifold, in list order. `None` for a manifold of a missing body.
+    fn touch_ends<'a>(
+        &mut self,
+        context: &Prepare<'a>,
+        entry: &ContactManifold<D3>,
+    ) -> Option<(usize, usize, &'a Body<D3>, &'a Body<D3>)> {
+        let (a, b, first, second) = ends_of(context.bodies, entry)?;
+        self.touch(a, first, context.terms);
+        self.touch(b, second, context.terms);
+        self.bodies.get(a)?;
+        self.bodies.get(b)?;
+        self.colouring.push(ConstraintEnds {
+            a: is_awake(first).then(|| index_u32(a)),
+            b: is_awake(second).then(|| index_u32(b)),
+        });
+        Some((a, b, first, second))
+    }
+
+    /// Touches the bodies of the manifolds in list order and lists those that make a constraint in
+    /// `members` (the colouring gets their ends in the same order). A manifold of a missing body, or
+    /// one past the capacity (there is none: it is the manifold capacity), is left out.
+    fn touch_manifolds(
+        &mut self,
+        context: &Prepare,
+        contacts: &[ContactManifold<D3>],
+        members: &mut Vec<u32>,
+    ) {
+        contacts
+            .iter()
+            .enumerate()
+            .all(|(index, entry)| self.touch_manifold(context, entry, index, members));
+    }
+
+    /// Touches the two bodies of `entry`, the manifold at `index`, and lists it. False, touching
+    /// nothing, when the list is full already: the rest of the manifolds are left out.
+    fn touch_manifold(
+        &mut self,
+        context: &Prepare,
+        entry: &ContactManifold<D3>,
+        index: usize,
+        members: &mut Vec<u32>,
+    ) -> bool {
+        if members.len() >= self.max_constraints {
+            return false;
+        }
+        if self.touch_ends(context, entry).is_some() {
+            members.push(index_u32(index));
+        }
+        true
+    }
+
+    /// Makes the constraint of each manifold of `members`, in order, with the warm start. With a
+    /// scheduler (and two chunks or more) the constraints are made in chunks (`prepare_run`) and
+    /// stored in chunk order, which is the same list.
+    fn make_constraints(
+        &mut self,
+        context: &Prepare,
+        contacts: &[ContactManifold<D3>],
+        members: &[u32],
+    ) {
+        let maker = Maker {
+            bodies: &self.bodies,
+            world: context.bodies,
+            contacts,
+            soft: context.soft,
+            stiff: context.stiff,
+        };
+        let make = |index: u32| maker.make(index);
+        let mut cursor = 0;
+        let constraints = &mut self.constraints;
+        let warm = &self.warm;
+        let store = |made: Made| store_made(constraints, warm, contacts, &mut cursor, made);
+        let chunks = self
+            .prepare_run
+            .as_ref()
+            .and_then(|run| run.run(members, &make).map(|chunks| (run, chunks)));
+        match chunks {
+            Some((run, chunks)) => run.drain(chunks, store),
+            // One constraint at a time, straight into the store: no buffer to copy through.
+            None => members
+                .iter()
+                .filter_map(|&index| make(index).map(|constraint| (index, constraint)))
+                .for_each(store),
+        }
     }
 
     /// The sub-step loop, then restitution.

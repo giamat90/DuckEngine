@@ -1,7 +1,7 @@
 //! Tests of the colouring of the 3D solver and of the order inside a colour (card 8-19).
 
 use super::{Reorder, Solver3};
-use crate::core::{Colour, MAX_COLOURS, Pair, PhysicsError, SolverExecution};
+use crate::core::{Colour, ContactSolver, MAX_COLOURS, Pair, PhysicsError, SolverExecution};
 use crate::d3::{BodyDesc, BodyKind, D3, Shape3, SleepConfig, SolverConfig, World, WorldConfig};
 use base::math::Vec3;
 use base::rng::Pcg32;
@@ -593,5 +593,54 @@ fn the_pair_search_follows_the_execution_and_the_bodies_that_go_away() -> Result
         assert_eq!(w.pairs().as_slice(), serial.pairs().as_slice());
         assert_eq!(w.pairs().missing(), serial.pairs().missing());
     }
+    Ok(())
+}
+
+// ---- the making of the constraints through a scheduler (card 8-112) -----------------------------
+
+/// The most constraints one colour of the last solve holds.
+fn widest_colour(w: &mut World) -> usize {
+    let colouring = &w.solver_mut().colouring;
+    (0..colouring.colour_count())
+        .map(|colour| colouring.members(colour).len())
+        .max()
+        .unwrap_or(0)
+}
+
+#[test]
+fn the_constraints_are_made_through_the_scheduler_when_there_are_several_chunks_of_manifolds()
+-> Result<(), PhysicsError> {
+    let mut w = pyramid(6)?;
+    for _ in 0..5 {
+        w.step(1.0 / 60.0)?;
+    }
+    // A chunk as wide as the widest colour: no colour is cut in two, so the sweeps never call the
+    // scheduler and every call is the making of the constraints. Only the solver gets the
+    // scheduler (not the pair search or the contact tests).
+    let chunk = u32::try_from(widest_colour(&mut w)).unwrap_or(u32::MAX);
+    let manifolds = w.manifolds().len();
+    assert!(
+        manifolds > chunk as usize && chunk > 0,
+        "{manifolds} manifolds, chunk {chunk}"
+    );
+    let counting = Arc::new(Counting::default());
+    w.solver_mut().set_execution(scheduled(
+        Arc::clone(&counting) as Arc<dyn IScheduler>,
+        chunk,
+    ));
+    w.step(1.0 / 60.0)?;
+    assert!(
+        counting.calls.load(Ordering::Relaxed) > 0,
+        "the constraints were not made through the scheduler"
+    );
+    // One chunk of manifolds is not worth a hand-over.
+    let single = Arc::new(Counting::default());
+    let mut one = pyramid(6)?;
+    one.solver_mut().set_execution(scheduled(
+        Arc::clone(&single) as Arc<dyn IScheduler>,
+        100_000,
+    ));
+    one.step(1.0 / 60.0)?;
+    assert_eq!(single.calls.load(Ordering::Relaxed), 0, "one chunk");
     Ok(())
 }
