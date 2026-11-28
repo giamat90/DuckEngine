@@ -218,8 +218,9 @@ impl ColourJob<'_> {
 }
 
 /// Stores the results of the first `chunks` buffers into `constraints` and `bodies`, in canonical
-/// order. Every constraint in a buffer was loaded from valid body slots, so the copies are never
-/// placeholders.
+/// order: the new impulses of each constraint and the velocity and the spin of its dynamic bodies
+/// (the only things a pass changes). Every constraint in a buffer was loaded from valid body
+/// slots, so the copies are never placeholders.
 pub(super) fn scatter(
     outputs: &mut [Mutex<ChunkOut>],
     chunks: usize,
@@ -234,7 +235,8 @@ pub(super) fn scatter(
     }
 }
 
-/// Stores one result: the new impulses of the constraint and the dynamic bodies it moved.
+/// Stores one result: the new impulses of the constraint and the velocities of the dynamic bodies
+/// it moved.
 fn store_result(
     constraints: &mut [Constraint],
     bodies: &mut [SolverBody],
@@ -255,7 +257,7 @@ fn store_body(bodies: &mut [SolverBody], index: usize, body: SolverBody) {
         bodies
             .get_mut(index)
             .into_iter()
-            .for_each(|target| *target = body);
+            .for_each(|target| target.take_velocities(&body));
     }
 }
 

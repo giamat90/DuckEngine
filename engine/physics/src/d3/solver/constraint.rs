@@ -191,7 +191,9 @@ impl Ends<'_> {
     }
 }
 
-/// The passes over the constraints of a sub-step that move velocities.
+/// The passes over the constraints of a sub-step that move velocities. A pass changes the velocity
+/// and the spin of the bodies it touches and no other field: the staged colour solve stores back
+/// those two only (`stage`), so a pass that changed anything else would be lost there.
 #[derive(Clone, Copy)]
 pub(super) enum Pass<'a> {
     /// Applies the impulses of the last step.
@@ -714,6 +716,108 @@ mod tests {
             );
         }
         (one, two, [a1, b1, a2, b2])
+    }
+
+    /// The bodies with a shift and a turn that are not the defaults, so that a pass that wrote one
+    /// of the two would show.
+    fn marked(bodies: &[SolverBody; 4]) -> [SolverBody; 4] {
+        let turn = Quat::from_axis_angle(Vec3::Y, 0.4).unwrap_or(Quat::IDENTITY);
+        bodies.map(|mut one| {
+            one.shift = Vec3::new(0.1, -0.2, 0.3);
+            one.turn = turn;
+            one
+        })
+    }
+
+    /// True when each body of `done` is as the body of `start` at the same place except in the
+    /// velocity and the spin.
+    fn only_velocities_differ(done: &[SolverBody], start: &[SolverBody]) -> bool {
+        done.iter().zip(start).all(|(done, start)| {
+            let mut done = *done;
+            done.velocity = start.velocity;
+            done.spin = start.spin;
+            format!("{done:?}") == format!("{start:?}")
+        })
+    }
+
+    /// True when two constraints solved side by side change only the velocities of their bodies.
+    fn pair_changes_only_velocities(
+        sources: [&Constraint; 2],
+        bodies: &[SolverBody; 4],
+        sweep: &Sweep,
+    ) -> bool {
+        let mut staged = [
+            Staged {
+                impulses: sources[0].impulses,
+                a: bodies[0],
+                b: bodies[1],
+            },
+            Staged {
+                impulses: sources[1].impulses,
+                a: bodies[2],
+                b: bodies[3],
+            },
+        ];
+        let [first, second] = &mut staged;
+        solve_pair(
+            &mut first.side(&sources[0].shape),
+            &mut second.side(&sources[1].shape),
+            sweep,
+        );
+        only_velocities_differ(&[first.a, first.b, second.a, second.b], bodies)
+    }
+
+    /// True when `pass` on `source` leaves every field of the two bodies as it was except the
+    /// velocity and the spin.
+    fn pass_changes_only_velocities(
+        source: &Constraint,
+        bodies: &[SolverBody; 2],
+        pass: Pass,
+    ) -> bool {
+        let mut staged = Staged {
+            impulses: source.impulses,
+            a: bodies[0],
+            b: bodies[1],
+        };
+        staged.run(&source.shape, pass);
+        only_velocities_differ(&[staged.a, staged.b], bodies)
+    }
+
+    #[test]
+    fn a_pass_over_a_constraint_changes_the_velocity_and_the_spin_of_its_bodies_and_nothing_else() {
+        // The staged colour solve stores back only these two (card 8-105): if a pass ever changed
+        // another field of a body, this test is red before a result is lost.
+        let mut state = 0x00b0_d1e5_u64;
+        for trial in 0..120_usize {
+            let moves = trial % 5 != 0;
+            let mut body = |n: usize| random_body(&mut state, moves || n.is_multiple_of(2));
+            let bodies = marked(&[body(0), body(1), body(2), body(3)]);
+            let first = [bodies[0], bodies[1]];
+            let source =
+                random_constraint(&mut state, 1 + trial % 4, (&first[0], &first[1]), (0, 1));
+            let other = random_constraint(
+                &mut state,
+                1 + (trial / 4) % 4,
+                (&bodies[2], &bodies[3]),
+                (2, 3),
+            );
+            let sweep = sweep(trial % 2 == 0);
+            let passes = [
+                Pass::WarmStart,
+                Pass::Solve(&sweep),
+                Pass::Restitute(&sweep),
+            ];
+            assert!(
+                passes
+                    .into_iter()
+                    .all(|pass| pass_changes_only_velocities(&source, &first, pass)),
+                "{trial}"
+            );
+            assert!(
+                pair_changes_only_velocities([&source, &other], &bodies, &sweep),
+                "pair {trial}"
+            );
+        }
     }
 
     #[test]
