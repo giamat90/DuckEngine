@@ -443,6 +443,18 @@ struct Face {
     distance: f32,
 }
 
+/// The content of a slot of the polytope that is not in use.
+const UNUSED_VERTEX: Vertex = Vertex {
+    point: Vec3::ZERO,
+    on_first: Vec3::ZERO,
+    on_second: Vec3::ZERO,
+};
+const UNUSED_FACE: Face = Face {
+    corners: [0; 3],
+    normal: Vec3::ZERO,
+    distance: 0.0,
+};
+
 struct Polytope {
     vertices: [Vertex; MAX_POLYTOPE_VERTICES],
     vertex_count: usize,
@@ -491,15 +503,12 @@ impl Polytope {
     }
 
     fn from_tetrahedron(simplex: &Simplex) -> Self {
-        let dummy = simplex.vertices[0];
+        // The slots past the counts are never read; all-zero values let the compiler clear the two
+        // arrays (6 KB) with one fast fill instead of copying a value into each slot (card 8-100).
         let mut polytope = Self {
-            vertices: [dummy; MAX_POLYTOPE_VERTICES],
+            vertices: [UNUSED_VERTEX; MAX_POLYTOPE_VERTICES],
             vertex_count: 4,
-            faces: [Face {
-                corners: [0; 3],
-                normal: Vec3::X,
-                distance: 0.0,
-            }; MAX_POLYTOPE_FACES],
+            faces: [UNUSED_FACE; MAX_POLYTOPE_FACES],
             face_count: 4,
         };
         polytope.vertices[..4].copy_from_slice(&simplex.vertices);
@@ -1098,5 +1107,143 @@ mod tests {
         }
         assert_eq!(compared, 240);
         assert!(same_bits(farthest(&[], Vec3::X), Vec3::ZERO));
+    }
+
+    // Card 8-100: the answers of `contact` for a fixed sweep of pairs, as one hash of their bits,
+    // recorded before the polytope of EPA was rewritten to move less memory. Any change of a bit
+    // of any answer changes it.
+
+    fn random_vec(state: &mut u64, scale: f32) -> Vec3 {
+        Vec3::new(lcg(state), lcg(state), lcg(state)) * scale
+    }
+
+    /// A turn from a random quaternion, scaled to unit length with `sqrt` only: no `sin` or `cos`,
+    /// whose last digits depend on the platform unless the determinism feature is on.
+    fn random_turn(state: &mut u64) -> Quat {
+        let raw = [lcg(state), lcg(state), lcg(state), lcg(state) + 1.5];
+        let length = raw.iter().map(|c| c * c).sum::<f32>().sqrt();
+        let [x, y, z, w] = raw.map(|c| c / length);
+        Quat::new(x, y, z, w)
+    }
+
+    /// A regular polygon in the plane `y = level`, by turning one corner with the cosine and sine
+    /// of the step as constants (no `sin` or `cos`).
+    fn ring(sides: u8, level: f32, radius: f32) -> Vec<Vec3> {
+        let (cos, sin) = match sides {
+            8 => (0.707_106_77_f32, 0.707_106_77_f32),
+            _ => (0.923_879_5_f32, 0.382_683_43_f32),
+        };
+        let mut corner = (radius, 0.0_f32);
+        let mut corners = Vec::new();
+        for _ in 0..sides {
+            corners.push(Vec3::new(corner.0, level, corner.1));
+            corner = (
+                cos * corner.0 - sin * corner.1,
+                sin * corner.0 + cos * corner.1,
+            );
+        }
+        corners
+    }
+
+    fn prism(sides: u8, half_height: f32, radius: f32) -> Vec<Vec3> {
+        let mut corners = ring(sides, -half_height, radius);
+        corners.extend(ring(sides, half_height, radius));
+        corners
+    }
+
+    fn fnv(hash: &mut u64, word: u32) {
+        *hash = (*hash ^ u64::from(word)).wrapping_mul(0x0000_0100_0000_01b3);
+    }
+
+    /// Adds the bits of an answer to `hash`; how many of its points are below the surface.
+    fn hash_answer(hash: &mut u64, found: &Manifold3) -> u32 {
+        for word in found.normal.to_array() {
+            fnv(hash, word.to_bits());
+        }
+        let words = found.active().iter().flat_map(|p| {
+            let [x, y, z] = p.point.to_array();
+            [x, y, z, p.separation]
+        });
+        for word in words {
+            fnv(hash, word.to_bits());
+        }
+        found
+            .active()
+            .iter()
+            .map(|p| u32::from(p.separation < 0.0))
+            .sum()
+    }
+
+    /// The second shape of round `round`: a larger prism, a box, a capsule or a wide floor.
+    fn partner(round: u32, state: &mut u64, large: &'static [Vec3]) -> Convex<'static> {
+        let at = random_vec(state, 1.5);
+        let turn = random_turn(state);
+        let (core, radius) = match round % 4 {
+            0 => (
+                Core::Hull {
+                    vertices: large,
+                    centre: at,
+                    rotation: turn,
+                },
+                0.0,
+            ),
+            1 => (
+                Core::Box(BoxFrame {
+                    centre: at,
+                    rotation: turn,
+                    half: Vec3::new(0.5, 0.3, 0.4),
+                }),
+                0.0,
+            ),
+            2 => (Core::Segment(at, at + random_vec(state, 0.8)), 0.15),
+            _ => (
+                Core::Box(BoxFrame {
+                    centre: Vec3::new(at.x * 20.0, at.y * 0.5 - 0.3, at.z * 20.0),
+                    rotation: Quat::IDENTITY,
+                    half: Vec3::new(50.0, 0.5, 50.0),
+                }),
+                0.0,
+            ),
+        };
+        Convex { core, radius }
+    }
+
+    /// The answers of `contact` for 3000 pairs: a prism of 8 sides in a random pose against a larger
+    /// prism, a box, a capsule or a wide floor.
+    fn sweep() -> Vec<Option<Manifold3>> {
+        let small: &'static [Vec3] = prism(8, 0.4, 0.5).leak();
+        let large: &'static [Vec3] = prism(16, 0.3, 0.6).leak();
+        let mut state = 42_u64;
+        let mut answers = Vec::new();
+        for round in 0..3000 {
+            let turn = random_turn(&mut state);
+            let first = Convex {
+                core: Core::Hull {
+                    vertices: small,
+                    centre: Vec3::ZERO,
+                    rotation: turn,
+                },
+                radius: 0.0,
+            };
+            let second = partner(round, &mut state, large);
+            answers.push(contact(&first, &second, 0.5));
+        }
+        answers
+    }
+
+    #[test]
+    fn the_contacts_of_a_fixed_sweep_of_pairs_are_the_recorded_ones() {
+        let found: Vec<Manifold3> = sweep().into_iter().flatten().collect();
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        let (mut touching, mut apart) = (0_u32, 0_u32);
+        for answer in &found {
+            let deep = hash_answer(&mut hash, answer);
+            touching += deep;
+            apart += u32::from(answer.count) - deep;
+        }
+        let missing = 3000 - found.len();
+        // Both ways in are used a good many times.
+        assert!(touching > 400 && apart > 400, "{touching} {apart}");
+        assert_eq!(hash, 0x08c6_3c44_1a04_b7f6, "{touching} {apart} {missing}");
     }
 }
